@@ -1,0 +1,99 @@
+<?php
+
+use App\Http\Controllers\Api\V1\Admin\AiContentController;
+use App\Http\Controllers\Api\V1\Admin\EmbedController;
+use App\Http\Controllers\Api\V1\Admin\LiveShowController;
+use App\Http\Controllers\Api\V1\Admin\OverviewController;
+use App\Http\Controllers\Api\V1\Admin\PlaylistController;
+use App\Http\Controllers\Api\V1\Admin\ProductController;
+use App\Http\Controllers\Api\V1\Admin\TeamController;
+use App\Http\Controllers\Api\V1\Admin\VideoController;
+use App\Http\Controllers\Api\V1\Admin\VideoProductTagController;
+use App\Http\Controllers\Api\V1\Analytics\DashboardController;
+use App\Http\Controllers\Api\V1\Analytics\EventIngestionController;
+use App\Http\Controllers\Api\V1\Integrations\NativePaymentWebhookController;
+use App\Http\Controllers\Api\V1\Integrations\ShopifyController;
+use App\Http\Controllers\Api\V1\Integrations\WooCommerceController;
+use App\Http\Controllers\Api\V1\Player\CartController;
+use App\Http\Controllers\Api\V1\Player\CheckoutController;
+use App\Http\Controllers\Api\V1\Player\EngagementController;
+use App\Http\Controllers\Api\V1\Player\FeedController;
+use App\Http\Controllers\Api\V1\Player\LiveShowController as PlayerLiveShowController;
+use App\Http\Controllers\Api\V1\Player\NativePaymentController;
+use App\Http\Controllers\Api\V1\Player\WebinarController as PlayerWebinarController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/user', function (Request $request) {
+    return $request->user();
+})->middleware('auth:sanctum');
+
+Route::prefix('v1')->group(function (): void {
+    Route::prefix('player')->middleware('throttle:player-engagement')->group(function (): void {
+        Route::get('feed', [FeedController::class, 'index'])->middleware('throttle:player-feed');
+        Route::get('live-show', [PlayerLiveShowController::class, 'current'])->middleware('throttle:player-feed');
+        Route::get('webinars/{liveShow}', [PlayerWebinarController::class, 'show'])->middleware('throttle:player-feed');
+        Route::post('webinars/{liveShow}/register', [PlayerWebinarController::class, 'register']);
+        Route::get('webinars/{liveShow}/messages', [PlayerWebinarController::class, 'messages'])->middleware('throttle:player-feed');
+        Route::post('webinars/{liveShow}/messages', [PlayerWebinarController::class, 'sendMessage']);
+        Route::post('reactions', [EngagementController::class, 'react']);
+        Route::post('comments', [EngagementController::class, 'comment']);
+        Route::post('viewer-ping', [EngagementController::class, 'viewerPing']);
+        Route::get('cart', [CartController::class, 'show']);
+        Route::post('cart/items', [CartController::class, 'addItem']);
+        Route::delete('cart/items/{itemId}', [CartController::class, 'removeItem']);
+        Route::post('checkout', [CheckoutController::class, 'checkout']);
+        Route::post('checkout/orders/{order}/start-payment', [NativePaymentController::class, 'start']);
+    });
+
+    Route::prefix('analytics')->group(function (): void {
+        Route::post('events', [EventIngestionController::class, 'store'])->middleware('throttle:analytics-ingest');
+        Route::get('summary', [DashboardController::class, 'summary'])->middleware('auth:sanctum');
+    });
+
+    Route::prefix('integrations')->group(function (): void {
+        Route::post('shopify/sync', [ShopifyController::class, 'sync'])
+            ->middleware(['auth:sanctum', 'throttle:integration-sync']);
+        Route::post('shopify/webhook', [ShopifyController::class, 'webhook'])
+            ->middleware('throttle:integration-webhook');
+        Route::post('woo/sync', [WooCommerceController::class, 'sync'])
+            ->middleware(['auth:sanctum', 'throttle:integration-sync']);
+        Route::post('woo/webhook', [WooCommerceController::class, 'webhook'])
+            ->middleware('throttle:integration-webhook');
+        Route::post('stripe/webhook', [NativePaymentWebhookController::class, 'stripe'])
+            ->middleware('throttle:integration-webhook');
+        Route::post('paypal/webhook', [NativePaymentWebhookController::class, 'paypal'])
+            ->middleware('throttle:integration-webhook');
+        Route::post('cloudinary/webhook', [ShopifyController::class, 'cloudinaryWebhook'])
+            ->middleware('throttle:integration-webhook');
+    });
+
+    Route::middleware(['auth:sanctum', 'throttle:admin-api'])->prefix('admin')->group(function (): void {
+        Route::get('overview', [OverviewController::class, 'show']);
+        Route::post('videos/upload', [VideoController::class, 'upload']);
+        Route::get('ai/heygen-options', [AiContentController::class, 'heygenOptions']);
+        Route::post('ai/visuals', [AiContentController::class, 'uploadVisual']);
+        Route::get('ai/generations', [AiContentController::class, 'index']);
+        Route::get('ai/generations/{generation}', [AiContentController::class, 'show']);
+        Route::post('ai/scripts', [AiContentController::class, 'generateScript']);
+        Route::post('ai/avatar-videos', [AiContentController::class, 'generateAvatarVideo']);
+        Route::apiResource('teams', TeamController::class);
+        Route::apiResource('videos', VideoController::class);
+        Route::get('videos/{video}/product-tags', [VideoProductTagController::class, 'index']);
+        Route::post('videos/{video}/product-tags', [VideoProductTagController::class, 'store']);
+        Route::post('videos/{video}/product-tags/sync', [VideoProductTagController::class, 'sync']);
+        Route::put('videos/{video}/product-tags/{productTag}', [VideoProductTagController::class, 'update']);
+        Route::delete('videos/{video}/product-tags/{productTag}', [VideoProductTagController::class, 'destroy']);
+        Route::apiResource('products', ProductController::class);
+        Route::apiResource('playlists', PlaylistController::class);
+        Route::apiResource('embeds', EmbedController::class);
+        Route::apiResource('live-shows', LiveShowController::class);
+        Route::get('live-shows/{liveShow}/attendees', [LiveShowController::class, 'attendees']);
+        Route::get('live-shows/{liveShow}/conversations', [LiveShowController::class, 'conversations']);
+        Route::get('live-shows/{liveShow}/messages', [LiveShowController::class, 'messages']);
+        Route::post('live-shows/{liveShow}/messages', [LiveShowController::class, 'postHostMessage']);
+        Route::patch('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'updateMessage']);
+        Route::delete('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'destroyMessage']);
+        Route::post('teams/{team}/tokens', [TeamController::class, 'issueToken']);
+    });
+});
