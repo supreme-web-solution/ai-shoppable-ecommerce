@@ -61,6 +61,7 @@ const loadingConversations = ref(false);
 const loadingMessages = ref(false);
 const sending = ref(false);
 const errorText = ref('');
+const backgroundSyncCount = ref(0);
 
 const webinars = ref<WebinarOption[]>([]);
 const conversations = ref<Conversation[]>([]);
@@ -76,12 +77,14 @@ let pollTimer: number | null = null;
 const initialWebinarId = computed(() => {
     const params = new URLSearchParams(window.location.search);
     const id = Number(params.get('webinar') || 0);
+
     return id > 0 ? id : null;
 });
 
 const initialRegistrationId = computed(() => {
     const params = new URLSearchParams(window.location.search);
     const id = Number(params.get('registration') || 0);
+
     return id > 0 ? id : null;
 });
 
@@ -93,9 +96,15 @@ const selectedConversation = computed(() =>
     conversations.value.find((c) => c.registration_id === selectedRegistrationId.value) ?? null,
 );
 
+const isBackgroundSyncing = computed(() => backgroundSyncCount.value > 0);
+
 const filteredConversations = computed(() => {
     const q = conversationSearch.value.trim().toLowerCase();
-    if (!q) return conversations.value;
+
+    if (!q) {
+        return conversations.value;
+    }
+
     return conversations.value.filter(
         (c) =>
             c.full_name.toLowerCase().includes(q) ||
@@ -105,14 +114,23 @@ const filteredConversations = computed(() => {
 });
 
 function formatTime(value?: string | null): string {
-    if (!value) return '';
+    if (!value) {
+        return '';
+    }
+
     const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return '';
+
+    if (Number.isNaN(d.getTime())) {
+        return '';
+    }
+
     const now = new Date();
     const isToday = d.toDateString() === now.toDateString();
+
     if (isToday) {
         return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     }
+
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
@@ -125,13 +143,27 @@ function initials(name: string): string {
         .toUpperCase();
 }
 
+function beginBackgroundSync(silent: boolean): () => void {
+    if (!silent) {
+        return () => undefined;
+    }
+
+    backgroundSyncCount.value += 1;
+
+    return () => {
+        backgroundSyncCount.value = Math.max(0, backgroundSyncCount.value - 1);
+    };
+}
+
 async function loadWebinars() {
     loadingWebinars.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const payload = await getList<WebinarOption>('/api/v1/admin/live-shows');
         webinars.value = payload.data ?? [];
+
         if (!selectedWebinarId.value && webinars.value.length > 0) {
             selectedWebinarId.value = initialWebinarId.value ?? webinars.value[0].id;
         }
@@ -142,17 +174,26 @@ async function loadWebinars() {
     }
 }
 
-async function loadConversations() {
+async function loadConversations(options: { silent?: boolean } = {}) {
     if (!selectedWebinarId.value) {
         conversations.value = [];
+
         return;
     }
-    loadingConversations.value = true;
+
+    const silent = options.silent ?? false;
+    const endBackgroundSync = beginBackgroundSync(silent);
+
+    if (!silent) {
+        loadingConversations.value = true;
+    }
+
     try {
         const payload = await apiFetch<{ data: Conversation[] }>(
             `/api/v1/admin/live-shows/${selectedWebinarId.value}/conversations`,
         );
         conversations.value = payload.data ?? [];
+
         if (
             selectedRegistrationId.value &&
             !conversations.value.some((c) => c.registration_id === selectedRegistrationId.value)
@@ -163,27 +204,47 @@ async function loadConversations() {
                 initialRegistrationId.value ?? conversations.value[0].registration_id;
         }
     } catch (error) {
-        errorText.value = error instanceof Error ? error.message : 'Could not load conversations.';
+        if (!silent) {
+            errorText.value = error instanceof Error ? error.message : 'Could not load conversations.';
+        }
     } finally {
-        loadingConversations.value = false;
+        if (!silent) {
+            loadingConversations.value = false;
+        }
+
+        endBackgroundSync();
     }
 }
 
-async function loadMessages() {
+async function loadMessages(options: { silent?: boolean } = {}) {
     if (!selectedWebinarId.value || !selectedRegistrationId.value) {
         messages.value = [];
+
         return;
     }
-    loadingMessages.value = true;
+
+    const silent = options.silent ?? false;
+    const endBackgroundSync = beginBackgroundSync(silent);
+
+    if (!silent) {
+        loadingMessages.value = true;
+    }
+
     try {
         const payload = await apiFetch<{ data: ChatMessage[] }>(
             `/api/v1/admin/live-shows/${selectedWebinarId.value}/messages?registration_id=${selectedRegistrationId.value}`,
         );
         messages.value = payload.data ?? [];
     } catch (error) {
-        errorText.value = error instanceof Error ? error.message : 'Could not load messages.';
+        if (!silent) {
+            errorText.value = error instanceof Error ? error.message : 'Could not load messages.';
+        }
     } finally {
-        loadingMessages.value = false;
+        if (!silent) {
+            loadingMessages.value = false;
+        }
+
+        endBackgroundSync();
     }
 }
 
@@ -196,6 +257,7 @@ async function refreshAll() {
 function selectWebinar(id: number) {
     selectedWebinarId.value = id;
     selectedRegistrationId.value = null;
+    conversations.value = [];
     messages.value = [];
 }
 
@@ -207,7 +269,9 @@ async function sendReply() {
     if (!selectedWebinarId.value || !selectedRegistrationId.value || !replyDraft.value.trim()) {
         return;
     }
+
     sending.value = true;
+
     try {
         const hostName =
             selectedWebinar.value?.host_name ||
@@ -221,11 +285,13 @@ async function sendReply() {
                 message: replyDraft.value.trim(),
             },
         );
+
         if (payload?.data) {
             messages.value.push(payload.data);
         }
+
         replyDraft.value = '';
-        await loadConversations();
+        await loadConversations({ silent: true });
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not send reply.';
     } finally {
@@ -249,8 +315,8 @@ onMounted(async () => {
     await loadMessages();
     pollTimer = window.setInterval(async () => {
         if (selectedWebinarId.value && selectedRegistrationId.value) {
-            await loadMessages();
-            await loadConversations();
+            await loadMessages({ silent: true });
+            await loadConversations({ silent: true });
         }
     }, 5000);
 });
@@ -285,10 +351,19 @@ onBeforeUnmount(() => {
                     </p>
                 </div>
             </div>
-            <Button variant="outline" size="sm" class="ghost-btn" :disabled="loadingWebinars" @click="refreshAll">
-                <RefreshCw class="mr-1.5 size-3.5" :class="{ 'animate-spin': loadingWebinars }" />
-                Refresh
-            </Button>
+            <div class="flex items-center gap-2">
+                <span class="sync-pill inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold text-gray-600">
+                    <span
+                        class="size-2 rounded-full bg-emerald-500"
+                        :class="{ 'animate-pulse': isBackgroundSyncing }"
+                    />
+                    {{ isBackgroundSyncing ? 'Syncing' : 'Live sync' }}
+                </span>
+                <Button variant="outline" size="sm" class="ghost-btn" :disabled="loadingWebinars" @click="refreshAll">
+                    <RefreshCw class="mr-1.5 size-3.5" :class="{ 'animate-spin': loadingWebinars }" />
+                    Refresh
+                </Button>
+            </div>
         </div>
 
         <div
@@ -334,7 +409,7 @@ onBeforeUnmount(() => {
                     </div>
                 </div>
 
-                <div v-if="loadingConversations" class="space-y-2 p-3">
+                <div v-if="loadingConversations && conversations.length === 0" class="space-y-2 p-3">
                     <Skeleton v-for="n in 8" :key="n" class="h-14 rounded-lg" />
                 </div>
 
@@ -423,7 +498,7 @@ onBeforeUnmount(() => {
 
                     <!-- Messages -->
                     <div class="message-scroll flex-1 space-y-2 overflow-y-auto p-4">
-                        <div v-if="loadingMessages" class="space-y-2">
+                        <div v-if="loadingMessages && messages.length === 0" class="space-y-2">
                             <Skeleton v-for="n in 6" :key="n" class="h-12 w-2/3 rounded-2xl" />
                         </div>
                         <div
@@ -545,6 +620,12 @@ onBeforeUnmount(() => {
     border-color: rgba(232,86,58,0.40);
     color: #E8563A;
     background: rgba(232,86,58,0.04);
+}
+
+.sync-pill {
+    background: rgba(255,255,255,0.78);
+    border: 1px solid #F0EDE8;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 
 .search-input,
