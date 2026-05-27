@@ -43,6 +43,8 @@
     </head>
     <body class="font-sans antialiased">
         <x-inertia::app />
-        {{-- <iframe src="http://127.0.0.1:8000/embed/playlist-1-harum-esse-fugiat-v" width="100%" height="700" frameborder="0" allow="autoplay; fullscreen"></iframe> --}}
+        {{-- CDN embed (run: npm run build:embed) --}}
+        {{-- <script async src="{{ url('/embed/embed.js') }}" data-embed="playlist-1-harum-esse-fugiat-v" data-type="vertical_feed" data-height="700"></script> --}}
+        <script async src="http://127.0.0.1:8000/embed/embed.js" data-embed="playlist-1-harum-esse-fugiat-v" data-type="product_page" data-height="700"></script>
     </body>
 </html>

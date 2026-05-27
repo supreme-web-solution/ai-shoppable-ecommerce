@@ -7,6 +7,15 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class EmbedResource extends JsonResource
 {
+    protected function scriptEmbedCode(): string
+    {
+        $src = e(url('/embed/embed.js'));
+        $slug = e($this->slug);
+        $type = e($this->type);
+
+        return '<script async src="'.$src.'" data-embed="'.$slug.'" data-type="'.$type.'" data-height="700"></script>';
+    }
+
     /**
      * Transform the resource into an array.
      *
@@ -27,7 +36,9 @@ class EmbedResource extends JsonResource
             'allowed_domains' => $this->allowed_domains,
             'settings' => $this->settings,
             'embed_url' => url('/embed/'.$this->slug),
-            'iframe_code' => '<iframe src="'.url('/embed/'.$this->slug).'" width="100%" height="700" frameborder="0" allow="autoplay; fullscreen"></iframe>',
+            'script_url' => url('/embed/embed.js'),
+            'embed_code' => $this->scriptEmbedCode(),
+            'iframe_code' => $this->scriptEmbedCode(),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

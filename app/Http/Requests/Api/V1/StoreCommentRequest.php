@@ -27,6 +27,7 @@ class StoreCommentRequest extends FormRequest
             'video_id' => ['required', 'integer', 'exists:videos,id'],
             'parent_id' => ['nullable', 'integer', 'exists:comments,id'],
             'body' => ['required', 'string', 'max:1000'],
+            'session_key' => ['nullable', 'string', 'max:255'],
             'metadata' => ['nullable', 'array'],
         ];
     }

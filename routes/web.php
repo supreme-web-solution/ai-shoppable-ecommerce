@@ -15,7 +15,21 @@ Route::middleware(['auth', 'verified'])->group(function () {
         return inertia('content/Edit', ['videoId' => (int) $videoId]);
     })->name('content.edit');
     Route::inertia('live-shows', 'live-shows/Index')->name('live-shows.index');
-    Route::inertia('live-shows/chats', 'live-shows/Chats')->name('live-shows.chats');
+    Route::inertia('live-shows/chats', 'live-shows/chats/Index')->name('live-shows.chats');
+    Route::get('live-shows/chats/webinars/{liveShow}', function ($liveShow) {
+        return inertia('live-shows/Chats', [
+            'source' => 'webinar',
+            'webinarId' => (int) $liveShow,
+            'lockContext' => true,
+        ]);
+    })->name('live-shows.chats.webinar');
+    Route::get('live-shows/chats/live-videos/{video}', function ($video) {
+        return inertia('live-shows/Chats', [
+            'source' => 'live_video',
+            'videoId' => (int) $video,
+            'lockContext' => true,
+        ]);
+    })->name('live-shows.chats.live-video');
     Route::inertia('playlists', 'playlists/Index')->name('playlists.index');
     Route::inertia('products', 'products/Index')->name('products.index');
     Route::redirect('embeds', '/playlists')->name('embeds.index');

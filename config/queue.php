@@ -19,8 +19,11 @@ return [
         'critical' => env('QUEUE_CRITICAL', 'critical'),
         'realtime' => env('QUEUE_REALTIME', 'realtime'),
         'media' => env('QUEUE_MEDIA', 'media'),
+        'ai' => env('QUEUE_AI', 'ai'),
+        'webhooks' => env('QUEUE_WEBHOOKS', 'webhooks'),
         'integration' => env('QUEUE_INTEGRATION', 'integration'),
         'analytics' => env('QUEUE_ANALYTICS', 'analytics'),
+        'default' => env('QUEUE_DEFAULT', 'default'),
     ],
 
     /*

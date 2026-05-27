@@ -13,9 +13,7 @@ Artisan::command('inspire', function () {
 
 Schedule::command('horizon:snapshot')->everyFiveMinutes();
 Schedule::call(function (): void {
-    $queue = app()->environment('local')
-        ? 'default'
-        : config('queue.names.critical', 'critical');
+    $queue = config('queue.names.critical', 'critical');
 
     TransitionLiveShowsJob::dispatch()->onQueue($queue);
 })->everyMinute();

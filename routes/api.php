@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\Admin\AiContentController;
 use App\Http\Controllers\Api\V1\Admin\EmbedController;
 use App\Http\Controllers\Api\V1\Admin\LiveShowController;
+use App\Http\Controllers\Api\V1\Admin\LiveVideoChatController;
 use App\Http\Controllers\Api\V1\Admin\OverviewController;
 use App\Http\Controllers\Api\V1\Admin\PlaylistController;
 use App\Http\Controllers\Api\V1\Admin\ProductController;
@@ -36,6 +37,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('webinars/{liveShow}/register', [PlayerWebinarController::class, 'register']);
         Route::get('webinars/{liveShow}/messages', [PlayerWebinarController::class, 'messages'])->middleware('throttle:player-feed');
         Route::post('webinars/{liveShow}/messages', [PlayerWebinarController::class, 'sendMessage']);
+        Route::get('broadcast-config', [EngagementController::class, 'broadcastConfig'])->middleware('throttle:player-feed');
+        Route::get('comments', [EngagementController::class, 'comments'])->middleware('throttle:player-feed');
         Route::post('reactions', [EngagementController::class, 'react']);
         Route::post('comments', [EngagementController::class, 'comment']);
         Route::post('viewer-ping', [EngagementController::class, 'viewerPing']);
@@ -94,6 +97,9 @@ Route::prefix('v1')->group(function (): void {
         Route::post('live-shows/{liveShow}/messages', [LiveShowController::class, 'postHostMessage']);
         Route::patch('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'updateMessage']);
         Route::delete('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'destroyMessage']);
+        Route::get('live-video-chats', [LiveVideoChatController::class, 'index']);
+        Route::get('live-video-chats/{video}/messages', [LiveVideoChatController::class, 'messages']);
+        Route::post('live-video-chats/{video}/messages', [LiveVideoChatController::class, 'postMessage']);
         Route::post('teams/{team}/tokens', [TeamController::class, 'issueToken']);
     });
 });

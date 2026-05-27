@@ -29,7 +29,17 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
 import { useAdminApi } from '@/composables/useAdminApi';
+import {
+    type EmbedDisplayType,
+    type EmbedItem,
+    embedDisplayLabel,
+    embedScriptCode,
+    ensureEmbedForPlaylist,
+    replaceEmbedInList,
+    updateEmbedDisplayType,
+} from '@/lib/videoEmbed';
 
 type VideoOption = {
     id: number;
@@ -46,17 +56,6 @@ type PlaylistItem = {
     is_active: boolean;
     is_public: boolean;
     videos?: VideoOption[];
-};
-
-type EmbedItem = {
-    id: number;
-    playlist_id?: number | null;
-    name: string;
-    slug: string;
-    type: string;
-    is_active: boolean;
-    embed_url?: string;
-    iframe_code?: string;
 };
 
 defineOptions({
@@ -78,6 +77,9 @@ const search = ref('');
 const playlists = ref<PlaylistItem[]>([]);
 const videos = ref<VideoOption[]>([]);
 const embeds = ref<EmbedItem[]>([]);
+const embedTypeSavingId = ref<number | null>(null);
+
+const embedApi = { getList, postJson, patchJson };
 
 /* ── create modal ── */
 const createModalOpen = ref(false);
@@ -140,29 +142,54 @@ function embedForPlaylist(playlistId: number): EmbedItem | undefined {
     return embeds.value.find((e) => e.playlist_id === playlistId);
 }
 
-function buildPlaylistEmbedPayload(playlist: PlaylistItem): Record<string, unknown> {
-    return {
-        name: `${playlist.title} Embed`,
-        slug: `playlist-${playlist.id}-${slugify(playlist.slug || playlist.title)}`,
-        type: 'vertical_feed',
-        playlist_id: playlist.id,
-        is_active: true,
-    };
+async function resolvePlaylistEmbed(playlist: PlaylistItem): Promise<EmbedItem | null> {
+    const existing = embedForPlaylist(playlist.id);
+    if (existing) {
+        return existing;
+    }
+
+    const created = await ensureEmbedForPlaylist(
+        embedApi,
+        playlist.id,
+        playlist.title,
+        playlist.slug || playlist.title,
+    );
+
+    if (created) {
+        embeds.value = replaceEmbedInList(embeds.value, created);
+    }
+
+    return created;
 }
 
-async function ensureEmbedForPlaylist(playlist: PlaylistItem): Promise<EmbedItem | null> {
-    const existing = embedForPlaylist(playlist.id);
-    if (existing) return existing;
+function playlistEmbedType(playlistId: number): EmbedDisplayType {
+    const type = embedForPlaylist(playlistId)?.type;
 
-    const payload = await postJson<{ data?: EmbedItem }>(
-        '/api/v1/admin/embeds',
-        buildPlaylistEmbedPayload(playlist),
-    );
-    const created = unwrapResource<EmbedItem>(payload);
-    if (!created) return null;
+    return (type as EmbedDisplayType) || 'vertical_feed';
+}
 
-    embeds.value = [created, ...embeds.value];
-    return created;
+async function changePlaylistEmbedType(
+    playlist: PlaylistItem,
+    type: EmbedDisplayType,
+) {
+    embedTypeSavingId.value = playlist.id;
+    errorText.value = '';
+
+    try {
+        const embed = await resolvePlaylistEmbed(playlist);
+        if (!embed) {
+            throw new Error('Could not load embed.');
+        }
+
+        const updated = await updateEmbedDisplayType(embedApi, embed.id, type);
+        if (updated) {
+            embeds.value = replaceEmbedInList(embeds.value, updated);
+        }
+    } catch (err) {
+        errorText.value = err instanceof Error ? err.message : 'Could not update embed display.';
+    } finally {
+        embedTypeSavingId.value = null;
+    }
 }
 
 async function loadData() {
@@ -213,7 +240,7 @@ async function createPlaylist() {
         });
 
         const created = unwrapResource<PlaylistItem>(payload);
-        if (created) await ensureEmbedForPlaylist(created);
+        if (created) await resolvePlaylistEmbed(created);
 
         createModalOpen.value = false;
         await loadData();
@@ -288,7 +315,7 @@ async function copyText(value: string, token: string) {
 async function copyEmbedLink(playlist: PlaylistItem) {
     errorText.value = '';
     try {
-        const embed = await ensureEmbedForPlaylist(playlist);
+        const embed = await resolvePlaylistEmbed(playlist);
         if (!embed) throw new Error('Could not generate embed.');
         const url = embed.embed_url || `${window.location.origin}/embed/${embed.slug}`;
         await copyText(url, `link-${embed.id}`);
@@ -300,13 +327,9 @@ async function copyEmbedLink(playlist: PlaylistItem) {
 async function copyEmbedCode(playlist: PlaylistItem) {
     errorText.value = '';
     try {
-        const embed = await ensureEmbedForPlaylist(playlist);
+        const embed = await resolvePlaylistEmbed(playlist);
         if (!embed) throw new Error('Could not generate embed.');
-        const url = embed.embed_url || `${window.location.origin}/embed/${embed.slug}`;
-        const code =
-            embed.iframe_code ||
-            `<iframe src="${url}" width="100%" height="700" frameborder="0" allow="autoplay; fullscreen"></iframe>`;
-        await copyText(code, `code-${embed.id}`);
+        await copyText(embedScriptCode(embed), `code-${embed.id}`);
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not copy embed code.';
     }
@@ -496,9 +519,12 @@ onMounted(loadData);
                             <Film class="size-3.5" />
                             {{ playlist.videos?.length ?? 0 }} video{{ (playlist.videos?.length ?? 0) !== 1 ? 's' : '' }}
                         </div>
-                        <div v-if="embedForPlaylist(playlist.id)" class="flex min-w-0 items-center gap-1 text-xs text-gray-500">
+                        <div v-if="embedForPlaylist(playlist.id)" class="flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-500">
                             <Link2 class="size-3.5 shrink-0" />
                             <span class="truncate">/embed/{{ embedForPlaylist(playlist.id)?.slug }}</span>
+                            <span class="rounded-full bg-gray-100 px-2 py-0.5 font-semibold text-gray-600">
+                                {{ embedDisplayLabel(embedForPlaylist(playlist.id)?.type) }}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -515,6 +541,14 @@ onMounted(loadData);
                             <Film class="size-3.5 text-[#E8563A]" />
                             Manage videos
                         </button>
+
+                        <EmbedDisplaySelect
+                            :model-value="playlistEmbedType(playlist.id)"
+                            compact
+                            label="Embed display"
+                            :disabled="embedTypeSavingId === playlist.id"
+                            @update:model-value="(type) => changePlaylistEmbedType(playlist, type)"
+                        />
 
                         <!-- Copy link -->
                         <button
@@ -537,7 +571,7 @@ onMounted(loadData);
                             </template>
                         </button>
 
-                        <!-- Copy iframe -->
+                        <!-- Copy embed code -->
                         <button
                             type="button"
                             :class="[

@@ -172,7 +172,7 @@ class AiContentController extends Controller
             'input' => $validated,
         ]);
 
-        $queue = (string) config('queue.names.media', 'media');
+        $queue = (string) config('queue.names.ai', 'ai');
         $connection = (string) config('queue.default', 'sync');
 
         Log::info('AI avatar video queued', [

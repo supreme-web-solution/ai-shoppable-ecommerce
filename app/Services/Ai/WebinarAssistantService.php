@@ -10,26 +10,38 @@ class WebinarAssistantService
     public function buildReply(LiveShow $liveShow, string $question): string
     {
         $settings = is_array($liveShow->settings) ? $liveShow->settings : [];
+        $knowledge = $this->extractKnowledgeFromSettings($settings);
 
-        // Combine all knowledge sources (new multi-source format)
+        return $this->buildReplyFromKnowledge($question, $knowledge, (string) $liveShow->title);
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     */
+    public function extractKnowledgeFromSettings(array $settings): string
+    {
         $sources = (array) data_get($settings, 'knowledge_sources', []);
         $knowledge = collect($sources)
             ->filter(fn (mixed $s): bool => is_array($s) && ! empty($s['content']))
             ->map(fn (array $s): string => sprintf("## %s\n%s", $s['title'] ?? 'Source', trim((string) $s['content'])))
             ->implode("\n\n---\n\n");
 
-        // Fallback to legacy single text field
         if ($knowledge === '') {
             $knowledge = trim((string) data_get($settings, 'knowledge_base_text', ''));
         }
 
+        return $knowledge;
+    }
+
+    public function buildReplyFromKnowledge(string $question, string $knowledge, string $contextTitle): string
+    {
         if ($knowledge === '') {
             return 'Thanks for your question. A host will respond shortly.';
         }
 
         $openAiKey = trim((string) config('services.openai.api_key'));
         if ($openAiKey !== '') {
-            $reply = $this->replyWithOpenAi($openAiKey, $question, $knowledge, (string) $liveShow->title);
+            $reply = $this->replyWithOpenAi($openAiKey, $question, $knowledge, $contextTitle);
             if ($reply !== null) {
                 return $reply;
             }

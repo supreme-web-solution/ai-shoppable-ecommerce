@@ -3,13 +3,16 @@ import { Head, Link } from '@inertiajs/vue3';
 import {
     CheckCircle2,
     Clock,
+    Copy,
     Film,
     Layers3,
+    Link2,
     Loader2,
     Package,
     Pencil,
     PlusCircle,
     Search,
+    Share2,
     Tag,
     Trash2,
     XCircle,
@@ -28,6 +31,16 @@ import {
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
+import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
+import {
+    type EmbedDisplayType,
+    type EmbedItem,
+    embedPreviewUrl,
+    embedScriptCode,
+    ensureEmbedForVideo,
+    socialShareLinks,
+    updateEmbedDisplayType,
+} from '@/lib/videoEmbed';
 
 type VideoItem = {
     id: number;
@@ -68,6 +81,17 @@ const errorText = ref('');
 const search = ref('');
 const videos = ref<VideoItem[]>([]);
 const playlists = ref<PlaylistItem[]>([]);
+const shareModalOpen = ref(false);
+const shareLoading = ref(false);
+const shareTypeSaving = ref(false);
+const activeShareVideo = ref<VideoItem | null>(null);
+const activeShareUrl = ref('');
+const activeEmbedCode = ref('');
+const shareEmbed = ref<EmbedItem | null>(null);
+const shareEmbedType = ref<EmbedDisplayType>('vertical_feed');
+const copiedToken = ref('');
+
+const shareApi = { getList, postJson, patchJson };
 
 /* ── playlist modal state ── */
 const playlistModalOpen = ref(false);
@@ -224,6 +248,65 @@ async function saveVideoPlaylists() {
     }
 }
 
+async function copyText(text: string, token: string) {
+    await navigator.clipboard.writeText(text);
+    copiedToken.value = token;
+    window.setTimeout(() => {
+        if (copiedToken.value === token) copiedToken.value = '';
+    }, 1800);
+}
+
+async function openShareModal(video: VideoItem) {
+    shareLoading.value = true;
+    errorText.value = '';
+    activeShareVideo.value = video;
+    shareModalOpen.value = true;
+    try {
+        const embed = await ensureEmbedForVideo(shareApi, video.id, video.title);
+        if (!embed) throw new Error('Could not generate embed.');
+        shareEmbed.value = embed;
+        shareEmbedType.value = (embed.type as EmbedDisplayType) || 'vertical_feed';
+        activeShareUrl.value = embedPreviewUrl(embed);
+        activeEmbedCode.value = embedScriptCode(embed, shareEmbedType.value);
+    } catch (err) {
+        errorText.value = err instanceof Error ? err.message : 'Could not prepare share links.';
+        activeShareUrl.value = '';
+        activeEmbedCode.value = '';
+        shareEmbed.value = null;
+    } finally {
+        shareLoading.value = false;
+    }
+}
+
+async function onShareEmbedTypeChange(type: EmbedDisplayType) {
+    if (!shareEmbed.value) {
+        return;
+    }
+
+    shareEmbedType.value = type;
+    shareTypeSaving.value = true;
+
+    try {
+        const updated = await updateEmbedDisplayType(
+            shareApi,
+            shareEmbed.value.id,
+            type,
+        );
+
+        if (updated) {
+            shareEmbed.value = updated;
+            activeEmbedCode.value = embedScriptCode(updated, type);
+        } else {
+            activeEmbedCode.value = embedScriptCode(shareEmbed.value, type);
+        }
+    } catch (err) {
+        errorText.value = err instanceof Error ? err.message : 'Could not update embed display.';
+        shareEmbedType.value = (shareEmbed.value.type as EmbedDisplayType) || 'vertical_feed';
+    } finally {
+        shareTypeSaving.value = false;
+    }
+}
+
 onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
 </script>
 
@@ -350,6 +433,14 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
                             <Package class="size-3.5" />
                             Products
                         </Link>
+                        <button type="button" class="action-btn" @click="openShareModal(video)">
+                            <Link2 class="size-3.5" />
+                            Embed
+                        </button>
+                        <button type="button" class="action-btn" @click="openShareModal(video)">
+                            <Share2 class="size-3.5" />
+                            Share
+                        </button>
 
                         <button
                             v-if="video.status !== 'published'"
@@ -457,6 +548,83 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
                     {{ savingPlaylists ? 'Saving…' : 'Save' }}
                 </Button>
             </DialogFooter>
+        </DialogContent>
+    </Dialog>
+
+    <!-- ═══════ Share & Embed modal ═══════ -->
+    <Dialog v-model:open="shareModalOpen">
+        <DialogContent class="sm:max-w-[560px]">
+            <DialogHeader>
+                <DialogTitle class="flex items-center gap-2">
+                    <Share2 class="size-4 text-[#E8563A]" />
+                    Share & Embed
+                </DialogTitle>
+                <DialogDescription>
+                    {{ activeShareVideo?.title || 'Video' }} — CDN embed + social share links.
+                </DialogDescription>
+            </DialogHeader>
+
+            <div v-if="shareLoading" class="space-y-2 py-4">
+                <Skeleton class="h-9 w-full rounded-xl" />
+                <Skeleton class="h-20 w-full rounded-xl" />
+                <Skeleton class="h-20 w-full rounded-xl" />
+            </div>
+
+            <div v-else class="space-y-4">
+                <EmbedDisplaySelect
+                    :model-value="shareEmbedType"
+                    :disabled="shareTypeSaving || !shareEmbed"
+                    @update:model-value="onShareEmbedTypeChange"
+                />
+
+                <div class="space-y-1.5">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Preview link</p>
+                    <div class="flex items-center gap-2 rounded-xl border bg-muted/30 p-2">
+                        <Input :model-value="activeShareUrl" readonly class="h-8 text-xs" />
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            :disabled="!activeShareUrl"
+                            @click="copyText(activeShareUrl, 'share-link')"
+                        >
+                            <Copy class="mr-1 size-3.5" />
+                            {{ copiedToken === 'share-link' ? 'Copied' : 'Copy' }}
+                        </Button>
+                    </div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">CDN embed code</p>
+                    <div class="rounded-xl border bg-muted/30 p-2">
+                        <pre class="max-h-28 overflow-auto whitespace-pre-wrap text-[11px]">{{ activeEmbedCode }}</pre>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        :disabled="!activeEmbedCode"
+                        @click="copyText(activeEmbedCode, 'embed-code')"
+                    >
+                        <Copy class="mr-1 size-3.5" />
+                        {{ copiedToken === 'embed-code' ? 'Copied' : 'Copy embed code' }}
+                    </Button>
+                </div>
+
+                <div class="space-y-1.5">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Share to social media</p>
+                    <div class="grid gap-2 sm:grid-cols-2">
+                        <a
+                            v-for="link in socialShareLinks(activeShareUrl, activeShareVideo?.title || '')"
+                            :key="link.key"
+                            :href="link.url"
+                            target="_blank"
+                            rel="noreferrer"
+                            class="action-btn justify-center"
+                        >
+                            {{ link.label }}
+                        </a>
+                    </div>
+                </div>
+            </div>
         </DialogContent>
     </Dialog>
 </template>

@@ -100,6 +100,8 @@ return [
         'redis:critical' => 10,
         'redis:realtime' => 10,
         'redis:media' => 90,
+        'redis:ai' => 120,
+        'redis:webhooks' => 60,
         'redis:integration' => 120,
         'redis:analytics' => 120,
         'redis:default' => 60,
@@ -202,12 +204,25 @@ return [
     */
 
     'defaults' => [
-        'critical-realtime' => [
+        'critical' => [
             'connection' => 'redis',
-            'queue' => ['critical', 'realtime'],
+            'queue' => ['critical'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
-            'maxProcesses' => 6,
+            'maxProcesses' => 4,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 3,
+            'timeout' => 60,
+            'nice' => 0,
+        ],
+        'realtime' => [
+            'connection' => 'redis',
+            'queue' => ['realtime'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 3,
             'maxTime' => 0,
             'maxJobs' => 0,
             'memory' => 256,
@@ -228,12 +243,64 @@ return [
             'timeout' => 180,
             'nice' => 0,
         ],
-        'integration-analytics' => [
+        'ai' => [
             'connection' => 'redis',
-            'queue' => ['integration', 'analytics', 'default'],
+            'queue' => ['ai'],
+            'balance' => 'simple',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 5,
+            'timeout' => 900,
+            'nice' => 0,
+        ],
+        'webhooks' => [
+            'connection' => 'redis',
+            'queue' => ['webhooks'],
+            'balance' => 'simple',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 5,
+            'timeout' => 120,
+            'nice' => 0,
+        ],
+        'integration' => [
+            'connection' => 'redis',
+            'queue' => ['integration'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
-            'maxProcesses' => 4,
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 5,
+            'timeout' => 120,
+            'nice' => 0,
+        ],
+        'analytics' => [
+            'connection' => 'redis',
+            'queue' => ['analytics'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 5,
+            'timeout' => 120,
+            'nice' => 0,
+        ],
+        'default' => [
+            'connection' => 'redis',
+            'queue' => ['default'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 2,
             'maxTime' => 0,
             'maxJobs' => 0,
             'memory' => 256,
@@ -245,23 +312,72 @@ return [
 
     'environments' => [
         'production' => [
-            'critical-realtime' => [
+            'critical' => [
                 'maxProcesses' => 12,
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
             ],
+            'realtime' => [
+                'maxProcesses' => 8,
+            ],
             'media' => [
                 'maxProcesses' => 6,
             ],
-            'integration-analytics' => [
-                'maxProcesses' => 8,
+            'ai' => [
+                'maxProcesses' => 4,
+            ],
+            'webhooks' => [
+                'maxProcesses' => 4,
+            ],
+            'integration' => [
+                'maxProcesses' => 4,
+            ],
+            'analytics' => [
+                'maxProcesses' => 4,
+            ],
+            'default' => [
+                'maxProcesses' => 4,
             ],
         ],
 
         'local' => [
-            'critical-realtime' => ['maxProcesses' => 2],
+            'critical' => ['maxProcesses' => 1],
+            'realtime' => ['maxProcesses' => 1],
             'media' => ['maxProcesses' => 1],
-            'integration-analytics' => ['maxProcesses' => 2],
+            'ai' => ['maxProcesses' => 1],
+            'webhooks' => ['maxProcesses' => 1],
+            'integration' => ['maxProcesses' => 1],
+            'analytics' => ['maxProcesses' => 1],
+            'default' => ['maxProcesses' => 1],
+        ],
+
+        'staging' => [
+            'critical' => [
+                'maxProcesses' => 6,
+                'balanceMaxShift' => 1,
+                'balanceCooldown' => 3,
+            ],
+            'realtime' => [
+                'maxProcesses' => 4,
+            ],
+            'media' => [
+                'maxProcesses' => 3,
+            ],
+            'ai' => [
+                'maxProcesses' => 2,
+            ],
+            'webhooks' => [
+                'maxProcesses' => 2,
+            ],
+            'integration' => [
+                'maxProcesses' => 2,
+            ],
+            'analytics' => [
+                'maxProcesses' => 2,
+            ],
+            'default' => [
+                'maxProcesses' => 8,
+            ],
         ],
     ],
 

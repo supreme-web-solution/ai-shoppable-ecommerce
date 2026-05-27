@@ -11,6 +11,7 @@ use App\Http\Resources\Api\V1\CommentResource;
 use App\Models\Comment;
 use App\Models\Reaction;
 use App\Models\Video;
+use App\Services\Ai\WebinarAssistantService;
 use App\Models\ViewerSession;
 use App\Support\SafeBroadcast;
 use App\Support\TeamApiAuthorizer;
@@ -20,6 +21,52 @@ use Illuminate\Support\Facades\Redis;
 
 class EngagementController extends Controller
 {
+    public function broadcastConfig(): JsonResponse
+    {
+        if (config('broadcasting.default') === 'null') {
+            return response()->json(['enabled' => false]);
+        }
+
+        $reverb = config('broadcasting.connections.reverb');
+
+        return response()->json([
+            'enabled' => true,
+            'key' => $reverb['key'] ?? null,
+            'host' => $reverb['options']['host'] ?? null,
+            'port' => (int) ($reverb['options']['port'] ?? 8080),
+            'scheme' => $reverb['options']['scheme'] ?? 'https',
+        ]);
+    }
+
+    public function comments(Request $request, TeamApiAuthorizer $authorizer): JsonResponse
+    {
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+            'video_id' => ['required', 'integer', 'exists:videos,id'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+        $authorizer->assertPlayerAccess($request, $validated['team_id']);
+
+        $teamId = (int) $validated['team_id'];
+        $videoId = (int) $validated['video_id'];
+        $video = Video::query()->findOrFail($videoId);
+        abort_if((int) $video->team_id !== $teamId, 422, 'Video does not belong to team.');
+
+        $limit = (int) ($validated['limit'] ?? 50);
+
+        $comments = Comment::query()
+            ->where('team_id', $teamId)
+            ->where('video_id', $videoId)
+            ->where('is_hidden', false)
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get();
+
+        return response()->json([
+            'data' => CommentResource::collection($comments)->resolve(),
+        ]);
+    }
+
     public function react(Request $request, TeamApiAuthorizer $authorizer): JsonResponse
     {
         $validated = $request->validate([
@@ -61,26 +108,78 @@ class EngagementController extends Controller
         return response()->json(['ok' => true, 'reaction_id' => $reaction->id, 'count' => $count], 201);
     }
 
-    public function comment(StoreCommentRequest $request, TeamApiAuthorizer $authorizer): JsonResponse
+    public function comment(
+        StoreCommentRequest $request,
+        TeamApiAuthorizer $authorizer,
+        WebinarAssistantService $assistantService,
+    ): JsonResponse
     {
         $authorizer->assertPlayerAccess($request, (int) $request->input('team_id'));
 
         $video = Video::query()->findOrFail((int) $request->input('video_id'));
         abort_if($video->team_id !== (int) $request->input('team_id'), 422, 'Video does not belong to team.');
 
+        $requestMetadata = is_array($request->input('metadata')) ? $request->input('metadata') : [];
+        $attendeeName = trim((string) data_get($requestMetadata, 'sender_name', 'Viewer'));
+        $sessionKey = trim((string) ($request->input('session_key') ?? data_get($requestMetadata, 'session_key', '')));
+        $metadata = array_merge($requestMetadata, [
+            'source' => 'live_video_chat',
+            'sender_type' => 'attendee',
+            'sender_name' => $attendeeName !== '' ? $attendeeName : 'Viewer',
+            'session_key' => $sessionKey !== '' ? $sessionKey : null,
+        ]);
+
         $comment = Comment::query()->create([
             ...$request->validated(),
             'user_id' => $request->user()?->id,
+            'metadata' => $metadata,
         ]);
 
         $resource = new CommentResource($comment->load('replies'));
+        $aiReplies = [];
 
         SafeBroadcast::try(fn () => broadcast(new CommentCreated(
             videoId: $comment->video_id,
             comment: $resource->resolve(),
         ))->toOthers());
 
-        return response()->json($resource, 201);
+        $videoMetadata = is_array($video->metadata) ? $video->metadata : [];
+        $aiEnabled = (bool) data_get($videoMetadata, 'ai_assistant_enabled', false);
+
+        if ($aiEnabled) {
+            $knowledge = $assistantService->extractKnowledgeFromSettings($videoMetadata);
+            $replyText = $assistantService->buildReplyFromKnowledge(
+                question: (string) $comment->body,
+                knowledge: $knowledge,
+                contextTitle: (string) $video->title,
+            );
+
+            $aiComment = Comment::query()->create([
+                'team_id' => $video->team_id,
+                'video_id' => $video->id,
+                'user_id' => null,
+                'parent_id' => null,
+                'body' => $replyText,
+                'metadata' => [
+                    'source' => 'live_video_chat',
+                    'sender_type' => 'ai',
+                    'sender_name' => 'AI Assistant',
+                ],
+            ]);
+
+            $aiResource = new CommentResource($aiComment);
+            $aiReplies[] = $aiResource->resolve();
+
+            SafeBroadcast::try(fn () => broadcast(new CommentCreated(
+                videoId: $aiComment->video_id,
+                comment: $aiResource->resolve(),
+            ))->toOthers());
+        }
+
+        return response()->json([
+            ...$resource->resolve(),
+            'ai_replies' => $aiReplies,
+        ], 201);
     }
 
     public function viewerPing(Request $request, TeamApiAuthorizer $authorizer): JsonResponse

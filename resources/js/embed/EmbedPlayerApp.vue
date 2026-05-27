@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import Echo from 'laravel-echo';
-import Pusher from 'pusher-js';
 import {
     computed,
     nextTick,
@@ -9,6 +7,10 @@ import {
     ref,
     watch,
 } from 'vue';
+import ChatMessageBody from '@/components/chat/ChatMessageBody.vue';
+import { embedApiUrl } from '@/embed/config';
+import { createEmbedEcho } from '@/embed/reverb';
+import type Echo from 'laravel-echo';
 
 type ProductVariant = {
     id: number;
@@ -52,7 +54,15 @@ type VideoItem = {
     metadata?: VideoMetadata | null;
 };
 
-type CommentItem = { id: number; body: string; created_at?: string };
+type CommentItem = {
+    id: number;
+    body: string;
+    created_at?: string;
+    metadata?: {
+        sender_type?: 'host' | 'attendee' | 'ai' | 'system' | string;
+        sender_name?: string;
+    };
+};
 type CartItem = {
     id: number;
     product_id: number;
@@ -76,7 +86,15 @@ type LiveShowItem = {
 };
 type FloatingReaction = { id: number; left: number };
 
-const props = defineProps<{ embedSlug: string }>();
+const props = withDefaults(
+    defineProps<{
+        embedSlug: string;
+        layout?: 'vertical' | 'carousel' | 'inline' | 'product_page';
+    }>(),
+    {
+        layout: 'vertical',
+    },
+);
 
 const feed = ref<VideoItem[]>([]);
 const feedPage = ref(1);
@@ -87,7 +105,13 @@ const loading = ref(true);
 const reactionCount = ref(0);
 const viewerCount = ref(0);
 const commentText = ref('');
+const commentSending = ref(false);
 const comments = ref<CommentItem[]>([]);
+const viewerName = ref(
+    typeof window !== 'undefined'
+        ? window.localStorage.getItem('embed_viewer_name') || ''
+        : '',
+);
 const currentTimeMs = ref(0);
 const errorText = ref('');
 const cart = ref<CartPayload | null>(null);
@@ -96,6 +120,7 @@ const checkoutLoading = ref(false);
 const checkoutSuccessText = ref('');
 const commentPanelOpen = ref(false);
 const selectedVariantId = ref<number | null>(null);
+const variantByTagId = ref<Record<number, number | null>>({});
 const floatingReactions = ref<FloatingReaction[]>([]);
 const savedVideoIds = ref<number[]>([]);
 const videoElement = ref<HTMLVideoElement | null>(null);
@@ -103,6 +128,10 @@ const isMuted = ref(true);
 const liveShow = ref<LiveShowItem | null>(null);
 const nowTickMs = ref(Date.now());
 const activeProductIndex = ref(0);
+const carouselStripRef = ref<HTMLElement | null>(null);
+
+const isCarouselLayout = computed(() => props.layout === 'carousel');
+const isProductPageLayout = computed(() => props.layout === 'product_page');
 
 /* ─── simulated viewer count ─── */
 const simulatedViewerCount = ref(0);
@@ -264,7 +293,8 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     const h = new Headers(options?.headers ?? {});
     h.set('Accept', 'application/json');
     h.set('X-Embed-Slug', props.embedSlug);
-    const r = await fetch(url, { ...options, headers: h });
+    const requestUrl = url.startsWith('http') ? url : embedApiUrl(url);
+    const r = await fetch(requestUrl, { ...options, headers: h });
 
     if (!r.ok) {
         throw new Error(`Request failed (${r.status})`);
@@ -418,13 +448,57 @@ async function sendReaction() {
     }
 }
 
-async function sendComment() {
-    if (!currentVideo.value || !commentText.value.trim()) {
+function displayViewerName(): string {
+    const name = viewerName.value.trim();
+
+    return name !== '' ? name : 'Viewer';
+}
+
+function persistViewerName() {
+    const name = viewerName.value.trim();
+
+    if (typeof window !== 'undefined' && name !== '') {
+        window.localStorage.setItem('embed_viewer_name', name);
+    }
+}
+
+function pushComment(comment: CommentItem | null | undefined) {
+    if (!comment?.id) {
         return;
     }
 
+    if (comments.value.some((existing) => existing.id === comment.id)) {
+        return;
+    }
+
+    comments.value.unshift(comment);
+}
+
+async function loadComments(videoId: number, teamId: number) {
     try {
-        const p = await fetchJson<{ data?: CommentItem } | CommentItem>(
+        const payload = await fetchJson<{ data?: CommentItem[] }>(
+            `/api/v1/player/comments?team_id=${teamId}&video_id=${videoId}&limit=50`,
+        );
+        comments.value = payload.data ?? [];
+    } catch {
+        comments.value = [];
+    }
+}
+
+async function sendComment() {
+    const body = commentText.value.trim();
+    if (!currentVideo.value || !body || commentSending.value) {
+        return;
+    }
+
+    persistViewerName();
+    commentSending.value = true;
+    commentText.value = '';
+
+    try {
+        const p = await fetchJson<
+            { data?: CommentItem; ai_replies?: CommentItem[] } | CommentItem
+        >(
             '/api/v1/player/comments',
             {
                 method: 'POST',
@@ -432,20 +506,37 @@ async function sendComment() {
                 body: JSON.stringify({
                     team_id: currentVideo.value.team_id,
                     video_id: currentVideo.value.id,
-                    body: commentText.value.trim(),
+                    body,
+                    session_key: sessionKey,
+                    metadata: {
+                        sender_name: displayViewerName(),
+                        session_key: sessionKey,
+                    },
                 }),
             },
         );
         const c = asData<CommentItem>(p);
 
-        if (c) {
-            comments.value.unshift(c);
+        pushComment(c);
+
+        if (typeof p === 'object' && p && 'ai_replies' in p) {
+            const aiReplies: CommentItem[] = Array.isArray((p as { ai_replies?: CommentItem[] }).ai_replies)
+                ? (p as { ai_replies?: CommentItem[] }).ai_replies ?? []
+                : [];
+
+            for (const aiReply of aiReplies) {
+                pushComment(aiReply);
+            }
         }
 
-        commentText.value = '';
         void postAnalytics('comment_submitted');
     } catch {
+        if (!commentText.value) {
+            commentText.value = body;
+        }
         errorText.value = 'Could not post comment.';
+    } finally {
+        commentSending.value = false;
     }
 }
 
@@ -501,12 +592,39 @@ async function addToCart() {
     }
 }
 
-async function addTagToCart(tag: ProductTag) {
+function defaultVariantForTag(tag: ProductTag): number | null {
+    const variants = tag.product?.variants ?? [];
+
+    return (
+        variants.find((v) => v.is_default)?.id ?? variants[0]?.id ?? null
+    );
+}
+
+function tagVariantId(tag: ProductTag): number | null {
+    if (tag.id in variantByTagId.value) {
+        return variantByTagId.value[tag.id];
+    }
+
+    return defaultVariantForTag(tag);
+}
+
+function initVariantMap(tags: ProductTag[]) {
+    const map: Record<number, number | null> = {};
+
+    for (const tag of tags) {
+        map[tag.id] = defaultVariantForTag(tag);
+    }
+
+    variantByTagId.value = map;
+}
+
+async function addTagToCart(tag: ProductTag, options?: { openCart?: boolean }) {
     if (!currentVideo.value || !tag.product) {
         return;
     }
 
     try {
+        const variantId = tagVariantId(tag);
         const p = await fetchJson<{ data?: CartPayload } | CartPayload>(
             '/api/v1/player/cart/items',
             {
@@ -516,14 +634,35 @@ async function addTagToCart(tag: ProductTag) {
                     team_id: currentVideo.value.team_id,
                     session_key: sessionKey,
                     product_id: tag.product.id,
+                    product_variant_id: variantId,
                     quantity: 1,
                 }),
             },
         );
         cart.value = asData<CartPayload>(p);
-        cartOpen.value = true;
+        if (options?.openCart !== false) {
+            cartOpen.value = true;
+        }
+        void postAnalytics('add_to_cart', { product_id: tag.product.id });
     } catch {
         errorText.value = 'Could not add to cart.';
+    }
+}
+
+async function buyTagNow(tag: ProductTag) {
+    if (!currentVideo.value || !tag.product || checkoutLoading.value) {
+        return;
+    }
+
+    const idx = pinnedTags.value.findIndex((t) => t.id === tag.id);
+    if (idx >= 0) {
+        activeProductIndex.value = idx;
+        selectedVariantId.value = tagVariantId(tag);
+    }
+
+    await addTagToCart(tag, { openCart: false });
+    if (cart.value) {
+        await checkoutCart();
     }
 }
 
@@ -601,13 +740,17 @@ async function checkoutCart() {
             }),
         });
 
-        if (p.checkout_url) {
+        if ('checkout_url' in p && typeof p.checkout_url === 'string' && p.checkout_url !== '') {
             window.location.href = p.checkout_url;
 
             return;
         }
 
-        const order = asData<{ order_number?: string }>(p);
+        const orderPayload =
+            'checkout_url' in p
+                ? null
+                : (p as { data?: { order_number?: string }; order_number?: string });
+        const order = asData<{ order_number?: string }>(orderPayload);
 
         if (order?.order_number) {
             checkoutSuccessText.value = `Order ${order.order_number} confirmed. Thank you!`;
@@ -666,10 +809,30 @@ function previousVideo() {
     }
 }
 
+function goToVideo(index: number) {
+    if (index < 0 || index >= feed.value.length) {
+        return;
+    }
+
+    currentIndex.value = index;
+
+    if (index >= feed.value.length - 2 && hasMoreFeed.value) {
+        void loadFeed(feedPage.value + 1, true);
+    }
+}
+
 function onTouchStart(e: TouchEvent) {
+    if (props.layout === 'carousel' || props.layout === 'product_page') {
+        return;
+    }
+
     touchStartY.value = e.changedTouches[0]?.clientY ?? null;
 }
 function onTouchEnd(e: TouchEvent) {
+    if (props.layout === 'carousel' || props.layout === 'product_page') {
+        return;
+    }
+
     touchEndY.value = e.changedTouches[0]?.clientY ?? null;
 
     if (touchStartY.value === null || touchEndY.value === null) {
@@ -685,23 +848,12 @@ function onTouchEnd(e: TouchEvent) {
     }
 }
 
-function initializeRealtime() {
-    if (echo || !import.meta.env.VITE_REVERB_APP_KEY) {
+async function initializeRealtime() {
+    if (echo) {
         return;
     }
 
-    const scheme = import.meta.env.VITE_REVERB_SCHEME || 'http';
-    const host = import.meta.env.VITE_REVERB_HOST || window.location.hostname;
-    const port = Number(import.meta.env.VITE_REVERB_PORT || 8080);
-    const client = new Pusher(import.meta.env.VITE_REVERB_APP_KEY, {
-        wsHost: host,
-        wsPort: port,
-        wssPort: port,
-        forceTLS: scheme === 'https',
-        enabledTransports: ['ws', 'wss'],
-        cluster: 'mt1',
-    });
-    echo = new Echo({ broadcaster: 'reverb', client });
+    echo = await createEmbedEcho();
 }
 
 function subscribeToVideo(videoId: number) {
@@ -722,9 +874,7 @@ function subscribeToVideo(videoId: number) {
             viewerCount.value = e.viewer_count;
         })
         .listen('.comment.created', (e: { comment?: CommentItem }) => {
-            if (e.comment) {
-                comments.value.unshift(e.comment);
-            }
+            pushComment(e.comment);
         });
 }
 
@@ -739,6 +889,17 @@ async function resetVideoPlayback() {
     }
 }
 
+watch(currentIndex, async () => {
+    if (!isCarouselLayout.value) {
+        return;
+    }
+
+    await nextTick();
+    carouselStripRef.value
+        ?.querySelector('.feed-carousel-thumb--active')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+});
+
 watch(currentVideo, async (video) => {
     if (!video) {
         return;
@@ -749,11 +910,12 @@ watch(currentVideo, async (video) => {
     comments.value = [];
     liveShow.value = null;
     activeProductIndex.value = 0;
-    selectedVariantId.value =
-        video.product_tags?.[0]?.product?.variants?.find((v) => v.is_default)
-            ?.id ??
-        video.product_tags?.[0]?.product?.variants?.[0]?.id ??
-        null;
+    const pinned = (video.product_tags ?? []).filter((t) => t.is_pinned);
+    const productList =
+        pinned.length > 0 ? pinned : (video.product_tags ?? []);
+    initVariantMap(productList);
+    const firstTag = productList[0] ?? null;
+    selectedVariantId.value = firstTag ? tagVariantId(firstTag) : null;
 
     stopViewerSimulation();
     const meta = video.metadata;
@@ -770,9 +932,10 @@ watch(currentVideo, async (video) => {
         void loadFeed(feedPage.value + 1, true);
     }
 
-    initializeRealtime();
+    await initializeRealtime();
     subscribeToVideo(video.id);
     startViewerHeartbeat(video);
+    await loadComments(video.id, video.team_id);
     await loadCart(video.team_id);
     await loadLiveShow(video.team_id, video.id);
     await resetVideoPlayback();
@@ -806,9 +969,10 @@ onMounted(async () => {
             startViewerSimulation(meta.viewer_sim_min, meta.viewer_sim_max);
         }
 
-        initializeRealtime();
+        await initializeRealtime();
         subscribeToVideo(currentVideo.value.id);
         startViewerHeartbeat(currentVideo.value);
+        await loadComments(currentVideo.value.id, currentVideo.value.team_id);
         await loadCart(currentVideo.value.team_id);
         await loadLiveShow(currentVideo.value.team_id, currentVideo.value.id);
         void postAnalytics('video_view');
@@ -835,7 +999,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="player-root">
+    <div
+        class="player-root"
+        :class="{
+            'player-root--carousel': layout === 'carousel',
+            'player-root--product-page': layout === 'product_page',
+            'player-root--inline': layout === 'inline',
+        }"
+    >
         <!-- ═══ LOADING ═══ -->
         <div v-if="loading" class="player-center">
             <div class="loader-ring"></div>
@@ -888,9 +1059,11 @@ onBeforeUnmount(() => {
             <!-- Video -->
             <div
                 class="video-layer"
+                :class="{ 'video-layer--product-page': isProductPageLayout }"
                 @touchstart.passive="onTouchStart"
                 @touchend.passive="onTouchEnd"
             >
+                <div class="video-stage">
                 <div
                     class="video-ambient"
                     :style="{
@@ -1172,8 +1345,8 @@ onBeforeUnmount(() => {
                         <span class="rail-label">Cart</span>
                     </button>
 
-                    <!-- Navigation -->
-                    <div class="rail-nav">
+                    <!-- Navigation (vertical feed only; carousel uses playlist rail) -->
+                    <div v-if="!isCarouselLayout && !isProductPageLayout" class="rail-nav">
                         <button
                             type="button"
                             class="nav-btn"
@@ -1212,7 +1385,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <!-- ── POPUP PRODUCT (timed) ── -->
-                <Transition name="popup">
+                <Transition v-if="!isProductPageLayout" name="popup">
                     <div v-if="popupTag?.product" class="popup-card">
                         <p class="popup-label">Limited offer</p>
                         <p class="popup-title">{{ popupTag.product.title }}</p>
@@ -1236,9 +1409,17 @@ onBeforeUnmount(() => {
                         </button>
                     </div>
                 </Transition>
+                </div>
 
                 <!-- ── BOTTOM INFO + PRODUCT CAROUSEL ── -->
-                <div class="bottom-area">
+                <div
+                    class="bottom-area"
+                    :class="{ 'commerce-panel': isProductPageLayout }"
+                >
+                    <div v-if="isProductPageLayout" class="commerce-panel-head">
+                        <span class="commerce-panel-badge">Shoppable video</span>
+                        <p class="commerce-panel-eyebrow">Watch &amp; shop</p>
+                    </div>
                     <!-- Title & description -->
                     <div class="video-meta">
                         <h2 class="video-title">{{ currentVideo.title }}</h2>
@@ -1253,104 +1434,192 @@ onBeforeUnmount(() => {
                         class="product-carousel-wrap"
                     >
                         <!-- Scroll track -->
-                        <div class="product-carousel">
-                            <button
+                        <div
+                            class="product-carousel"
+                            :class="{
+                                'product-carousel--stacked':
+                                    isProductPageLayout,
+                            }"
+                        >
+                            <component
+                                :is="isProductPageLayout ? 'div' : 'button'"
                                 v-for="(tag, idx) in pinnedTags"
                                 :key="tag.id"
-                                type="button"
+                                :type="
+                                    isProductPageLayout ? undefined : 'button'
+                                "
                                 :class="[
                                     'product-card',
+                                    isProductPageLayout
+                                        ? 'product-card--page'
+                                        : '',
                                     idx === activeProductIndex
                                         ? 'product-card--active'
                                         : '',
                                 ]"
-                                @click="activeProductIndex = idx"
+                                @click="
+                                    isProductPageLayout
+                                        ? undefined
+                                        : (activeProductIndex = idx)
+                                "
                             >
-                                <!-- Product image -->
-                                <div class="product-img-wrap">
-                                    <img
-                                        v-if="tag.product?.image_url"
-                                        :src="tag.product.image_url"
-                                        :alt="tag.product?.title"
-                                        class="product-img"
-                                    />
-                                    <div v-else class="product-img-placeholder">
+                                <div
+                                    class="product-card-main"
+                                    :class="{
+                                        'product-card-main--clickable':
+                                            isProductPageLayout,
+                                    }"
+                                    @click="
+                                        isProductPageLayout
+                                            ? (activeProductIndex = idx)
+                                            : undefined
+                                    "
+                                >
+                                    <div class="product-img-wrap">
+                                        <img
+                                            v-if="tag.product?.image_url"
+                                            :src="tag.product.image_url"
+                                            :alt="tag.product?.title"
+                                            class="product-img"
+                                        />
+                                        <div
+                                            v-else
+                                            class="product-img-placeholder"
+                                        >
+                                            <svg
+                                                width="18"
+                                                height="18"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="1.5"
+                                                class="text-white/30"
+                                            >
+                                                <rect
+                                                    x="3"
+                                                    y="3"
+                                                    width="18"
+                                                    height="18"
+                                                    rx="2"
+                                                />
+                                                <circle
+                                                    cx="8.5"
+                                                    cy="8.5"
+                                                    r="1.5"
+                                                />
+                                                <polyline
+                                                    points="21 15 16 10 5 21"
+                                                />
+                                            </svg>
+                                        </div>
+                                    </div>
+                                    <div class="product-info">
+                                        <p class="product-name">
+                                            {{ tag.product?.title }}
+                                        </p>
+                                        <div class="product-price-row">
+                                            <span
+                                                v-if="tag.product?.sale_price"
+                                                class="product-sale-price"
+                                                >{{
+                                                    tag.product.sale_price
+                                                }}</span
+                                            >
+                                            <span
+                                                :class="
+                                                    tag.product?.sale_price
+                                                        ? 'product-orig-price'
+                                                        : 'product-price'
+                                                "
+                                            >
+                                                {{ tag.product?.price }}
+                                            </span>
+                                            <span
+                                                v-if="tag.discount_percent"
+                                                class="product-badge"
+                                                >-{{
+                                                    tag.discount_percent
+                                                }}%</span
+                                            >
+                                        </div>
+                                    </div>
+                                    <button
+                                        v-if="!isProductPageLayout"
+                                        type="button"
+                                        class="product-cart-btn"
+                                        @click.stop="addTagToCart(tag)"
+                                    >
                                         <svg
-                                            width="18"
-                                            height="18"
+                                            width="14"
+                                            height="14"
                                             viewBox="0 0 24 24"
                                             fill="none"
                                             stroke="currentColor"
-                                            stroke-width="1.5"
-                                            class="text-white/30"
+                                            stroke-width="2.5"
                                         >
-                                            <rect
-                                                x="3"
-                                                y="3"
-                                                width="18"
-                                                height="18"
-                                                rx="2"
-                                            />
-                                            <circle cx="8.5" cy="8.5" r="1.5" />
-                                            <polyline
-                                                points="21 15 16 10 5 21"
+                                            <circle cx="9" cy="21" r="1" />
+                                            <circle cx="20" cy="21" r="1" />
+                                            <path
+                                                d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"
                                             />
                                         </svg>
-                                    </div>
+                                    </button>
                                 </div>
-                                <!-- Product info -->
-                                <div class="product-info">
-                                    <p class="product-name">
-                                        {{ tag.product?.title }}
-                                    </p>
-                                    <div class="product-price-row">
-                                        <span
-                                            v-if="tag.product?.sale_price"
-                                            class="product-sale-price"
-                                            >{{ tag.product.sale_price }}</span
-                                        >
-                                        <span
-                                            :class="
-                                                tag.product?.sale_price
-                                                    ? 'product-orig-price'
-                                                    : 'product-price'
-                                            "
-                                        >
-                                            {{ tag.product?.price }}
-                                        </span>
-                                        <span
-                                            v-if="tag.discount_percent"
-                                            class="product-badge"
-                                            >-{{ tag.discount_percent }}%</span
-                                        >
-                                    </div>
-                                </div>
-                                <!-- Cart icon -->
-                                <button
-                                    type="button"
-                                    class="product-cart-btn"
-                                    @click.stop="addTagToCart(tag)"
+
+                                <div
+                                    v-if="
+                                        isProductPageLayout && tag.product
+                                    "
+                                    class="product-card-actions"
+                                    @click.stop
                                 >
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2.5"
+                                    <select
+                                        v-if="
+                                            (tag.product.variants?.length ??
+                                                0) > 0
+                                        "
+                                        v-model="variantByTagId[tag.id]"
+                                        class="variant-select variant-select--page"
                                     >
-                                        <circle cx="9" cy="21" r="1" />
-                                        <circle cx="20" cy="21" r="1" />
-                                        <path
-                                            d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"
-                                        />
-                                    </svg>
-                                </button>
-                            </button>
+                                        <option
+                                            v-for="v in tag.product.variants"
+                                            :key="v.id"
+                                            :value="v.id"
+                                        >
+                                            {{ v.title }} —
+                                            {{ v.sale_price || v.price }}
+                                        </option>
+                                    </select>
+                                    <div class="product-card-cta-row">
+                                        <button
+                                            type="button"
+                                            class="btn-add-cart btn-add-cart--page"
+                                            @click="addTagToCart(tag)"
+                                        >
+                                            {{
+                                                tag.cta_label || 'Add to cart'
+                                            }}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn-buy-now btn-buy-now--page"
+                                            :disabled="checkoutLoading"
+                                            @click="buyTagNow(tag)"
+                                        >
+                                            Buy now
+                                        </button>
+                                    </div>
+                                </div>
+                            </component>
                         </div>
 
                         <!-- Dot indicators (when >1) -->
-                        <div v-if="pinnedTags.length > 1" class="carousel-dots">
+                        <div
+                            v-if="
+                                !isProductPageLayout && pinnedTags.length > 1
+                            "
+                            class="carousel-dots"
+                        >
                             <span
                                 v-for="(_, i) in pinnedTags"
                                 :key="i"
@@ -1364,8 +1633,11 @@ onBeforeUnmount(() => {
                             />
                         </div>
 
-                        <!-- CTA row for active product -->
-                        <div v-if="currentTag?.product" class="cta-row">
+                        <!-- CTA row for active product (vertical / carousel layouts) -->
+                        <div
+                            v-if="currentTag?.product && !isProductPageLayout"
+                            class="cta-row"
+                        >
                             <select
                                 v-if="productVariants.length > 0"
                                 v-model="selectedVariantId"
@@ -1412,6 +1684,58 @@ onBeforeUnmount(() => {
                     </div>
                 </div>
             </div>
+
+            <aside
+                v-if="isCarouselLayout && feed.length > 0"
+                class="feed-carousel-strip"
+                aria-label="Video playlist"
+            >
+                <div class="feed-carousel-strip-head">
+                    <div>
+                        <p class="feed-carousel-strip-label">In this playlist</p>
+                        <p class="feed-carousel-strip-sub">
+                            Tap a video to switch
+                        </p>
+                    </div>
+                    <span class="feed-carousel-strip-count">
+                        {{ currentIndex + 1 }} / {{ feed.length }}{{ hasMoreFeed ? '+' : '' }}
+                    </span>
+                </div>
+
+                <div ref="carouselStripRef" class="feed-carousel-strip-scroll">
+                    <button
+                        v-for="(video, index) in feed"
+                        :key="video.id"
+                        type="button"
+                        class="feed-carousel-thumb"
+                        :class="{ 'feed-carousel-thumb--active': index === currentIndex }"
+                        :aria-current="index === currentIndex ? 'true' : undefined"
+                        @click="goToVideo(index)"
+                    >
+                        <div class="feed-carousel-thumb-media">
+                            <img
+                                v-if="video.thumbnail_url"
+                                :src="video.thumbnail_url"
+                                :alt="video.title"
+                                class="feed-carousel-thumb-img"
+                                loading="lazy"
+                            >
+                            <div v-else class="feed-carousel-thumb-fallback">
+                                <span>{{ video.title[0]?.toUpperCase() || 'V' }}</span>
+                            </div>
+                            <span class="feed-carousel-thumb-index">{{ index + 1 }}</span>
+                            <span
+                                v-if="index === currentIndex"
+                                class="feed-carousel-thumb-playing"
+                            >
+                                <span class="feed-carousel-thumb-playing-dot" />
+                                Now playing
+                            </span>
+                        </div>
+                        <span class="feed-carousel-thumb-title">{{ video.title }}</span>
+                    </button>
+                </div>
+            </aside>
 
             <!-- ═══ COMMENT PANEL ═══ -->
             <Transition name="slide-up">
@@ -1460,22 +1784,49 @@ onBeforeUnmount(() => {
                             :key="c.id"
                             class="comment-item"
                         >
-                            <div class="comment-avatar">
-                                {{ c.body[0]?.toUpperCase() }}
+                            <div
+                                class="comment-avatar"
+                                :class="{
+                                    'comment-avatar-ai': c.metadata?.sender_type === 'ai',
+                                    'comment-avatar-host': c.metadata?.sender_type === 'host',
+                                }"
+                            >
+                                {{ (c.metadata?.sender_name || c.body[0] || '?')[0]?.toUpperCase() }}
                             </div>
-                            <p class="comment-body">{{ c.body }}</p>
+                            <div class="comment-content">
+                                <p
+                                    v-if="c.metadata?.sender_name"
+                                    class="comment-author"
+                                >
+                                    {{ c.metadata.sender_name }}
+                                </p>
+                                <p class="comment-body">
+                                    <ChatMessageBody :text="c.body" variant="embed" />
+                                </p>
+                            </div>
                         </div>
+                    </div>
+                    <div class="comment-name-row">
+                        <input
+                            v-model="viewerName"
+                            class="comment-name-input"
+                            placeholder="Your name (optional)"
+                            maxlength="40"
+                            :disabled="commentSending"
+                        />
                     </div>
                     <div class="comment-input-row">
                         <input
                             v-model="commentText"
                             class="comment-input"
-                            placeholder="Write a comment…"
+                            placeholder="Write a comment or paste a link…"
+                            :disabled="commentSending"
                             @keyup.enter="sendComment"
                         />
                         <button
                             type="button"
                             class="comment-send"
+                            :disabled="commentSending || !commentText.trim()"
                             @click="sendComment"
                         >
                             <svg
@@ -1667,16 +2018,622 @@ onBeforeUnmount(() => {
     box-shadow: 0 22px 80px rgba(0, 0, 0, 0.45);
 }
 
+.player-root--carousel {
+    position: relative;
+    z-index: 50;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(420px, 1fr) auto;
+    grid-template-areas:
+        'stage'
+        'rail';
+    width: 100%;
+    max-width: min(1180px, 100%);
+    height: auto;
+    min-height: min(720px, 100dvh);
+    max-height: none;
+    overflow: hidden;
+    border-radius: 28px;
+    box-shadow:
+        0 28px 90px rgba(0, 0, 0, 0.42),
+        0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+
+.player-root--carousel .video-layer {
+    grid-area: stage;
+    flex: none;
+    min-height: 420px;
+    max-height: min(78vh, 760px);
+}
+
+.player-root--carousel .hud-top {
+    z-index: 40;
+}
+
+.player-root--carousel .action-rail {
+    z-index: 45;
+    bottom: 148px;
+}
+
+.player-root--carousel .bottom-area {
+    z-index: 38;
+    padding-bottom: 18px;
+}
+
+.player-root--carousel .floating-heart {
+    z-index: 44;
+    bottom: 200px;
+}
+
+.player-root--carousel .popup-card {
+    z-index: 42;
+}
+
+.player-root--carousel .rail-nav {
+    z-index: 41;
+}
+
+.player-root--carousel .panel {
+    z-index: 120;
+}
+
+.player-root--product-page {
+    position: relative;
+    z-index: 50;
+    width: 100%;
+    max-width: min(1180px, 100%);
+    height: auto;
+    min-height: min(640px, 100dvh);
+    max-height: none;
+    overflow: hidden;
+    border-radius: 28px;
+    background: #f7f4ef;
+    color: #111827;
+    box-shadow:
+        0 28px 90px rgba(0, 0, 0, 0.2),
+        0 0 0 1px rgba(17, 24, 39, 0.06);
+}
+
+.video-layer--product-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(360px, 52vh) auto;
+    grid-template-areas:
+        'stage'
+        'commerce';
+    gap: 0;
+    flex: none;
+    min-height: 0;
+    overflow: hidden;
+    background: #050505;
+}
+
+.video-layer--product-page .video-stage {
+    position: relative;
+    grid-area: stage;
+    min-height: 360px;
+    overflow: hidden;
+    background: #050505;
+}
+
+.video-layer--product-page .commerce-panel {
+    position: relative;
+    grid-area: commerce;
+    z-index: 20;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    padding: 18px 18px 20px;
+    background:
+        linear-gradient(180deg, #ffffff 0%, #faf8f5 100%);
+    border-top: 1px solid rgba(17, 24, 39, 0.08);
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.06);
+}
+
+.commerce-panel-head {
+    margin-bottom: 14px;
+}
+
+.commerce-panel-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    background: rgba(232, 86, 58, 0.1);
+    border: 1px solid rgba(232, 86, 58, 0.22);
+    padding: 4px 10px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #e8563a;
+}
+
+.commerce-panel-eyebrow {
+    margin: 8px 0 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+}
+
+.player-root--product-page .action-rail {
+    z-index: 45;
+    bottom: 24px;
+    right: 14px;
+}
+
+.player-root--product-page .hud-top {
+    z-index: 40;
+}
+
+.player-root--product-page .floating-heart {
+    z-index: 44;
+    bottom: 88px;
+}
+
+.player-root--product-page .panel {
+    z-index: 120;
+}
+
+.player-root--product-page .commerce-panel .video-meta {
+    margin-bottom: 14px;
+    padding-right: 0;
+}
+
+.player-root--product-page .commerce-panel .video-title {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.2;
+    color: #111827;
+    text-shadow: none;
+    letter-spacing: -0.02em;
+}
+
+.player-root--product-page .commerce-panel .video-desc {
+    margin-top: 8px;
+    font-size: 14px;
+    color: #6b7280;
+    -webkit-line-clamp: 4;
+}
+
+.player-root--product-page .commerce-panel .product-carousel-wrap {
+    min-width: 0;
+    max-width: 100%;
+    background: #fff;
+    border: 1px solid #ece8e2;
+    border-radius: 20px;
+    padding: 14px;
+    box-shadow: 0 10px 30px rgba(17, 24, 39, 0.06);
+    backdrop-filter: none;
+    overflow: hidden;
+}
+
+.player-root--product-page .commerce-panel .product-carousel--stacked {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: min(46vh, 420px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 2px;
+    -webkit-overflow-scrolling: touch;
+}
+
+.player-root--product-page .commerce-panel .product-card--page {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    background: #faf8f5;
+    border: 1px solid #ece8e2;
+    border-radius: 16px;
+    padding: 10px;
+    cursor: default;
+}
+
+.player-root--product-page .commerce-panel .product-card-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.player-root--product-page .commerce-panel .product-card-main--clickable {
+    cursor: pointer;
+}
+
+.player-root--product-page .commerce-panel .product-card-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+}
+
+.player-root--product-page .commerce-panel .variant-select--page {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    border-radius: 12px;
+    padding: 9px 12px;
+    font-size: 12px;
+    flex: none;
+}
+
+.player-root--product-page .commerce-panel .product-card-cta-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    width: 100%;
+}
+
+.player-root--product-page .commerce-panel .btn-add-cart--page,
+.player-root--product-page .commerce-panel .btn-buy-now--page {
+    min-width: 0;
+    width: 100%;
+    justify-content: center;
+    border-radius: 12px;
+    padding: 10px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.player-root--product-page .commerce-panel .btn-add-cart--page {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    color: #111827;
+}
+
+.player-root--product-page .commerce-panel .btn-add-cart--page:hover {
+    background: #f9fafb;
+}
+
+.player-root--product-page .commerce-panel .product-card {
+    min-width: 0;
+    background: #faf8f5;
+    border: 1px solid #ece8e2;
+}
+
+.player-root--product-page .commerce-panel .product-card--active {
+    background: #fff7f4;
+    border-color: #e8563a;
+    box-shadow: 0 0 0 1px rgba(232, 86, 58, 0.15);
+}
+
+.player-root--product-page .commerce-panel .product-name,
+.player-root--product-page .commerce-panel .product-price {
+    color: #111827;
+}
+
+.player-root--product-page .commerce-panel .product-price-old {
+    color: #9ca3af;
+}
+
+.player-root--product-page .commerce-panel .variant-select:not(
+        .variant-select--page
+    ) {
+    background: #fff;
+    border-color: #e5e7eb;
+    color: #111827;
+}
+
+@media (min-width: 900px) {
+    .video-layer--product-page {
+        grid-template-columns: minmax(0, 1.15fr) minmax(320px, 400px);
+        grid-template-rows: minmax(560px, 72vh);
+        grid-template-areas: 'stage commerce';
+    }
+
+    .video-layer--product-page .video-stage {
+        min-height: 560px;
+    }
+
+    .video-layer--product-page .commerce-panel {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        height: 100%;
+        max-height: min(82vh, 820px);
+        overflow-y: auto;
+        border-top: none;
+        border-left: 1px solid rgba(17, 24, 39, 0.08);
+        box-shadow: -10px 0 36px rgba(0, 0, 0, 0.05);
+    }
+
+    .player-root--product-page .commerce-panel .product-carousel--stacked {
+        max-height: min(52vh, 480px);
+    }
+}
+
+.player-root--inline {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.feed-carousel-strip {
+    position: relative;
+    z-index: 60;
+    grid-area: rail;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px 14px 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background:
+        linear-gradient(180deg, rgba(18, 18, 20, 0.98), rgba(8, 8, 10, 0.99)),
+        #0a0a0c;
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.feed-carousel-strip-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.feed-carousel-strip-label {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #fff;
+}
+
+.feed-carousel-strip-sub {
+    margin: 2px 0 0;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.52);
+}
+
+.feed-carousel-strip-count {
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: rgba(232, 86, 58, 0.16);
+    border: 1px solid rgba(232, 86, 58, 0.35);
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 800;
+    color: #ffb49e;
+}
+
+.feed-carousel-strip-scroll {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 2px 8px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(
+        90deg,
+        transparent,
+        #000 24px,
+        #000 calc(100% - 24px),
+        transparent
+    );
+}
+
+.feed-carousel-strip-scroll::-webkit-scrollbar {
+    height: 8px;
+}
+
+.feed-carousel-strip-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+}
+
+.feed-carousel-thumb {
+    flex: 0 0 132px;
+    scroll-snap-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+    border: none;
+    border-radius: 16px;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+    opacity: 0.82;
+    transition:
+        opacity 0.2s ease,
+        transform 0.2s ease;
+}
+
+.feed-carousel-thumb:hover {
+    opacity: 1;
+    transform: translateY(-2px);
+}
+
+.feed-carousel-thumb--active {
+    opacity: 1;
+}
+
+.feed-carousel-thumb-media {
+    position: relative;
+    overflow: hidden;
+    border-radius: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+    transition:
+        border-color 0.2s ease,
+        box-shadow 0.2s ease;
+}
+
+.feed-carousel-thumb--active .feed-carousel-thumb-media {
+    border-color: #e8563a;
+    box-shadow:
+        0 0 0 1px rgba(232, 86, 58, 0.45),
+        0 16px 36px rgba(232, 86, 58, 0.28);
+}
+
+.feed-carousel-thumb-img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 9 / 14;
+    object-fit: cover;
+}
+
+.feed-carousel-thumb-fallback {
+    display: flex;
+    aspect-ratio: 9 / 14;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(145deg, rgba(232, 86, 58, 0.35), rgba(255, 140, 66, 0.2));
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: #fff;
+}
+
+.feed-carousel-thumb-index {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+    min-width: 22px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(8px);
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 800;
+    color: #fff;
+    text-align: center;
+}
+
+.feed-carousel-thumb-playing {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 999px;
+    background: rgba(232, 86, 58, 0.92);
+    padding: 4px 8px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #fff;
+}
+
+.feed-carousel-thumb-playing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #fff;
+    animation: pulse 1.2s infinite;
+}
+
+.feed-carousel-thumb-title {
+    display: -webkit-box;
+    padding: 0 2px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.9);
+    overflow: hidden;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+@media (min-width: 900px) {
+    .player-root--carousel {
+        grid-template-columns: minmax(0, 1fr) 248px;
+        grid-template-rows: minmax(560px, 1fr);
+        grid-template-areas: 'stage rail';
+        min-height: min(680px, 92dvh);
+    }
+
+    .player-root--carousel .video-layer {
+        min-height: 560px;
+        max-height: min(82vh, 820px);
+    }
+
+    .player-root--carousel .action-rail {
+        bottom: 128px;
+    }
+
+    .player-root--carousel .floating-heart {
+        bottom: 180px;
+    }
+
+    .feed-carousel-strip {
+        height: 100%;
+        border-top: none;
+        border-left: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: -12px 0 40px rgba(0, 0, 0, 0.28);
+        padding: 18px 14px;
+    }
+
+    .feed-carousel-strip-scroll {
+        flex: 1;
+        flex-direction: column;
+        overflow-x: hidden;
+        overflow-y: auto;
+        scroll-snap-type: y mandatory;
+        mask-image: linear-gradient(
+            180deg,
+            transparent,
+            #000 18px,
+            #000 calc(100% - 18px),
+            transparent
+        );
+    }
+
+    .feed-carousel-strip-scroll::-webkit-scrollbar {
+        width: 8px;
+        height: auto;
+    }
+
+    .feed-carousel-thumb {
+        flex: 0 0 auto;
+        width: 100%;
+    }
+
+    .feed-carousel-thumb-media {
+        border-radius: 16px;
+    }
+
+    .feed-carousel-thumb-img,
+    .feed-carousel-thumb-fallback {
+        aspect-ratio: 16 / 11;
+    }
+}
+
 @media (min-width: 700px) {
     :global(#embed-player-app) {
         align-items: center;
         padding: 18px;
     }
 
-    .player-root {
+    .player-root:not(.player-root--inline) {
         height: min(900px, calc(100dvh - 36px));
         border: 1px solid rgba(255, 255, 255, 0.18);
         border-radius: 34px;
+    }
+
+    .player-root--carousel:not(.player-root--inline),
+    .player-root--product-page:not(.player-root--inline) {
+        height: auto;
+        min-height: min(720px, calc(100dvh - 36px));
     }
 }
 
@@ -2326,11 +3283,51 @@ onBeforeUnmount(() => {
     font-weight: 800;
     flex-shrink: 0;
 }
+.comment-avatar-ai {
+    background: rgba(14, 165, 233, 0.14);
+    color: #0284c7;
+}
+.comment-avatar-host {
+    background: rgba(34, 197, 94, 0.14);
+    color: #15803d;
+}
+.comment-content {
+    min-width: 0;
+}
+.comment-author {
+    margin: 0 0 2px;
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(17, 24, 39, 0.55);
+}
 .comment-body {
+    margin: 0;
     font-size: 12px;
     color: rgba(17, 24, 39, 0.82);
     line-height: 1.4;
-    padding-top: 4px;
+}
+.comment-name-row {
+    margin-bottom: 8px;
+}
+.comment-name-input {
+    width: 100%;
+    background: #f8fafc;
+    border: 1px solid rgba(17, 24, 39, 0.1);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #111827;
+    outline: none;
+}
+.comment-name-input::placeholder {
+    color: rgba(17, 24, 39, 0.38);
+}
+.comment-name-input:focus {
+    border-color: rgba(232, 86, 58, 0.55);
+}
+.comment-name-input:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
 }
 .comment-input-row {
     display: flex;
@@ -2355,6 +3352,10 @@ onBeforeUnmount(() => {
     border-color: rgba(232, 86, 58, 0.55);
     box-shadow: 0 0 0 3px rgba(232, 86, 58, 0.1);
 }
+.comment-input:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
 .comment-send {
     width: 40px;
     height: 40px;
@@ -2371,6 +3372,14 @@ onBeforeUnmount(() => {
 }
 .comment-send:hover {
     background: #d94c31;
+}
+.comment-send:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+.comment-send:disabled:hover {
+    background: #e8563a;
 }
 
 /* Cart */

@@ -32,7 +32,7 @@ class GenerateAvatarVideoJob implements ShouldBeUnique, ShouldQueue
         Log::info('AI avatar video job started', [
             'generation_id' => $this->generationId,
             'queue_connection' => config('queue.default'),
-            'media_queue' => config('queue.names.media', 'media'),
+            'ai_queue' => config('queue.names.ai', 'ai'),
             'attempt' => $this->attempts(),
         ]);
 

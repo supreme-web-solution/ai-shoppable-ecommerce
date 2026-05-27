@@ -51,6 +51,11 @@ class Video extends Model
         return $this->hasMany(VideoProductTag::class);
     }
 
+    public function comments(): HasMany
+    {
+        return $this->hasMany(Comment::class);
+    }
+
     public function playlists(): BelongsToMany
     {
         return $this->belongsToMany(Playlist::class)

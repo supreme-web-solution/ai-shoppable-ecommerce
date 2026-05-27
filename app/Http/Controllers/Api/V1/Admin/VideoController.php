@@ -141,9 +141,7 @@ class VideoController extends Controller
 
     protected function dispatchVideoProcessing(int $videoId, string $localFilePath): void
     {
-        $queue = app()->environment('local')
-            ? 'default'
-            : config('queue.names.media', 'media');
+        $queue = config('queue.names.media', 'media');
 
         ProcessVideoAssetJob::dispatch(
             videoId: $videoId,

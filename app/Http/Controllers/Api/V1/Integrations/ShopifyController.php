@@ -73,7 +73,7 @@ class ShopifyController extends Controller
         }
 
         HandleCloudinaryWebhookJob::dispatch($webhookPayload)
-            ->onQueue(config('queue.names.media', 'media'));
+            ->onQueue(config('queue.names.webhooks', 'webhooks'));
 
         return response()->json([
             'ok' => true,

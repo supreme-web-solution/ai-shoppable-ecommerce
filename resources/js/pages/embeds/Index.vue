@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAdminApi } from '@/composables/useAdminApi';
+import { buildEmbedScriptCode } from '@/lib/embedCode';
 
 type PlaylistOption = { id: number; title: string };
 type VideoOption = { id: number; title: string };
@@ -17,6 +18,7 @@ type EmbedItem = {
     playlist_id?: number | null;
     video_id?: number | null;
     embed_url?: string;
+    embed_code?: string;
     iframe_code?: string;
 };
 
@@ -105,7 +107,10 @@ async function removeEmbed(embed: EmbedItem) {
 }
 
 async function copyEmbedCode(embed: EmbedItem) {
-    const code = embed.iframe_code || `<iframe src="${embed.embed_url}" width="100%" height="700" frameborder="0"></iframe>`;
+    const code =
+        embed.embed_code ||
+        embed.iframe_code ||
+        buildEmbedScriptCode(embed.slug, embed.type || 'vertical_feed');
     await navigator.clipboard.writeText(code);
     copiedSlug.value = embed.slug;
     window.setTimeout(() => {
@@ -201,14 +206,14 @@ onMounted(loadData);
                         </div>
                         <div class="flex gap-2">
                             <Button variant="outline" size="sm" @click="copyEmbedCode(embed)">
-                                {{ copiedSlug === embed.slug ? 'Copied!' : 'Copy iframe' }}
+                                {{ copiedSlug === embed.slug ? 'Copied!' : 'Copy embed code' }}
                             </Button>
                             <Button variant="destructive" size="sm" @click="removeEmbed(embed)">Delete</Button>
                         </div>
                     </div>
-                    <pre class="mt-3 overflow-x-auto rounded bg-muted p-3 text-xs">{{ embed.iframe_code }}</pre>
+                    <pre class="mt-3 overflow-x-auto rounded bg-muted p-3 text-xs">{{ embed.embed_code || embed.iframe_code }}</pre>
                     <p v-if="embed.type === 'floating_widget'" class="mt-2 text-xs text-muted-foreground">
-                        Floating widget opens as a launcher bubble on the embed page. Paste the iframe on any page or use the embed URL directly.
+                        Floating widget opens as a launcher bubble. Paste the script tag on any page, then visitors tap the bubble to open the feed.
                     </p>
                 </div>
             </div>

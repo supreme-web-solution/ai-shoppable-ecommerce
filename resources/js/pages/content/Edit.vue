@@ -4,11 +4,15 @@ import {
     AlertCircle,
     ArrowLeft,
     Check,
+    Copy,
     Film,
     ImageOff,
+    Link2,
     Loader2,
+    MessageCircle,
     Package,
     Play,
+    Share2,
     Plus,
     RefreshCw,
     Search,
@@ -33,6 +37,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
+import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
+import {
+    type EmbedDisplayType,
+    type EmbedItem,
+    embedPreviewUrl,
+    embedScriptCode,
+    ensureEmbedForVideo,
+    socialShareLinks,
+    updateEmbedDisplayType,
+} from '@/lib/videoEmbed';
 
 const props = defineProps<{ videoId: number }>();
 
@@ -81,6 +95,16 @@ const previewVideoError = ref(false);
 const userPausedPreview = ref(false);
 const previewHasStarted = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+const shareModalOpen = ref(false);
+const shareLoading = ref(false);
+const shareTypeSaving = ref(false);
+const shareUrl = ref('');
+const embedCode = ref('');
+const shareEmbed = ref<EmbedItem | null>(null);
+const shareEmbedType = ref<EmbedDisplayType>('vertical_feed');
+const copiedToken = ref('');
+
+const shareApi = { getList, postJson, patchJson };
 
 const showPreviewPlayButton = computed(
     () => Boolean(playbackUrl.value) && !previewVideoError.value && (!previewHasStarted.value || userPausedPreview.value),
@@ -178,6 +202,11 @@ const viewerSim = ref({
     min: 50,
     max: 500,
 });
+const aiAssistant = ref({
+    enabled: false,
+    knowledgeBaseText: '',
+});
+const videoMetadata = ref<Record<string, unknown>>({});
 
 const isProcessing = computed(() => form.value.status === 'processing');
 const isFailed = computed(() => form.value.status === 'failed');
@@ -247,11 +276,14 @@ async function loadVideo() {
 
         // load viewer simulation from metadata
         const meta = v.metadata as Record<string, unknown> | null | undefined;
+        videoMetadata.value = { ...(meta ?? {}) };
         if (meta?.viewer_sim_enabled) {
             viewerSim.value.enabled = Boolean(meta.viewer_sim_enabled);
             viewerSim.value.min = Number(meta.viewer_sim_min ?? 50);
             viewerSim.value.max = Number(meta.viewer_sim_max ?? 500);
         }
+        aiAssistant.value.enabled = Boolean(meta?.ai_assistant_enabled);
+        aiAssistant.value.knowledgeBaseText = String(meta?.knowledge_base_text ?? '');
 
         // load existing product tags
         const tagsPayload = await apiFetch<{ data: Array<{
@@ -293,16 +325,32 @@ async function saveVideo() {
     saving.value = true;
     errorText.value = '';
     try {
+        const nextMetadata: Record<string, unknown> = { ...videoMetadata.value };
+        delete nextMetadata.viewer_sim_enabled;
+        delete nextMetadata.viewer_sim_min;
+        delete nextMetadata.viewer_sim_max;
+        delete nextMetadata.ai_assistant_enabled;
+        delete nextMetadata.knowledge_base_text;
+
+        if (viewerSim.value.enabled) {
+            nextMetadata.viewer_sim_enabled = true;
+            nextMetadata.viewer_sim_min = viewerSim.value.min;
+            nextMetadata.viewer_sim_max = viewerSim.value.max;
+        }
+
+        if (aiAssistant.value.enabled) {
+            nextMetadata.ai_assistant_enabled = true;
+            nextMetadata.knowledge_base_text = aiAssistant.value.knowledgeBaseText.trim();
+        } else {
+            nextMetadata.ai_assistant_enabled = false;
+        }
+
         await patchJson(`/api/v1/admin/videos/${props.videoId}`, {
             title: form.value.title,
             description: form.value.description || null,
             thumbnail_url: form.value.thumbnail_url || null,
             visibility: form.value.visibility,
-            metadata: viewerSim.value.enabled ? {
-                viewer_sim_enabled: true,
-                viewer_sim_min: viewerSim.value.min,
-                viewer_sim_max: viewerSim.value.max,
-            } : null,
+            metadata: Object.keys(nextMetadata).length > 0 ? nextMetadata : null,
         });
         // also save tags
         await postJson(`/api/v1/admin/videos/${props.videoId}/product-tags/sync`, {
@@ -421,6 +469,68 @@ async function replaceVideoFile(event: Event) {
     }
 }
 
+async function copyText(text: string, token: string) {
+    await navigator.clipboard.writeText(text);
+    copiedToken.value = token;
+    window.setTimeout(() => {
+        if (copiedToken.value === token) copiedToken.value = '';
+    }, 1800);
+}
+
+async function openShareModal() {
+    shareModalOpen.value = true;
+    shareLoading.value = true;
+    errorText.value = '';
+    try {
+        const embed = await ensureEmbedForVideo(
+            shareApi,
+            props.videoId,
+            form.value.title || `video-${props.videoId}`,
+        );
+        if (!embed) throw new Error('Could not generate embed.');
+        shareEmbed.value = embed;
+        shareEmbedType.value = (embed.type as EmbedDisplayType) || 'vertical_feed';
+        shareUrl.value = embedPreviewUrl(embed);
+        embedCode.value = embedScriptCode(embed, shareEmbedType.value);
+    } catch (err) {
+        errorText.value = err instanceof Error ? err.message : 'Could not prepare share links.';
+        shareUrl.value = '';
+        embedCode.value = '';
+        shareEmbed.value = null;
+    } finally {
+        shareLoading.value = false;
+    }
+}
+
+async function onShareEmbedTypeChange(type: EmbedDisplayType) {
+    if (!shareEmbed.value) {
+        return;
+    }
+
+    shareEmbedType.value = type;
+    shareTypeSaving.value = true;
+
+    try {
+        const updated = await updateEmbedDisplayType(
+            shareApi,
+            shareEmbed.value.id,
+            type,
+        );
+
+        if (updated) {
+            shareEmbed.value = updated;
+            embedCode.value = embedScriptCode(updated, type);
+        } else {
+            embedCode.value = embedScriptCode(shareEmbed.value, type);
+        }
+    } catch (err) {
+        errorText.value = err instanceof Error ? err.message : 'Could not update embed display.';
+        shareEmbedType.value = (shareEmbed.value.type as EmbedDisplayType) || 'vertical_feed';
+    } finally {
+        shareTypeSaving.value = false;
+    }
+}
+
 onMounted(async () => {
     await Promise.all([loadVideo(), loadProducts()]);
     if (isProcessing.value) {
@@ -462,6 +572,24 @@ onUnmounted(stopPolling);
                 ]">
                     {{ form.status }}
                 </span>
+                <button
+                    type="button"
+                    class="ghost-btn flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-gray-600"
+                    :disabled="saving"
+                    @click="openShareModal"
+                >
+                    <Link2 class="size-3.5" />
+                    Embed
+                </button>
+                <button
+                    type="button"
+                    class="ghost-btn flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-gray-600"
+                    :disabled="saving"
+                    @click="openShareModal"
+                >
+                    <Share2 class="size-3.5" />
+                    Share
+                </button>
                 <button
                     v-if="form.status !== 'published'"
                     type="button"
@@ -644,6 +772,40 @@ onUnmounted(stopPolling);
                                 <Input v-model.number="viewerSim.max" type="number" :min="viewerSim.min + 1" placeholder="500" class="field-input" />
                             </div>
                             <p class="col-span-2 text-xs text-gray-500">Count drifts between {{ viewerSim.min }} and {{ viewerSim.max }}.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI assistant for live chat -->
+                <div class="section-card">
+                    <div class="section-card-header">
+                        <div class="section-icon">
+                            <MessageCircle class="size-4 text-[#E8563A]" />
+                        </div>
+                        <h2 class="section-title">AI assistant for live chat</h2>
+                    </div>
+                    <div class="p-5 space-y-4">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <p class="text-sm font-semibold text-gray-800">Auto-reply in video comments</p>
+                                <p class="mt-0.5 text-xs text-gray-500">When enabled, AI replies to viewer comments using this video's knowledge base.</p>
+                            </div>
+                            <label class="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
+                                <input v-model="aiAssistant.enabled" type="checkbox" class="peer sr-only">
+                                <div class="h-6 w-11 rounded-full bg-gray-200 transition-colors peer-checked:bg-[#E8563A] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
+                            </label>
+                        </div>
+                        <div v-if="aiAssistant.enabled" class="space-y-1.5">
+                            <label class="field-label">Knowledge base document</label>
+                            <textarea
+                                v-model="aiAssistant.knowledgeBaseText"
+                                rows="5"
+                                class="field-textarea"
+                                placeholder="Paste product FAQ, shipping policy, returns, sizing details, promos, etc."
+                            />
+                            <p class="text-xs text-gray-500">
+                                Tip: Add concise facts and policies. AI uses this text first when replying in live chat.
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -858,6 +1020,83 @@ onUnmounted(stopPolling);
             </div>
         </div>
     </div>
+
+    <!-- ═══════ Share & Embed modal ═══════ -->
+    <Dialog v-model:open="shareModalOpen">
+        <DialogContent class="sm:max-w-[560px]">
+            <DialogHeader>
+                <DialogTitle class="flex items-center gap-2">
+                    <Share2 class="size-4 text-[#E8563A]" />
+                    Share & Embed
+                </DialogTitle>
+                <DialogDescription>
+                    {{ form.title || `Video #${props.videoId}` }} — CDN embed and social share links.
+                </DialogDescription>
+            </DialogHeader>
+
+            <div v-if="shareLoading" class="space-y-2 py-3">
+                <Skeleton class="h-9 w-full rounded-xl" />
+                <Skeleton class="h-20 w-full rounded-xl" />
+                <Skeleton class="h-20 w-full rounded-xl" />
+            </div>
+
+            <div v-else class="space-y-4">
+                <EmbedDisplaySelect
+                    :model-value="shareEmbedType"
+                    :disabled="shareTypeSaving || !shareEmbed"
+                    @update:model-value="onShareEmbedTypeChange"
+                />
+
+                <div class="space-y-1.5">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Preview link</p>
+                    <div class="flex items-center gap-2 rounded-xl border bg-gray-50 p-2">
+                        <Input :model-value="shareUrl" readonly class="h-8 text-xs" />
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            :disabled="!shareUrl"
+                            @click="copyText(shareUrl, 'share-link')"
+                        >
+                            <Copy class="mr-1 size-3.5" />
+                            {{ copiedToken === 'share-link' ? 'Copied' : 'Copy' }}
+                        </Button>
+                    </div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">CDN embed code</p>
+                    <div class="rounded-xl border bg-gray-50 p-2">
+                        <pre class="max-h-28 overflow-auto whitespace-pre-wrap text-[11px]">{{ embedCode }}</pre>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        :disabled="!embedCode"
+                        @click="copyText(embedCode, 'embed-code')"
+                    >
+                        <Copy class="mr-1 size-3.5" />
+                        {{ copiedToken === 'embed-code' ? 'Copied' : 'Copy embed code' }}
+                    </Button>
+                </div>
+
+                <div class="space-y-1.5">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Share to social media</p>
+                    <div class="grid gap-2 sm:grid-cols-2">
+                        <a
+                            v-for="link in socialShareLinks(shareUrl, form.title)"
+                            :key="link.key"
+                            :href="link.url"
+                            target="_blank"
+                            rel="noreferrer"
+                            class="ghost-btn flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold text-gray-600"
+                        >
+                            {{ link.label }}
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </DialogContent>
+    </Dialog>
 
     <!-- ═══════ Product modal ═══════ -->
     <Dialog v-model:open="productModalOpen">
