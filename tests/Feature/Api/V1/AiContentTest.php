@@ -174,7 +174,10 @@ class AiContentTest extends TestCase
     public function test_avatar_generation_can_send_product_placement_settings_to_heygen(): void
     {
         [$team, $owner] = $this->createTeamWithOwner();
-        config(['services.heygen.api_key' => 'test-heygen-key']);
+        config([
+            'services.heygen.api_key' => 'test-heygen-key',
+            'services.heygen.watermark_enabled' => true,
+        ]);
 
         Http::fake([
             'https://api.heygen.com/v3/videos' => Http::response([
@@ -216,6 +219,45 @@ class AiContentTest extends TestCase
                 && (float) data_get($payload, 'watermark.placement.offset_x') === 0.05
                 && (float) data_get($payload, 'watermark.placement.offset_y') === -0.03
                 && data_get($payload, 'motion_prompt') === 'Hold the bottle naturally and point to it.';
+        });
+    }
+
+    public function test_avatar_generation_omits_watermark_when_disabled_in_config(): void
+    {
+        [$team, $owner] = $this->createTeamWithOwner();
+        config([
+            'services.heygen.api_key' => 'test-heygen-key',
+            'services.heygen.watermark_enabled' => false,
+        ]);
+
+        Http::fake([
+            'https://api.heygen.com/v3/videos' => Http::response([
+                'data' => [
+                    'video_id' => 'v_no_watermark',
+                    'status' => 'pending',
+                ],
+            ]),
+        ]);
+
+        Sanctum::actingAs($owner);
+
+        app(AiAvatarVideoService::class)->submit([
+            'team_id' => $team->id,
+            'title' => 'No Watermark',
+            'script' => 'This product is amazing.',
+            'language' => 'en',
+            'avatar_id' => 'look_123',
+            'voice_id' => 'voice_123',
+            'product_placement_enabled' => true,
+            'product_placement_image_url' => 'https://cdn.example.com/product-bottle.png',
+        ]);
+
+        Http::assertSent(function ($request): bool {
+            $payload = $request->data();
+
+            return $request->url() === 'https://api.heygen.com/v3/videos'
+                && ! isset($payload['watermark'])
+                && data_get($payload, 'motion_prompt') === null;
         });
     }
 

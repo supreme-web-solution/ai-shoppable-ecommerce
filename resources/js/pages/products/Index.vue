@@ -3,6 +3,7 @@ import { Head } from '@inertiajs/vue3';
 import {
     ImageOff,
     Package,
+    Pencil,
     PlusCircle,
     ShoppingBag,
     Trash2,
@@ -62,6 +63,7 @@ const { getList, postJson, patchJson, deleteResource, ensureTeam } = useAdminApi
 const loading = ref(false);
 const saving = ref(false);
 const createModalOpen = ref(false);
+const editingProductId = ref<number | null>(null);
 const errorText = ref('');
 const products = ref<ProductItem[]>([]);
 
@@ -146,6 +148,38 @@ async function createProduct() {
     }
 }
 
+async function updateProduct() {
+    if (!editingProductId.value) return;
+    saving.value = true;
+    errorText.value = '';
+    try {
+        await patchJson(`/api/v1/admin/products/${editingProductId.value}`, {
+            title: form.value.title,
+            slug: form.value.slug || slugify(form.value.title),
+            description: form.value.description || null,
+            image_url: form.value.image_url || null,
+            currency: form.value.currency,
+            price: form.value.price,
+            sale_price: form.value.sale_price === '' ? null : form.value.sale_price,
+            sku: form.value.sku || null,
+            inventory: form.value.inventory,
+            variants: form.value.variants.map((v, i) => ({
+                ...v,
+                price: v.price || form.value.price,
+                is_default: i === 0,
+            })),
+        });
+
+        createModalOpen.value = false;
+        editingProductId.value = null;
+        await loadProducts();
+    } catch (error) {
+        errorText.value = error instanceof Error ? error.message : 'Could not update product.';
+    } finally {
+        saving.value = false;
+    }
+}
+
 async function toggleActive(product: ProductItem) {
     try {
         await patchJson(`/api/v1/admin/products/${product.id}`, { is_active: !product.is_active });
@@ -183,6 +217,7 @@ function removeVariant(index: number) {
 }
 
 function openCreateModal() {
+    editingProductId.value = null;
     form.value = {
         title: '',
         slug: '',
@@ -194,6 +229,32 @@ function openCreateModal() {
         sku: '',
         inventory: 0,
         variants: [{ title: 'Default', sku: '', price: 0, inventory: 0, is_default: true }],
+    };
+    createModalOpen.value = true;
+}
+
+function openEditModal(product: ProductItem) {
+    editingProductId.value = product.id;
+    form.value = {
+        title: product.title ?? '',
+        slug: product.slug ?? '',
+        description: product.description ?? '',
+        image_url: product.image_url ?? '',
+        currency: product.currency ?? 'USD',
+        price: Number(product.price ?? 0),
+        sale_price: product.sale_price ? Number(product.sale_price) : '',
+        sku: product.sku ?? '',
+        inventory: Number(product.inventory ?? 0),
+        variants: (product.variants?.length
+            ? product.variants
+            : [{ title: 'Default', sku: product.sku ?? '', price: Number(product.price ?? 0), inventory: Number(product.inventory ?? 0), is_default: true }]
+        ).map((v, i) => ({
+            title: v.title ?? `Variant ${i + 1}`,
+            sku: v.sku ?? '',
+            price: Number(v.price ?? product.price ?? 0),
+            inventory: Number(v.inventory ?? product.inventory ?? 0),
+            is_default: i === 0,
+        })),
     };
     createModalOpen.value = true;
 }
@@ -321,6 +382,10 @@ onMounted(loadProducts);
 
                 <!-- Actions -->
                 <div class="flex shrink-0 gap-2">
+                    <button type="button" class="action-btn" @click="openEditModal(product)">
+                        <Pencil class="size-3.5" />
+                        Edit
+                    </button>
                     <button type="button" class="action-btn" @click="toggleActive(product)">
                         {{ product.is_active ? 'Deactivate' : 'Activate' }}
                     </button>
@@ -338,10 +403,14 @@ onMounted(loadProducts);
             <DialogHeader class="shrink-0 border-b px-6 py-4">
                 <DialogTitle class="flex items-center gap-2">
                     <ShoppingBag class="size-4 text-orange-500" />
-                    Add product
+                    {{ editingProductId ? 'Edit product' : 'Add product' }}
                 </DialogTitle>
                 <DialogDescription>
-                    Products appear below videos in the embed player for viewers to purchase.
+                    {{
+                        editingProductId
+                            ? 'Update product details shown in your embed player.'
+                            : 'Products appear below videos in the embed player for viewers to purchase.'
+                    }}
                 </DialogDescription>
             </DialogHeader>
 
@@ -453,9 +522,13 @@ onMounted(loadProducts);
             </div>
 
             <DialogFooter class="shrink-0 border-t px-6 py-4">
-                <Button variant="ghost" @click="createModalOpen = false">Cancel</Button>
-                <Button :disabled="saving || !form.title || form.price === 0" @click="createProduct">
-                    {{ saving ? 'Creating…' : 'Create product' }}
+                <Button variant="ghost" @click="createModalOpen = false; editingProductId = null">Cancel</Button>
+                <Button :disabled="saving || !form.title || form.price === 0" @click="editingProductId ? updateProduct() : createProduct()">
+                    {{
+                        saving
+                            ? (editingProductId ? 'Saving…' : 'Creating…')
+                            : (editingProductId ? 'Save changes' : 'Create product')
+                    }}
                 </Button>
             </DialogFooter>
         </DialogContent>

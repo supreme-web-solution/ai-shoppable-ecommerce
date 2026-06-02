@@ -10,12 +10,65 @@ use Illuminate\Support\Str;
 
 class AiAvatarVideoService
 {
+    public function watermarkEnabled(): bool
+    {
+        return (bool) config('services.heygen.watermark_enabled', false);
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array<string, mixed>
+     */
+    /**
+     * @param  array<string, mixed>  $input
+     */
+    public function willSendProductPlacementToHeyGen(array $input): bool
+    {
+        if (! $this->watermarkEnabled()) {
+            return false;
+        }
+
+        $imageUrl = trim((string) ($input['product_placement_image_url'] ?? ''));
+
+        return (bool) ($input['product_placement_enabled'] ?? false) && $imageUrl !== '';
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array<string, mixed>
+     */
+    public function withoutProductPlacementUnlessEnabled(array $input): array
+    {
+        if ($this->watermarkEnabled()) {
+            return $input;
+        }
+
+        if ((bool) ($input['product_placement_enabled'] ?? false)) {
+            Log::warning('HeyGen product placement skipped because HEYGEN_WATERMARK_ENABLED is false', [
+                'product_placement_image_url' => $input['product_placement_image_url'] ?? null,
+            ]);
+        }
+
+        $input['product_placement_enabled'] = false;
+        $input['product_placement_image_url'] = null;
+        $input['product_placement_position'] = null;
+        $input['product_placement_scale'] = null;
+        $input['product_placement_opacity'] = null;
+        $input['product_placement_offset_x'] = null;
+        $input['product_placement_offset_y'] = null;
+        $input['product_placement_motion_prompt'] = null;
+
+        return $input;
+    }
+
     /**
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      */
     public function submit(array $input): array
     {
+        $input = $this->withoutProductPlacementUnlessEnabled($input);
+
         $apiKey = $this->apiKey();
 
         if ($apiKey !== '') {
@@ -63,6 +116,7 @@ class AiAvatarVideoService
         if ($apiKey === '') {
             return [
                 'enabled' => false,
+                'watermark_enabled' => $this->watermarkEnabled(),
                 'avatars' => [],
                 'voices' => [],
                 'cached_at' => null,
@@ -76,7 +130,7 @@ class AiAvatarVideoService
             Cache::forget($cacheKey);
         }
 
-        return Cache::remember($cacheKey, now()->addSeconds((int) config('services.heygen.cache_ttl_seconds', 21600)), function () use ($apiKey): array {
+        $options = Cache::remember($cacheKey, now()->addSeconds((int) config('services.heygen.cache_ttl_seconds', 21600)), function () use ($apiKey): array {
             $avatars = $this->fetchAvatarLooks($apiKey);
             $voices = $this->fetchVoices($apiKey);
 
@@ -88,6 +142,10 @@ class AiAvatarVideoService
                 'message' => $avatars || $voices ? null : 'HeyGen did not return any avatars or voices for this API key.',
             ];
         });
+
+        $options['watermark_enabled'] = $this->watermarkEnabled();
+
+        return $options;
     }
 
     /**
@@ -260,6 +318,23 @@ class AiAvatarVideoService
         return trim((string) config('services.heygen.api_key'));
     }
 
+    protected function resolvePublicImageUrl(string $url): string
+    {
+        if ($url === '') {
+            return '';
+        }
+
+        if (Str::startsWith($url, ['http://', 'https://'])) {
+            return $url;
+        }
+
+        if (Str::startsWith($url, '//')) {
+            return 'https:'.$url;
+        }
+
+        return url($url);
+    }
+
     /**
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>|null
@@ -287,8 +362,10 @@ class AiAvatarVideoService
             $payload['voice_id'] = $voiceId;
         }
 
-        $productPlacementEnabled = (bool) ($input['product_placement_enabled'] ?? false);
-        $productPlacementImageUrl = trim((string) ($input['product_placement_image_url'] ?? ''));
+        $productPlacementEnabled = $this->willSendProductPlacementToHeyGen($input);
+        $productPlacementImageUrl = $this->resolvePublicImageUrl(
+            trim((string) ($input['product_placement_image_url'] ?? '')),
+        );
         if ($productPlacementEnabled && $productPlacementImageUrl !== '') {
             $watermark = [
                 'image' => [

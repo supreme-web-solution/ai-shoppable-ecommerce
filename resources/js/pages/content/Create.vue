@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import {
     ArrowLeft,
     Check,
@@ -100,6 +100,7 @@ type HeyGenVoiceOption = {
 
 type HeyGenOptions = {
     enabled: boolean;
+    watermark_enabled?: boolean;
     avatars: HeyGenAvatarOption[];
     voices: HeyGenVoiceOption[];
     cached_at?: string | null;
@@ -109,6 +110,7 @@ type HeyGenOptions = {
 type ProductPlacementPosition = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
 
 const { teamId, apiFetch, getList, postJson, uploadFile, ensureTeam } = useAdminApi();
+const page = usePage();
 
 /* ── top-level tabs ── */
 const activeTab = ref<'upload' | 'ai'>('upload');
@@ -137,6 +139,12 @@ const manualScriptPanelOpen = ref(false);
 const uploading = ref(false);
 const products = ref<ProductOption[]>([]);
 const heygenOptions = ref<HeyGenOptions>({ enabled: false, avatars: [], voices: [], cached_at: null, message: null });
+/** When true, placement settings are sent to HeyGen as watermark + motion prompt. */
+const heygenPlacementApiEnabled = computed(
+    () =>
+        Boolean((page.props as { heygenWatermarkEnabled?: boolean }).heygenWatermarkEnabled)
+        || Boolean(heygenOptions.value.watermark_enabled),
+);
 const heygenLoading = ref(false);
 const heygenError = ref('');
 const aiGenerating = ref(false);
@@ -599,10 +607,52 @@ const showScriptEditor = computed(
 const canGenerateAvatar = computed(() =>
     Boolean(avatarForm.value.title && avatarForm.value.script)
     && (
-        !productPlacement.value.enabled
+        !heygenPlacementApiEnabled.value
+        || !productPlacement.value.enabled
         || productPlacement.value.image_url.trim() !== ''
     ),
 );
+
+function resolvePlacementImageSrc(url: string | null | undefined): string {
+    const value = String(url ?? '').trim();
+    if (value === '') {
+        return '';
+    }
+
+    if (/^(https?:|blob:)/i.test(value)) {
+        return value;
+    }
+
+    if (value.startsWith('/')) {
+        return `${window.location.origin}${value}`;
+    }
+
+    return value;
+}
+
+const productPlacementImageSrc = computed(() =>
+    resolvePlacementImageSrc(productPlacementPreviewUrl.value || productPlacement.value.image_url),
+);
+
+const productPlacementWillSendToHeyGen = computed(
+    () =>
+        heygenPlacementApiEnabled.value
+        && productPlacement.value.enabled
+        && productPlacement.value.image_url.trim() !== '',
+);
+
+function productPlacementRequestFields(): Record<string, unknown> {
+    return {
+        product_placement_enabled: productPlacement.value.enabled,
+        product_placement_image_url: productPlacement.value.image_url || null,
+        product_placement_position: productPlacement.value.position,
+        product_placement_scale: productPlacement.value.scale,
+        product_placement_opacity: productPlacement.value.opacity,
+        product_placement_offset_x: productPlacement.value.offset_x,
+        product_placement_offset_y: productPlacement.value.offset_y,
+        product_placement_motion_prompt: productPlacement.value.motion_prompt || null,
+    };
+}
 
 async function generateScript() {
     scriptEntryMode.value = 'ai';
@@ -652,14 +702,7 @@ async function generateAvatarVideo() {
             }>('/api/v1/admin/ai/multilingual-videos', {
                 ...avatarForm.value,
                 enable_embed_overlays: enableEmbedOverlays.value,
-                product_placement_enabled: productPlacement.value.enabled,
-                product_placement_image_url: productPlacement.value.image_url || null,
-                product_placement_position: productPlacement.value.position,
-                product_placement_scale: productPlacement.value.scale,
-                product_placement_opacity: productPlacement.value.opacity,
-                product_placement_offset_x: productPlacement.value.offset_x,
-                product_placement_offset_y: productPlacement.value.offset_y,
-                product_placement_motion_prompt: productPlacement.value.motion_prompt || null,
+                ...productPlacementRequestFields(),
                 languages: selectedLanguages.value,
             });
 
@@ -679,14 +722,7 @@ async function generateAvatarVideo() {
                 {
                     ...avatarForm.value,
                     enable_embed_overlays: enableEmbedOverlays.value,
-                    product_placement_enabled: productPlacement.value.enabled,
-                    product_placement_image_url: productPlacement.value.image_url || null,
-                    product_placement_position: productPlacement.value.position,
-                    product_placement_scale: productPlacement.value.scale,
-                    product_placement_opacity: productPlacement.value.opacity,
-                    product_placement_offset_x: productPlacement.value.offset_x,
-                    product_placement_offset_y: productPlacement.value.offset_y,
-                    product_placement_motion_prompt: productPlacement.value.motion_prompt || null,
+                    ...productPlacementRequestFields(),
                     language,
                 },
             );
@@ -736,6 +772,7 @@ async function loadHeyGenOptions(refresh = false) {
         const payload = await apiFetch<HeyGenOptions>(`/api/v1/admin/ai/heygen-options?${params.toString()}`);
         heygenOptions.value = {
             enabled: Boolean(payload.enabled),
+            watermark_enabled: payload.watermark_enabled ?? false,
             avatars: payload.avatars ?? [],
             voices: payload.voices ?? [],
             cached_at: payload.cached_at ?? null,
@@ -1660,6 +1697,33 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             </div>
                         </div>
 
+                        <div
+                            v-if="productPlacement.enabled"
+                            class="flex items-center gap-3 rounded-2xl border bg-muted/30 p-3"
+                        >
+                            <div class="h-16 w-16 shrink-0 overflow-hidden rounded-xl border bg-muted">
+                                <img
+                                    v-if="productPlacementImageSrc"
+                                    :src="productPlacementImageSrc"
+                                    alt="Placement preview"
+                                    class="h-full w-full object-cover"
+                                >
+                                <div v-else class="flex h-full items-center justify-center text-[10px] text-muted-foreground">
+                                    No image
+                                </div>
+                            </div>
+                            <div class="min-w-0 flex-1 text-xs">
+                                <p class="font-semibold">Product placement</p>
+                                <p v-if="productPlacementWillSendToHeyGen" class="mt-1 text-emerald-700">
+                                    Will be sent to HeyGen as a video overlay.
+                                </p>
+                                <p v-else class="mt-1 text-amber-800">
+                                    Saved in settings but <strong>not</strong> burned into the HeyGen video until
+                                    <code class="rounded bg-amber-100 px-1">HEYGEN_WATERMARK_ENABLED=true</code>.
+                                </p>
+                            </div>
+                        </div>
+
                         <!-- <div class="flex gap-2 rounded-xl border border-[#E8563A]/20 bg-[#E8563A]/5 px-3 py-2.5 text-xs text-foreground">
                             <Info class="mt-0.5 size-4 shrink-0 text-[#E8563A]" />
                             <p>
@@ -1692,11 +1756,12 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
 
                         <Card>
                             <CardContent class="space-y-4 pt-5">
+                               
                                 <div class="flex items-start justify-between gap-3">
                                     <div class="space-y-1">
                                         <Label>Product placement</Label>
                                         <p class="text-xs text-muted-foreground">
-                                            Watermark + motion prompt controls. For true in-hand compositing variations, use HeyGen's Product Placement app.
+                                            Product image overlay on the video + motion prompt so the avatar can gesture toward it.
                                         </p>
                                     </div>
                                     <label class="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
@@ -1709,10 +1774,11 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     <div class="grid gap-3 sm:grid-cols-[120px_1fr]">
                                         <div class="relative h-24 w-24 overflow-hidden rounded-xl border bg-muted">
                                             <img
-                                                v-if="productPlacementPreviewUrl || productPlacement.image_url"
-                                                :src="productPlacementPreviewUrl || productPlacement.image_url"
+                                                v-if="productPlacementImageSrc"
+                                                :src="productPlacementImageSrc"
                                                 alt="Product placement image"
                                                 class="h-full w-full object-cover"
+                                                @error="errorText = 'Could not load placement image preview. Check the image URL is public.'"
                                             >
                                             <div v-else class="flex h-full items-center justify-center text-[10px] text-muted-foreground">
                                                 No image
@@ -1902,9 +1968,9 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             }}
                         </Button>
 
-                        <p class="text-center text-xs text-muted-foreground">
+                        <!-- <p class="text-center text-xs text-muted-foreground">
                             Powered by HeyGen · renders in 1–5 min · you'll see them on the Videos page
-                        </p>
+                        </p> -->
                         <p
                             v-if="productPlacement.enabled && !productPlacement.image_url.trim()"
                             class="text-center text-xs text-amber-700"

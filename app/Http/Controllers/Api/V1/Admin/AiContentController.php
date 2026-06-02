@@ -96,7 +96,7 @@ class AiContentController extends Controller
         return new AiGenerationResource($generation);
     }
 
-    public function generateAvatarVideo(Request $request)
+    public function generateAvatarVideo(Request $request, AiAvatarVideoService $avatarVideoService)
     {
         $teamId = $this->resolveTeamId($request);
 
@@ -138,16 +138,7 @@ class AiContentController extends Controller
                 'voice_id' => $validated['voice_id'] ?? null,
                 'enable_embed_overlays' => (bool) ($validated['enable_embed_overlays'] ?? true),
                 'product_ids' => $validated['product_ids'] ?? [],
-                'product_placement' => [
-                    'enabled' => (bool) ($validated['product_placement_enabled'] ?? false),
-                    'image_url' => $validated['product_placement_image_url'] ?? null,
-                    'position' => $validated['product_placement_position'] ?? 'bottom_right',
-                    'scale' => isset($validated['product_placement_scale']) ? (float) $validated['product_placement_scale'] : 0.3,
-                    'opacity' => isset($validated['product_placement_opacity']) ? (float) $validated['product_placement_opacity'] : 1.0,
-                    'offset_x' => isset($validated['product_placement_offset_x']) ? (float) $validated['product_placement_offset_x'] : 0,
-                    'offset_y' => isset($validated['product_placement_offset_y']) ? (float) $validated['product_placement_offset_y'] : 0,
-                    'motion_prompt' => $validated['product_placement_motion_prompt'] ?? null,
-                ],
+                'product_placement' => $this->productPlacementMetadata($validated),
             ],
         ]);
 
@@ -174,6 +165,9 @@ class AiContentController extends Controller
             'avatar_id' => $validated['avatar_id'] ?? null,
             'voice_id' => $validated['voice_id'] ?? null,
             'product_ids' => $validated['product_ids'] ?? [],
+            'product_placement_enabled' => (bool) ($validated['product_placement_enabled'] ?? false),
+            'product_placement_image_url' => $validated['product_placement_image_url'] ?? null,
+            'product_placement_sent_to_heygen' => $avatarVideoService->willSendProductPlacementToHeyGen($validated),
         ]);
 
         GenerateAvatarVideoJob::dispatch($generation->id)
@@ -245,8 +239,26 @@ class AiContentController extends Controller
 
         return response()->json([
             'path' => $path,
-            'url' => Storage::url($path),
+            'url' => url(Storage::url($path)),
             'filename' => Str::afterLast($path, '/'),
         ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     * @return array<string, mixed>
+     */
+    protected function productPlacementMetadata(array $validated): array
+    {
+        return [
+            'enabled' => (bool) ($validated['product_placement_enabled'] ?? false),
+            'image_url' => $validated['product_placement_image_url'] ?? null,
+            'position' => $validated['product_placement_position'] ?? 'bottom_right',
+            'scale' => isset($validated['product_placement_scale']) ? (float) $validated['product_placement_scale'] : 0.3,
+            'opacity' => isset($validated['product_placement_opacity']) ? (float) $validated['product_placement_opacity'] : 1.0,
+            'offset_x' => isset($validated['product_placement_offset_x']) ? (float) $validated['product_placement_offset_x'] : 0,
+            'offset_y' => isset($validated['product_placement_offset_y']) ? (float) $validated['product_placement_offset_y'] : 0,
+            'motion_prompt' => $validated['product_placement_motion_prompt'] ?? null,
+        ];
     }
 }

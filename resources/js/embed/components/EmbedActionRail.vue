@@ -243,6 +243,7 @@ const emit = defineEmits<{
     transition: transform 0.15s, background 0.15s;
     min-width: 46px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    color: #fff;
 }
 .rail-btn:hover {
     background: rgba(255, 255, 255, 0.2);
@@ -254,6 +255,7 @@ const emit = defineEmits<{
     align-items: center;
     justify-content: center;
     filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.35));
+    color: inherit;
 }
 .rail-label {
     font-size: 10px;

@@ -2215,7 +2215,7 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: stretch;
     justify-content: center;
-    overflow-x: hidden;
+    overflow: hidden;
     overscroll-behavior: none;
 }
 
@@ -2258,8 +2258,8 @@ onBeforeUnmount(() => {
         'rail';
     width: 100%;
     max-width: min(1180px, 100%);
-    height: auto;
-    min-height: min(720px, 100dvh);
+    height: min(720px, 100dvh);
+    min-height: 0;
     max-height: none;
     overflow: hidden;
     border-radius: 28px;
@@ -2277,7 +2277,68 @@ onBeforeUnmount(() => {
 
 .player-root--carousel .bottom-area {
     z-index: 38;
-    padding-bottom: 18px;
+    padding: 16px 14px 8px;
+    background: linear-gradient(
+        180deg,
+        rgba(4, 4, 6, 0) 0%,
+        rgba(4, 4, 6, 0.46) 38%,
+        rgba(4, 4, 6, 0.68) 100%
+    );
+}
+
+.player-root--carousel .video-meta {
+    margin-bottom: 12px;
+    padding-right: 74px;
+}
+
+.player-root--carousel .product-carousel-wrap {
+    background: rgba(20, 22, 28, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 20px;
+    padding: 12px;
+    box-shadow:
+        0 14px 38px rgba(0, 0, 0, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.player-root--carousel .overlay-bottom {
+    top: 50%;
+    background: linear-gradient(
+        to top,
+        rgba(0, 0, 0, 0.7) 0%,
+        rgba(0, 0, 0, 0.36) 50%,
+        transparent 100%
+    );
+}
+
+.player-root--carousel .product-carousel {
+    gap: 10px;
+}
+
+.player-root--carousel .product-card {
+    min-width: 218px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.22);
+    padding: 10px;
+}
+
+.player-root--carousel .product-card--active {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(232, 86, 58, 0.8);
+    box-shadow:
+        0 0 0 1px rgba(232, 86, 58, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.player-root--carousel .product-name {
+    font-size: 12px;
+    margin-bottom: 3px;
+}
+
+.player-root--carousel .product-price,
+.player-root--carousel .product-sale-price {
+    font-size: 12px;
 }
 
 .player-root--carousel .floating-heart {
@@ -2468,6 +2529,14 @@ onBeforeUnmount(() => {
     padding: 9px 12px;
     font-size: 12px;
     flex: none;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    color: #111827;
+}
+
+.player-root--product-page .commerce-panel .variant-select--page option {
+    color: #111827;
+    background: #fff;
 }
 
 .player-root--product-page .commerce-panel .product-card-cta-row {
@@ -2580,6 +2649,8 @@ onBeforeUnmount(() => {
         linear-gradient(180deg, rgba(18, 18, 20, 0.98), rgba(8, 8, 10, 0.99)),
         #0a0a0c;
     box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
+    min-height: 0;
+    overflow: hidden;
 }
 
 .feed-carousel-strip-head {
@@ -2630,6 +2701,7 @@ onBeforeUnmount(() => {
         #000 calc(100% - 24px),
         transparent
     );
+    min-height: 0;
 }
 
 .feed-carousel-strip-scroll::-webkit-scrollbar {
@@ -2765,7 +2837,8 @@ onBeforeUnmount(() => {
         grid-template-columns: minmax(0, 1fr) 248px;
         grid-template-rows: minmax(560px, 1fr);
         grid-template-areas: 'stage rail';
-        min-height: min(680px, 92dvh);
+        height: min(820px, calc(100dvh - 36px));
+        min-height: 0;
     }
 
     .player-root--carousel .video-layer {
@@ -2834,8 +2907,8 @@ onBeforeUnmount(() => {
 
     .player-root--carousel:not(.player-root--inline),
     .player-root--product-page:not(.player-root--inline) {
-        height: auto;
-        min-height: min(720px, calc(100dvh - 36px));
+        height: min(900px, calc(100dvh - 36px));
+        min-height: 0;
     }
 }
 
