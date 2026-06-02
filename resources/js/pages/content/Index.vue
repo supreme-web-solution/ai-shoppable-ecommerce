@@ -313,7 +313,7 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
 <template>
     <Head title="Shoppable Videos" />
 
-    <div class="page-root flex h-full flex-1 flex-col gap-6 p-4 md:p-6">
+    <div class="page-root flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-x-hidden p-4 md:p-6">
 
         <!-- Header -->
         <div class="flex flex-wrap items-center justify-between gap-3">
@@ -380,47 +380,54 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
         </div>
 
         <!-- Video list -->
-        <div v-else class="space-y-3">
+        <div v-else class="min-w-0 space-y-3">
             <div
                 v-for="video in filteredVideos"
                 :key="video.id"
                 class="overflow-hidden rounded-2xl bg-white shadow-card transition-shadow hover:shadow-md"
             >
-                <div class="flex flex-wrap items-start gap-4 p-4">
-                    <!-- Thumbnail -->
-                    <div class="shrink-0">
-                        <img
-                            v-if="video.thumbnail_url"
-                            :src="video.thumbnail_url"
-                            alt=""
-                            class="h-16 w-12 rounded-xl object-cover"
-                        >
-                        <div v-else class="flex h-16 w-12 items-center justify-center rounded-xl bg-gray-100">
-                            <Film class="size-5 text-gray-400" />
+                <div class="flex max-w-full flex-col gap-3 p-4">
+                    <div class="flex w-full min-w-0 gap-3">
+                        <!-- Thumbnail -->
+                        <div class="shrink-0">
+                            <img
+                                v-if="video.thumbnail_url"
+                                :src="video.thumbnail_url"
+                                alt=""
+                                class="h-16 w-12 rounded-xl object-cover"
+                            >
+                            <div v-else class="flex h-16 w-12 items-center justify-center rounded-xl bg-gray-100">
+                                <Film class="size-5 text-gray-400" />
+                            </div>
+                        </div>
+
+                        <!-- Info (w-0 + flex-1 lets truncate work inside flex rows) -->
+                        <div class="video-title-block w-0 min-w-0 flex-1">
+                            <p
+                                class="video-title truncate text-sm font-bold text-foreground md:text-base"
+                                :title="video.title"
+                            >
+                                {{ video.title }}
+                            </p>
+                            <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                <span :class="['status-pill', video.status === 'published' ? 'status-published' : video.status === 'processing' ? 'status-processing' : video.status === 'failed' ? 'status-failed' : 'status-default']">
+                                    <component :is="statusIcon(video.status)" class="size-3 shrink-0" />
+                                    {{ video.status }}
+                                </span>
+                                <span class="tag-pill">{{ sourceLabel(video.source) }}</span>
+                                <span v-if="video.product_tags?.length" class="tag-pill">
+                                    <Tag class="size-3 shrink-0" />
+                                    {{ video.product_tags.length }} product{{ video.product_tags.length !== 1 ? 's' : '' }}
+                                </span>
+                                <span v-if="video.published_at" class="text-xs text-muted-foreground">
+                                    Published {{ formatDate(video.published_at) }}
+                                </span>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Info -->
-                    <div class="min-w-0 flex-1 space-y-1.5">
-                        <p class="truncate font-bold leading-tight">{{ video.title }}</p>
-                        <div class="flex flex-wrap items-center gap-1.5">
-                            <span :class="['status-pill', video.status === 'published' ? 'status-published' : video.status === 'processing' ? 'status-processing' : video.status === 'failed' ? 'status-failed' : 'status-default']">
-                                <component :is="statusIcon(video.status)" class="size-3" />
-                                {{ video.status }}
-                            </span>
-                            <span class="tag-pill">{{ sourceLabel(video.source) }}</span>
-                            <span v-if="video.product_tags?.length" class="tag-pill">
-                                <Tag class="size-3" />
-                                {{ video.product_tags.length }} product{{ video.product_tags.length !== 1 ? 's' : '' }}
-                            </span>
-                            <span v-if="video.published_at" class="text-xs text-muted-foreground">
-                                Published {{ formatDate(video.published_at) }}
-                            </span>
-                        </div>
-                    </div>
-
-                    <!-- Actions -->
-                    <div class="flex flex-wrap items-center gap-1.5">
+                    <!-- Actions (own row so long titles never push buttons off-screen) -->
+                    <div class="flex flex-wrap items-center gap-1.5 border-t border-gray-100 pt-3 pl-[60px]">
                         <Link :href="`/content/${video.id}/edit`" class="action-btn">
                             <Pencil class="size-3.5" />
                             Edit
@@ -645,9 +652,11 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
 .delete-btn { display: inline-flex; align-items: center; padding: 5px 8px; border-radius: 9999px; background: transparent; color: #9ca3af; border: 1px solid transparent; font-size: 12px; cursor: pointer; transition: all 0.15s; }
 .delete-btn:hover { border-color: #fecaca; background: #fef2f2; color: #ef4444; }
 .status-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 9999px; font-size: 11px; font-weight: 600; }
-.status-published { background: rgba(232,86,58,0.1); color: #E8563A; }
+.status-published { background: rgba(16, 185, 129, 0.12); color: #059669; }
 .status-processing { background: rgba(245,158,11,0.1); color: #d97706; }
 .status-failed { background: rgba(239,68,68,0.1); color: #dc2626; }
 .status-default { background: #f3f4f6; color: #6b7280; }
 .tag-pill { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 9999px; background: #f3f4f6; font-size: 11px; font-weight: 500; color: #6b7280; }
+.video-title-block { overflow: hidden; max-width: 80%; }
+.video-title { display: block; max-width: 100%; }
 </style>

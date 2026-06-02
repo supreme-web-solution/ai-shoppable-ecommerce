@@ -11,17 +11,47 @@ class TeamCheckoutResolver
      */
     public function resolve(Team $team, string $requestedMode, ?string $requestedProvider = null): array
     {
-        $teamMode = $team->checkout_mode ?: 'native';
-        $effectiveMode = $requestedMode === 'hybrid' ? $teamMode : $requestedMode;
+        if ($requestedMode === 'hybrid') {
+            return $this->resolveHybrid($team, $requestedProvider);
+        }
 
-        if ($effectiveMode === 'native') {
+        if ($requestedMode === 'external') {
+            $provider = $this->resolveProvider($team, $requestedProvider);
+
+            if ($provider !== null && $this->isProviderReady($team, $provider)) {
+                return ['mode' => 'external', 'provider' => $provider];
+            }
+
             return ['mode' => 'native', 'provider' => null];
         }
 
-        $provider = $this->resolveProvider($team, $requestedProvider);
+        return ['mode' => 'native', 'provider' => null];
+    }
 
-        if ($provider !== null && $this->isProviderReady($team, $provider)) {
-            return ['mode' => 'external', 'provider' => $provider];
+    /**
+     * @return array{mode: 'native'|'external', provider: ?string}
+     */
+    private function resolveHybrid(Team $team, ?string $requestedProvider): array
+    {
+        $teamMode = $team->checkout_mode ?: 'native';
+        $externalProvider = $this->resolveProvider($team, $requestedProvider);
+        $externalReady = $externalProvider !== null && $this->isProviderReady($team, $externalProvider);
+        $nativeReady = $this->isNativeReady($team);
+
+        if ($teamMode === 'external' && $externalReady) {
+            return ['mode' => 'external', 'provider' => $externalProvider];
+        }
+
+        if ($teamMode === 'native' && $nativeReady) {
+            return ['mode' => 'native', 'provider' => null];
+        }
+
+        if ($externalReady) {
+            return ['mode' => 'external', 'provider' => $externalProvider];
+        }
+
+        if ($nativeReady) {
+            return ['mode' => 'native', 'provider' => null];
         }
 
         return ['mode' => 'native', 'provider' => null];
@@ -57,7 +87,11 @@ class TeamCheckoutResolver
 
         return match ($provider) {
             'shopify' => trim((string) ($settings['shop_url'] ?? '')) !== ''
-                && trim((string) ($settings['access_token'] ?? '')) !== '',
+                && (
+                    (trim((string) ($settings['client_id'] ?? '')) !== ''
+                        && trim((string) ($settings['client_secret'] ?? '')) !== '')
+                    || trim((string) ($settings['access_token'] ?? '')) !== ''
+                ),
             'woocommerce' => trim((string) ($settings['site_url'] ?? '')) !== ''
                 && trim((string) ($settings['consumer_key'] ?? '')) !== ''
                 && trim((string) ($settings['consumer_secret'] ?? '')) !== '',

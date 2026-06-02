@@ -715,9 +715,9 @@ Build first:
 Then add:
 
 ✅ AI script generation
-✅ AI avatar videos
-✅ multilingual generation
-✅ AI subtitles
+✅ AI avatar videos (HeyGen)
+✅ Multilingual batch generation (`POST /api/v1/admin/ai/multilingual-videos`)
+⏳ AI subtitles / burned-in captions (not started)
 
 using external APIs.
 
@@ -725,14 +725,14 @@ using external APIs.
 
 # PHASE 3 — ADVANCED FEATURES
 
-Later:
+Not started (planned):
 
-✅ gamification
-✅ loyalty systems
-✅ influencer marketplace
-✅ affiliate selling
-✅ realtime AI assistants
-✅ AI recommendations
+⏳ gamification
+⏳ loyalty systems
+⏳ influencer marketplace
+⏳ affiliate selling
+⏳ realtime AI streaming presenters
+⏳ AI product recommendations in feed
 
 ---
 

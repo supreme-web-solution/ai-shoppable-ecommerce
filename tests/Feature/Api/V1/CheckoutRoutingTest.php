@@ -7,6 +7,7 @@ use App\Models\CartItem;
 use App\Models\Embed;
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\Video;
@@ -170,6 +171,65 @@ class CheckoutRoutingTest extends TestCase
             ->assertJsonPath('checkout_url', 'https://checkout.stripe.com/c/pay/cs_test_123');
     }
 
+    public function test_checkout_return_confirms_stripe_payment_without_webhook(): void
+    {
+        [$team, $cart, $embed] = $this->createCheckoutFixture([
+            'checkout_mode' => 'hybrid',
+            'external_provider' => 'none',
+            'settings' => [
+                'integrations' => [
+                    'stripe' => [
+                        'enabled' => true,
+                        'publishable_key' => 'pk_test_123',
+                        'secret_key' => 'sk_test_123',
+                    ],
+                ],
+            ],
+        ]);
+
+        $checkoutResponse = $this->postJson(
+            '/api/v1/player/checkout',
+            [
+                'team_id' => $team->id,
+                'cart_id' => $cart->id,
+                'checkout_mode' => 'hybrid',
+            ],
+            $this->embedHeaders($embed->slug),
+        );
+
+        $order = Order::query()->findOrFail($checkoutResponse->json('order.id'));
+        $order->update([
+            'payment_reference' => 'cs_test_return',
+            'metadata' => array_merge((array) $order->metadata, [
+                'payment_provider' => 'stripe',
+            ]),
+        ]);
+
+        Http::fake([
+            'https://api.stripe.com/v1/checkout/sessions/cs_test_return' => Http::response([
+                'id' => 'cs_test_return',
+                'payment_status' => 'paid',
+                'metadata' => [
+                    'order_id' => (string) $order->id,
+                ],
+            ]),
+        ]);
+
+        $token = (string) data_get($order->metadata, 'checkout_token');
+
+        $this->get("/checkout/{$order->id}/{$token}?payment=success&session_id=cs_test_return")
+            ->assertOk();
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'status' => 'paid',
+        ]);
+        $this->assertDatabaseHas('carts', [
+            'id' => $cart->id,
+            'status' => 'checked_out',
+        ]);
+    }
+
     public function test_stripe_webhook_marks_pending_native_order_paid(): void
     {
         [$team, $cart, $embed] = $this->createCheckoutFixture([
@@ -223,21 +283,10 @@ class CheckoutRoutingTest extends TestCase
         ]);
     }
 
-    public function test_hybrid_checkout_uses_external_when_shopify_is_enabled(): void
+    public function test_hybrid_checkout_uses_shopify_when_native_not_configured(): void
     {
-        [$team, $cart, $embed] = $this->createCheckoutFixture([
-            'checkout_mode' => 'hybrid',
-            'external_provider' => 'shopify',
-            'settings' => [
-                'integrations' => [
-                    'shopify' => [
-                        'enabled' => true,
-                        'shop_url' => 'demo-store.myshopify.com',
-                        'access_token' => 'shpat_test_token',
-                    ],
-                ],
-            ],
-        ]);
+        [$team, $cart, $embed] = $this->createShopifyCheckoutFixture();
+        $team->update(['checkout_mode' => 'native']);
 
         $response = $this->postJson(
             '/api/v1/player/checkout',
@@ -252,7 +301,164 @@ class CheckoutRoutingTest extends TestCase
         $response->assertCreated()
             ->assertJsonPath('mode', 'external')
             ->assertJsonPath('provider', 'shopify')
-            ->assertJsonPath('checkout_url', fn ($value) => is_string($value) && str_contains($value, 'checkout'));
+            ->assertJsonPath('checkout_url', fn ($value) => is_string($value) && str_contains($value, 'demo-store.myshopify.com'));
+    }
+
+    public function test_hybrid_checkout_uses_external_when_shopify_is_enabled(): void
+    {
+        [$team, $cart, $embed] = $this->createShopifyCheckoutFixture();
+
+        $response = $this->postJson(
+            '/api/v1/player/checkout',
+            [
+                'team_id' => $team->id,
+                'cart_id' => $cart->id,
+                'checkout_mode' => 'hybrid',
+            ],
+            $this->embedHeaders($embed->slug),
+        );
+
+        $response->assertCreated()
+            ->assertJsonPath('mode', 'external')
+            ->assertJsonPath('provider', 'shopify')
+            ->assertJsonPath('checkout_url', fn ($value) => is_string($value) && str_contains($value, 'demo-store.myshopify.com'));
+    }
+
+    public function test_shopify_checkout_url_includes_synced_variant_ids_and_quantities(): void
+    {
+        [$team, $cart, $embed] = $this->createShopifyCheckoutFixture();
+
+        $response = $this->postJson(
+            '/api/v1/player/checkout',
+            [
+                'team_id' => $team->id,
+                'cart_id' => $cart->id,
+                'checkout_mode' => 'hybrid',
+            ],
+            $this->embedHeaders($embed->slug),
+        );
+
+        $response->assertCreated()
+            ->assertJsonPath('mode', 'external')
+            ->assertJsonPath('provider', 'shopify')
+            ->assertJsonPath('checkout_url', 'https://demo-store.myshopify.com/cart/8932350165149:2,8932346921117:1');
+    }
+
+    /**
+     * @return array{0: Team, 1: Cart, 2: Embed}
+     */
+    protected function createShopifyCheckoutFixture(): array
+    {
+        $owner = User::factory()->create();
+
+        $team = Team::query()->create([
+            'owner_user_id' => $owner->id,
+            'name' => 'Shopify Checkout Team',
+            'slug' => 'shopify-checkout-team',
+            'checkout_mode' => 'external',
+            'external_provider' => 'shopify',
+            'settings' => [
+                'integrations' => [
+                    'shopify' => [
+                        'enabled' => true,
+                        'shop_url' => 'demo-store.myshopify.com',
+                        'client_id' => 'test-client-id',
+                        'client_secret' => 'test-client-secret',
+                    ],
+                ],
+            ],
+        ]);
+
+        $team->users()->attach($owner->id, ['role' => 'owner']);
+        $owner->update(['team_id' => $team->id]);
+
+        $hoodie = Product::query()->create([
+            'team_id' => $team->id,
+            'external_id' => '8932350165149',
+            'title' => 'second product',
+            'slug' => 'second-product',
+            'source' => 'shopify',
+            'currency' => 'USD',
+            'price' => 308,
+        ]);
+
+        $hoodieVariant = ProductVariant::query()->create([
+            'team_id' => $team->id,
+            'product_id' => $hoodie->id,
+            'external_id' => '8932350165149',
+            'title' => 'Default',
+            'sku' => 'HD-1',
+            'price' => 308,
+            'inventory' => 10,
+            'is_default' => true,
+        ]);
+
+        $tee = Product::query()->create([
+            'team_id' => $team->id,
+            'external_id' => '8932346921117',
+            'title' => 't-shirt',
+            'slug' => 't-shirt',
+            'source' => 'shopify',
+            'currency' => 'USD',
+            'price' => 200,
+        ]);
+
+        ProductVariant::query()->create([
+            'team_id' => $team->id,
+            'product_id' => $tee->id,
+            'external_id' => '8932346921117',
+            'title' => 'Default',
+            'sku' => 'TS-1',
+            'price' => 200,
+            'inventory' => 5,
+            'is_default' => true,
+        ]);
+
+        $video = Video::query()->create([
+            'team_id' => $team->id,
+            'title' => 'Shopify Checkout Video',
+            'source' => 'uploaded',
+            'status' => 'published',
+            'visibility' => 'public',
+        ]);
+
+        $embed = Embed::query()->create([
+            'team_id' => $team->id,
+            'video_id' => $video->id,
+            'name' => 'Shopify Checkout Embed',
+            'type' => 'vertical_feed',
+            'slug' => 'shopify-checkout-embed',
+            'signed_key' => hash('sha256', 'shopify-checkout-embed'),
+            'is_active' => true,
+            'allowed_domains' => ['allowed.test'],
+        ]);
+
+        $cart = Cart::query()->create([
+            'team_id' => $team->id,
+            'session_key' => 'shopify-checkout-session',
+            'status' => 'active',
+            'currency' => 'USD',
+            'total_amount' => 816,
+        ]);
+
+        CartItem::query()->create([
+            'cart_id' => $cart->id,
+            'product_id' => $hoodie->id,
+            'product_variant_id' => $hoodieVariant->id,
+            'quantity' => 2,
+            'unit_price' => 308,
+            'line_total' => 616,
+        ]);
+
+        CartItem::query()->create([
+            'cart_id' => $cart->id,
+            'product_id' => $tee->id,
+            'quantity' => 1,
+            'unit_price' => 200,
+            'line_total' => 200,
+        ]);
+
+        return [$team, $cart, $embed];
     }
 
     /**

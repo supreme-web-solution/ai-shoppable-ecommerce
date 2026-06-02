@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
+import { CircleHelp, Loader2 } from 'lucide-vue-next';
 import { computed, onMounted, ref } from 'vue';
+import ShopifySetupGuideDialog from '@/components/integrations/ShopifySetupGuideDialog.vue';
+import WooSetupGuideDialog from '@/components/integrations/WooSetupGuideDialog.vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,7 +16,7 @@ type TeamRecord = {
     external_provider: string;
     settings?: {
         integrations?: {
-            shopify?: { shop_url?: string; access_token?: string; enabled?: boolean };
+            shopify?: { shop_url?: string; client_id?: string; client_secret?: string; enabled?: boolean };
             woocommerce?: { site_url?: string; consumer_key?: string; consumer_secret?: string; enabled?: boolean };
             stripe?: { publishable_key?: string; secret_key?: string; enabled?: boolean };
             paypal?: { client_id?: string; client_secret?: string; enabled?: boolean; mode?: string };
@@ -34,12 +37,11 @@ const { teamId, apiFetch, patchJson, postJson, ensureTeam } = useAdminApi();
 
 const loading = ref(false);
 const saving = ref(false);
-const syncing = ref(false);
 const errorText = ref('');
 const successText = ref('');
 const team = ref<TeamRecord | null>(null);
 
-const shopify = ref({ shop_url: '', access_token: '', enabled: false });
+const shopify = ref({ shop_url: '', client_id: '', client_secret: '', enabled: false });
 const woocommerce = ref({ site_url: '', consumer_key: '', consumer_secret: '', enabled: false });
 const stripe = ref({ publishable_key: '', secret_key: '', enabled: false });
 const paypal = ref({ client_id: '', client_secret: '', enabled: false, mode: 'sandbox' });
@@ -47,6 +49,13 @@ const checkoutMode = ref('hybrid');
 const externalProvider = ref('none');
 
 const activeSection = ref<'native' | 'external' | null>(null);
+const shopifyGuideOpen = ref(false);
+const wooGuideOpen = ref(false);
+const syncingShopify = ref(false);
+const syncingWoo = ref(false);
+const shopifySyncLabel = ref('Sync products now');
+
+const shopifySyncBusy = computed(() => syncingShopify.value || saving.value);
 
 const stripeReady = computed(() => stripe.value.enabled && stripe.value.secret_key.trim() !== '');
 const paypalReady = computed(() =>
@@ -56,7 +65,7 @@ const paypalReady = computed(() =>
 );
 const nativeCheckoutReady = computed(() => stripeReady.value || paypalReady.value);
 const externalCheckoutReady = computed(() =>
-    (shopify.value.enabled && shopify.value.shop_url.trim() !== '' && shopify.value.access_token.trim() !== '')
+    (shopify.value.enabled && shopify.value.shop_url.trim() !== '' && shopify.value.client_id.trim() !== '' && shopify.value.client_secret.trim() !== '')
     || (
         woocommerce.value.enabled
         && woocommerce.value.site_url.trim() !== ''
@@ -65,54 +74,114 @@ const externalCheckoutReady = computed(() =>
     ),
 );
 
-function webhookUrl(provider: 'stripe' | 'paypal'): string {
-    const path = provider === 'stripe'
-        ? '/api/v1/integrations/stripe/webhook'
-        : '/api/v1/integrations/paypal/webhook';
+function disableAllPaymentProviders() {
+    stripe.value.enabled = false;
+    paypal.value.enabled = false;
+    shopify.value.enabled = false;
+    woocommerce.value.enabled = false;
+}
 
-    if (typeof window === 'undefined') {
-        return path;
+function normalizeExclusiveProviderFromTeam() {
+    if (!team.value) {
+        return;
     }
 
-    return `${window.location.origin}${path}`;
+    const integrations = team.value.settings?.integrations ?? {};
+    const flags = {
+        stripe: Boolean(integrations.stripe?.enabled),
+        paypal: Boolean(integrations.paypal?.enabled),
+        shopify: Boolean(integrations.shopify?.enabled),
+        woocommerce: Boolean(integrations.woocommerce?.enabled),
+    };
+    const enabledKeys = Object.entries(flags).filter(([, enabled]) => enabled).map(([key]) => key);
+
+    if (enabledKeys.length <= 1) {
+        return;
+    }
+
+    disableAllPaymentProviders();
+
+    const mode = team.value.checkout_mode;
+    const ext = team.value.external_provider;
+
+    if (mode === 'external' || ext === 'shopify' || ext === 'woocommerce') {
+        if (ext === 'woocommerce' && flags.woocommerce) {
+            woocommerce.value.enabled = true;
+            checkoutMode.value = 'external';
+            activeSection.value = 'external';
+
+            return;
+        }
+
+        if (flags.shopify) {
+            shopify.value.enabled = true;
+            checkoutMode.value = 'external';
+            activeSection.value = 'external';
+
+            return;
+        }
+    }
+
+    if (flags.paypal) {
+        paypal.value.enabled = true;
+    } else if (flags.stripe) {
+        stripe.value.enabled = true;
+    }
+
+    checkoutMode.value = 'native';
+    activeSection.value = 'native';
 }
 
 function setStripeEnabled(enabled: boolean) {
-    stripe.value.enabled = enabled;
-
     if (enabled) {
-        paypal.value.enabled = false;
+        disableAllPaymentProviders();
+        stripe.value.enabled = true;
+        checkoutMode.value = 'native';
+        activeSection.value = 'native';
+
+        return;
     }
+
+    stripe.value.enabled = false;
 }
 
 function setPaypalEnabled(enabled: boolean) {
-    paypal.value.enabled = enabled;
-
     if (enabled) {
-        stripe.value.enabled = false;
+        disableAllPaymentProviders();
+        paypal.value.enabled = true;
+        checkoutMode.value = 'native';
+        activeSection.value = 'native';
+
+        return;
     }
+
+    paypal.value.enabled = false;
 }
 
 function setShopifyEnabled(enabled: boolean) {
-    shopify.value.enabled = enabled;
-
     if (enabled) {
-        woocommerce.value.enabled = false;
+        disableAllPaymentProviders();
+        shopify.value.enabled = true;
+        checkoutMode.value = 'external';
+        activeSection.value = 'external';
+
+        return;
     }
+
+    shopify.value.enabled = false;
 }
 
 function setWooCommerceEnabled(enabled: boolean) {
-    woocommerce.value.enabled = enabled;
-
     if (enabled) {
-        shopify.value.enabled = false;
-    }
-}
+        disableAllPaymentProviders();
+        woocommerce.value.enabled = true;
+        checkoutMode.value = 'external';
+        activeSection.value = 'external';
 
-async function copyText(value: string) {
-    await navigator.clipboard?.writeText(value);
-    successText.value = 'Webhook URL copied!';
-    setTimeout(() => { if (successText.value === 'Webhook URL copied!') successText.value = ''; }, 2000);
+        return;
+    }
+
+    woocommerce.value.enabled = false;
 }
 
 async function loadTeam() {
@@ -127,7 +196,8 @@ async function loadTeam() {
         externalProvider.value = team.value.external_provider || 'none';
         shopify.value = {
             shop_url: team.value.settings?.integrations?.shopify?.shop_url ?? '',
-            access_token: team.value.settings?.integrations?.shopify?.access_token ?? '',
+            client_id: team.value.settings?.integrations?.shopify?.client_id ?? '',
+            client_secret: team.value.settings?.integrations?.shopify?.client_secret ?? '',
             enabled: Boolean(team.value.settings?.integrations?.shopify?.enabled),
         };
         woocommerce.value = {
@@ -148,7 +218,13 @@ async function loadTeam() {
             mode: team.value.settings?.integrations?.paypal?.mode ?? 'sandbox',
         };
 
-        if (nativeCheckoutReady.value || stripe.value.client_id !== '' || paypal.value.client_id !== '') {
+        normalizeExclusiveProviderFromTeam();
+
+        if (shopify.value.enabled || woocommerce.value.enabled) {
+            activeSection.value = 'external';
+        } else if (stripe.value.enabled || paypal.value.enabled) {
+            activeSection.value = 'native';
+        } else if (nativeCheckoutReady.value || stripe.value.publishable_key !== '' || paypal.value.client_id !== '') {
             activeSection.value = 'native';
         } else if (externalCheckoutReady.value) {
             activeSection.value = 'external';
@@ -160,24 +236,29 @@ async function loadTeam() {
     }
 }
 
-async function saveSettings() {
+async function saveSettings(options: { silent?: boolean } = {}) {
     if (!team.value) {
         return;
     }
 
     saving.value = true;
-    errorText.value = '';
-    successText.value = '';
+
+    if (!options.silent) {
+        errorText.value = '';
+        successText.value = '';
+    }
 
     try {
         const resolvedExternalProvider = shopify.value.enabled
             ? 'shopify'
             : woocommerce.value.enabled
               ? 'woocommerce'
-              : externalProvider.value;
+              : 'none';
         const resolvedCheckoutMode = shopify.value.enabled || woocommerce.value.enabled
-            ? checkoutMode.value
-            : 'native';
+            ? 'external'
+            : stripe.value.enabled || paypal.value.enabled
+              ? 'native'
+              : 'native';
 
         team.value = await patchJson<TeamRecord>(`/api/v1/admin/teams/${team.value.id}`, {
             checkout_mode: resolvedCheckoutMode,
@@ -193,26 +274,113 @@ async function saveSettings() {
             },
         });
 
-        successText.value = 'Settings saved successfully.';
+        if (!options.silent) {
+            successText.value = 'Settings saved successfully.';
+        }
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not save settings.';
+
+        throw error;
     } finally {
         saving.value = false;
     }
 }
 
+type CatalogSyncStatusPayload = {
+    state: 'idle' | 'queued' | 'running' | 'completed' | 'failed';
+    message?: string;
+    products_created?: number;
+    products_updated?: number;
+    total_products?: number;
+};
+
+async function waitForShopifySync(): Promise<void> {
+    const maxAttempts = 90;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+
+        const payload = await apiFetch<{ status: CatalogSyncStatusPayload }>(
+            `/api/v1/integrations/shopify/sync-status?team_id=${teamId.value}`,
+        );
+        const status = payload.status;
+
+        if (status.state === 'queued') {
+            shopifySyncLabel.value = 'Waiting for worker…';
+        } else if (status.state === 'running') {
+            shopifySyncLabel.value = 'Importing from Shopify…';
+        } else if (status.state === 'completed') {
+            successText.value = status.message ?? 'Shopify products synced successfully.';
+
+            return;
+        } else if (status.state === 'failed') {
+            throw new Error(status.message ?? 'Shopify sync failed. Check your Shop URL, Client ID, and Client Secret.');
+        }
+    }
+
+    throw new Error('Sync is taking longer than expected. Ensure the integration queue worker is running.');
+}
+
+async function waitForWooSync(): Promise<void> {
+    const maxAttempts = 90;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+
+        const payload = await apiFetch<{ status: CatalogSyncStatusPayload }>(
+            `/api/v1/integrations/woo/sync-status?team_id=${teamId.value}`,
+        );
+        const status = payload.status;
+
+        if (status.state === 'completed') {
+            successText.value = status.message ?? 'WooCommerce products synced successfully.';
+
+            return;
+        }
+
+        if (status.state === 'failed') {
+            throw new Error(status.message ?? 'WooCommerce sync failed. Check your Site URL and API keys.');
+        }
+    }
+
+    throw new Error('WooCommerce sync is taking longer than expected. Ensure the integration queue worker is running.');
+}
+
 async function syncProvider(provider: 'shopify' | 'woo') {
-    syncing.value = true;
+    if (provider === 'shopify') {
+        if (!shopify.value.shop_url.trim() || !shopify.value.client_id.trim() || !shopify.value.client_secret.trim()) {
+            errorText.value = 'Enter Shop URL, Client ID, and Client Secret first.';
+            shopifyGuideOpen.value = true;
+
+            return;
+        }
+
+        syncingShopify.value = true;
+        shopifySyncLabel.value = 'Saving settings…';
+    } else {
+        syncingWoo.value = true;
+    }
+
     errorText.value = '';
+    successText.value = '';
 
     try {
-        const path = provider === 'shopify' ? '/api/v1/integrations/shopify/sync' : '/api/v1/integrations/woo/sync';
-        await postJson(path, {});
-        successText.value = `${provider === 'shopify' ? 'Shopify' : 'WooCommerce'} sync queued.`;
+        await saveSettings({ silent: true });
+
+        if (provider === 'shopify') {
+            shopifySyncLabel.value = 'Starting sync…';
+            await postJson<{ message?: string }>('/api/v1/integrations/shopify/sync', {});
+            await waitForShopifySync();
+        } else {
+            await postJson<{ message?: string }>('/api/v1/integrations/woo/sync', {});
+            await waitForWooSync();
+        }
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Sync failed.';
     } finally {
-        syncing.value = false;
+        syncingShopify.value = false;
+        syncingWoo.value = false;
+        shopifySyncLabel.value = 'Sync products now';
     }
 }
 
@@ -222,7 +390,7 @@ onMounted(loadTeam);
 <template>
     <Head title="Integrations" />
 
-    <div class="integrations-root flex h-full flex-1 flex-col gap-5 p-4 md:p-5">
+    <div class="integrations-root flex min-h-screen flex-1 flex-col gap-5 p-4 md:p-5">
         <!-- Header -->
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="flex items-start gap-3">
@@ -265,7 +433,7 @@ onMounted(loadTeam);
                     <div class="step-dot flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold">1</div>
                     <div>
                         <h3 class="font-bold text-gray-900">How should shoppers pay?</h3>
-                        <p class="mt-0.5 text-sm text-gray-500">Choose one option. You can change this anytime.</p>
+                        <p class="mt-0.5 text-sm text-gray-500">Choose one payment flow. Enabling a provider turns the others off.</p>
                     </div>
                 </div>
 
@@ -324,7 +492,9 @@ onMounted(loadTeam);
                         <h3 class="font-bold text-gray-900">Connect a payment provider</h3>
                     </div>
 
-                    <p class="ml-11 text-sm text-gray-500">Enable one provider. Add the webhook URL shown below into your Stripe or PayPal dashboard so paid orders are confirmed automatically.</p>
+                    <p class="ml-11 text-sm text-gray-500">
+                        Enable Stripe or PayPal. Turning one on disables Shopify, WooCommerce, and the other native provider.
+                    </p>
 
                     <!-- Stripe -->
                     <div
@@ -386,15 +556,6 @@ onMounted(loadTeam);
                                     <div class="space-y-1">
                                         <Label class="text-xs">Secret key</Label>
                                         <Input v-model="stripe.secret_key" type="password" placeholder="sk_live_..." class="font-mono text-xs" />
-                                    </div>
-                                </div>
-                                <div class="rounded-xl bg-[#FAF8F5] p-3">
-                                    <p class="mb-1.5 text-xs font-medium">Webhook URL <span class="ml-1 font-normal text-gray-500">(add this in Stripe › Webhooks)</span></p>
-                                    <div class="flex gap-2">
-                                        <Input :model-value="webhookUrl('stripe')" readonly class="font-mono text-xs" />
-                                        <Button variant="outline" size="sm" type="button" @click="copyText(webhookUrl('stripe'))">
-                                            Copy
-                                        </Button>
                                     </div>
                                 </div>
                             </div>
@@ -480,15 +641,6 @@ onMounted(loadTeam);
                                         <Input v-model="paypal.client_secret" type="password" placeholder="••••••••" class="font-mono text-xs" />
                                     </div>
                                 </div>
-                                <div class="rounded-xl bg-[#FAF8F5] p-3">
-                                    <p class="mb-1.5 text-xs font-medium">Webhook URL <span class="ml-1 font-normal text-gray-500">(add in PayPal › Webhooks)</span></p>
-                                    <div class="flex gap-2">
-                                        <Input :model-value="webhookUrl('paypal')" readonly class="font-mono text-xs" />
-                                        <Button variant="outline" size="sm" type="button" @click="copyText(webhookUrl('paypal'))">
-                                            Copy
-                                        </Button>
-                                    </div>
-                                </div>
                             </div>
                         </Transition>
                     </div>
@@ -503,13 +655,15 @@ onMounted(loadTeam);
                         <h3 class="font-bold text-gray-900">Connect your store</h3>
                     </div>
 
-                    <p class="ml-11 text-sm text-gray-500">Enable one platform. Shoppers will be redirected to your store to complete checkout. Product SKUs must match your store catalog for the redirect to work correctly.</p>
+                    <p class="ml-11 text-sm text-gray-500">
+                        Enable Shopify or WooCommerce. Turning one on disables Stripe, PayPal, and the other store platform.
+                    </p>
 
                     <!-- Shopify -->
                     <div
                         :class="[
                             'provider-panel ml-11 rounded-2xl border-2 transition-all',
-                            shopify.value?.enabled && shopify.value.shop_url ? 'border-emerald-300 bg-emerald-50/60' : shopify.value?.enabled ? 'border-[#E8563A]/40 bg-[#E8563A]/5' : 'border-gray-100 bg-white',
+                            shopify.enabled && shopify.shop_url ? 'border-emerald-300 bg-emerald-50/60' : shopify.enabled ? 'border-[#E8563A]/40 bg-[#E8563A]/5' : 'border-gray-100 bg-white',
                         ]"
                     >
                         <button
@@ -533,19 +687,54 @@ onMounted(loadTeam);
                         </button>
                         <Transition name="expand">
                             <div v-if="shopify.enabled" class="space-y-3 border-t px-4 pb-5 pt-4">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <p class="text-xs text-gray-500">
+                                        Import products from Shopify into this app for shoppable videos.
+                                    </p>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        class="shrink-0 rounded-full text-xs"
+                                        @click="shopifyGuideOpen = true"
+                                    >
+                                        <CircleHelp class="mr-1.5 size-3.5 text-[#E8563A]" />
+                                        How to get keys
+                                    </Button>
+                                </div>
                                 <div class="space-y-1">
                                     <Label class="text-xs">Shop URL</Label>
                                     <Input v-model="shopify.shop_url" placeholder="your-store.myshopify.com" />
                                 </div>
-                                <div class="space-y-1">
-                                    <Label class="text-xs">Admin API access token</Label>
-                                    <Input v-model="shopify.access_token" type="password" placeholder="shpat_..." class="font-mono text-xs" />
-                                    <p class="text-[11px] text-gray-500">From Shopify Admin › Apps › Develop apps</p>
+                                <div class="grid gap-3 sm:grid-cols-2">
+                                    <div class="space-y-1">
+                                        <Label class="text-xs">Client ID</Label>
+                                        <Input v-model="shopify.client_id" placeholder="a9caaedb..." class="font-mono text-xs" />
+                                    </div>
+                                    <div class="space-y-1">
+                                        <Label class="text-xs">Client Secret</Label>
+                                        <Input v-model="shopify.client_secret" type="password" placeholder="••••••••" class="font-mono text-xs" />
+                                    </div>
                                 </div>
-                                <Button variant="outline" size="sm" :disabled="syncing" @click="syncProvider('shopify')">
-                                    <svg v-if="syncing" class="mr-1.5 size-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                                    {{ syncing ? 'Syncing…' : 'Sync products now' }}
-                                </Button>
+                                <p class="text-[11px] text-gray-500">
+                                    See <strong>How to get keys</strong> for where to find these.
+                                </p>
+                                <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        class="min-w-[10.5rem]"
+                                        :disabled="shopifySyncBusy"
+                                        @click="syncProvider('shopify')"
+                                    >
+                                        <Loader2
+                                            v-if="shopifySyncBusy"
+                                            class="mr-1.5 size-3.5 shrink-0 animate-spin"
+                                        />
+                                        {{ shopifySyncLabel }}
+                                    </Button>
+                                   
+                                </div>
                             </div>
                         </Transition>
                     </div>
@@ -578,6 +767,21 @@ onMounted(loadTeam);
                         </button>
                         <Transition name="expand">
                             <div v-if="woocommerce.enabled" class="space-y-3 border-t px-4 pb-5 pt-4">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <p class="text-xs text-gray-500">
+                                        Import products from WooCommerce into this app for shoppable videos.
+                                    </p>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        class="shrink-0 rounded-full text-xs"
+                                        @click="wooGuideOpen = true"
+                                    >
+                                        <CircleHelp class="mr-1.5 size-3.5 text-[#E8563A]" />
+                                        How to get keys
+                                    </Button>
+                                </div>
                                 <div class="space-y-1">
                                     <Label class="text-xs">Site URL</Label>
                                     <Input v-model="woocommerce.site_url" placeholder="https://yourstore.com" />
@@ -592,10 +796,12 @@ onMounted(loadTeam);
                                         <Input v-model="woocommerce.consumer_secret" type="password" class="font-mono text-xs" />
                                     </div>
                                 </div>
-                                <p class="text-[11px] text-gray-500">From WooCommerce › Settings › Advanced › REST API</p>
-                                <Button variant="outline" size="sm" :disabled="syncing" @click="syncProvider('woo')">
-                                    <svg v-if="syncing" class="mr-1.5 size-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                                    {{ syncing ? 'Syncing…' : 'Sync products now' }}
+                                <p class="text-[11px] text-gray-500">
+                                    See <strong>How to get keys</strong> for the exact WooCommerce steps.
+                                </p>
+                                <Button variant="outline" size="sm" :disabled="syncingWoo || saving" @click="syncProvider('woo')">
+                                    <svg v-if="syncingWoo" class="mr-1.5 size-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                                    {{ syncingWoo ? 'Syncing…' : 'Sync products now' }}
                                 </Button>
                             </div>
                         </Transition>
@@ -612,6 +818,9 @@ onMounted(loadTeam);
                 <p class="text-xs text-gray-500">Changes take effect immediately for new checkout sessions.</p>
             </div>
         </template>
+
+        <ShopifySetupGuideDialog v-model:open="shopifyGuideOpen" />
+        <WooSetupGuideDialog v-model:open="wooGuideOpen" />
     </div>
 </template>
 

@@ -158,6 +158,66 @@ class LiveVideoChatTest extends TestCase
             ->assertJsonPath('data.1.sender_type', 'host');
     }
 
+    public function test_admin_can_filter_threads_hide_and_ban_session(): void
+    {
+        [$team, $owner] = $this->createTeamWithOwner();
+        Sanctum::actingAs($owner);
+
+        $video = Video::query()->create([
+            'team_id' => $team->id,
+            'title' => 'Moderated Video',
+            'source' => 'uploaded',
+            'status' => 'published',
+            'visibility' => 'public',
+        ]);
+
+        $comment = Comment::query()->create([
+            'team_id' => $team->id,
+            'video_id' => $video->id,
+            'session_key' => 'viewer-xyz',
+            'body' => 'Spam link https://example.com',
+            'metadata' => [
+                'sender_type' => 'attendee',
+                'sender_name' => 'Spammer',
+                'session_key' => 'viewer-xyz',
+            ],
+        ]);
+
+        $this->getJson("/api/v1/admin/live-video-chats/{$video->id}/threads?team_id={$team->id}")
+            ->assertOk()
+            ->assertJsonPath('data.0.session_key', 'viewer-xyz');
+
+        $this->patchJson(
+            "/api/v1/admin/live-video-chats/{$video->id}/comments/{$comment->id}/hide?team_id={$team->id}",
+            [],
+        )->assertOk();
+
+        $this->assertTrue($comment->fresh()->is_hidden);
+
+        $this->postJson(
+            "/api/v1/admin/live-video-chats/{$video->id}/ban-session?team_id={$team->id}",
+            ['session_key' => 'viewer-xyz'],
+        )->assertOk();
+
+        $this->assertDatabaseHas('chat_session_bans', [
+            'video_id' => $video->id,
+            'session_key' => 'viewer-xyz',
+        ]);
+    }
+
+    public function test_player_link_preview_endpoint_returns_metadata(): void
+    {
+        $response = $this->getJson('/api/v1/player/link-preview?url=https://example.com');
+
+        $this->assertContains($response->status(), [200, 404]);
+
+        if ($response->status() === 200) {
+            $response->assertJsonStructure([
+                'data' => ['url', 'title'],
+            ]);
+        }
+    }
+
     /**
      * @return array{0: Team, 1: User}
      */

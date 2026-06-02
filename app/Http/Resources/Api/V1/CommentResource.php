@@ -19,6 +19,7 @@ class CommentResource extends JsonResource
             'team_id' => $this->team_id,
             'video_id' => $this->video_id,
             'user_id' => $this->user_id,
+            'session_key' => $this->session_key,
             'parent_id' => $this->parent_id,
             'body' => $this->body,
             'is_pinned' => $this->is_pinned,

@@ -10,6 +10,15 @@ import {
 import ChatMessageBody from '@/components/chat/ChatMessageBody.vue';
 import { embedApiUrl } from '@/embed/config';
 import { createEmbedEcho } from '@/embed/reverb';
+import EmbedActionRail from '@/embed/components/EmbedActionRail.vue';
+import EmbedProductCarousel from '@/embed/components/EmbedProductCarousel.vue';
+import TimedTagOverlay from '@/embed/TimedTagOverlay.vue';
+import {
+    isTagActiveAt,
+    overlaySlotForAnchor,
+    tagPosition,
+    type OverlaySlot,
+} from '@/lib/tagOverlay';
 import type Echo from 'laravel-echo';
 
 type ProductVariant = {
@@ -25,6 +34,9 @@ type ProductTag = {
     starts_at_ms?: number | null;
     ends_at_ms?: number | null;
     cta_label?: string | null;
+    position?: { x?: number; y?: number; anchor?: string } | null;
+    overlay_kind?: 'product' | 'flash' | 'coupon' | string | null;
+    coupon_code?: string | null;
     discount_percent?: string | number | null;
     is_pinned?: boolean;
     product?: {
@@ -41,6 +53,8 @@ type VideoMetadata = {
     viewer_sim_enabled?: boolean;
     viewer_sim_min?: number;
     viewer_sim_max?: number;
+    /** Set false to disable auto floating likes on embed */
+    like_sim_enabled?: boolean;
 };
 
 type VideoItem = {
@@ -56,11 +70,14 @@ type VideoItem = {
 
 type CommentItem = {
     id: number;
+    parent_id?: number | null;
     body: string;
     created_at?: string;
+    replies?: CommentItem[];
     metadata?: {
         sender_type?: 'host' | 'attendee' | 'ai' | 'system' | string;
         sender_name?: string;
+        session_key?: string;
     };
 };
 type CartItem = {
@@ -84,7 +101,13 @@ type LiveShowItem = {
     starts_at?: string | null;
     countdown_seconds?: number;
 };
-type FloatingReaction = { id: number; left: number };
+type FloatingReaction = {
+    id: number;
+    left: number;
+    scale: number;
+    delayMs: number;
+    durationMs: number;
+};
 
 const props = withDefaults(
     defineProps<{
@@ -96,10 +119,17 @@ const props = withDefaults(
     },
 );
 
+type PlaylistPlayback = {
+    auto_advance_enabled: boolean;
+    loops_per_video: number;
+};
+
 const feed = ref<VideoItem[]>([]);
 const feedPage = ref(1);
 const hasMoreFeed = ref(true);
 const loadingMoreFeed = ref(false);
+const playlistPlayback = ref<PlaylistPlayback | null>(null);
+const currentVideoPlayCount = ref(0);
 const currentIndex = ref(0);
 const loading = ref(true);
 const reactionCount = ref(0);
@@ -119,6 +149,7 @@ const cartOpen = ref(false);
 const checkoutLoading = ref(false);
 const checkoutSuccessText = ref('');
 const commentPanelOpen = ref(false);
+const replyToCommentId = ref<number | null>(null);
 const selectedVariantId = ref<number | null>(null);
 const variantByTagId = ref<Record<number, number | null>>({});
 const floatingReactions = ref<FloatingReaction[]>([]);
@@ -129,15 +160,27 @@ const liveShow = ref<LiveShowItem | null>(null);
 const nowTickMs = ref(Date.now());
 const activeProductIndex = ref(0);
 const carouselStripRef = ref<HTMLElement | null>(null);
+const productCarouselRef = ref<HTMLElement | null>(null);
+const carouselSwipeStartX = ref<number | null>(null);
+const carouselSwipeStartY = ref<number | null>(null);
 
 const isCarouselLayout = computed(() => props.layout === 'carousel');
 const isProductPageLayout = computed(() => props.layout === 'product_page');
+const isVerticalFeedLayout = computed(
+    () =>
+        props.layout === 'vertical' &&
+        !isCarouselLayout.value &&
+        !isProductPageLayout.value,
+);
 
 /* ─── simulated viewer count ─── */
 const simulatedViewerCount = ref(0);
 let simulationInterval: number | null = null;
+let likeSimTimeout: number | null = null;
+const simulatedReactionBoost = ref(0);
 
 const touchStartY = ref<number | null>(null);
+const touchStartX = ref<number | null>(null);
 const touchEndY = ref<number | null>(null);
 const sessionKey = getOrCreateSessionKey();
 
@@ -160,28 +203,41 @@ const activeTags = computed(() => {
 const pinnedTags = computed(() =>
     (currentVideo.value?.product_tags ?? []).filter((t) => t.is_pinned),
 );
-const popupTag = computed(() => {
+const dismissedOverlayIds = ref<Set<number>>(new Set());
+
+const visibleTimedOverlays = computed(() => {
     const at = currentTimeMs.value;
 
-    return (
-        (currentVideo.value?.product_tags ?? []).find((tag) => {
-            if (tag.is_pinned) {
-                return false;
-            }
-
-            return (
-                at >= (tag.starts_at_ms ?? 0) &&
-                at <= (tag.ends_at_ms ?? Number.MAX_SAFE_INTEGER)
-            );
-        }) ?? null
+    return (currentVideo.value?.product_tags ?? []).filter(
+        (tag) =>
+            isTagActiveAt(tag, at) && !dismissedOverlayIds.value.has(tag.id),
     );
 });
-const currentTag = computed(
-    () =>
-        activeTags.value[activeProductIndex.value] ??
-        activeTags.value[0] ??
-        null,
-);
+
+function dismissTimedOverlay(tagId: number) {
+    dismissedOverlayIds.value = new Set([
+        ...dismissedOverlayIds.value,
+        tagId,
+    ]);
+}
+
+const OVERLAY_SLOTS: OverlaySlot[] = ['top', 'middle', 'bottom'];
+
+function timedOverlaysForSlot(slot: OverlaySlot): ProductTag[] {
+    return visibleTimedOverlays.value.filter(
+        (tag) =>
+            overlaySlotForAnchor(tagPosition(tag).anchor) === slot,
+    );
+}
+const currentTag = computed(() => {
+    const pinned = pinnedTags.value;
+
+    if (pinned.length > 0) {
+        return pinned[activeProductIndex.value] ?? pinned[0] ?? null;
+    }
+
+    return activeTags.value[activeProductIndex.value] ?? activeTags.value[0] ?? null;
+});
 const productVariants = computed(
     () => currentTag.value?.product?.variants ?? [],
 );
@@ -195,6 +251,20 @@ const canGoPrevious = computed(() => currentIndex.value > 0);
 const canGoNext = computed(
     () => currentIndex.value < feed.value.length - 1 || hasMoreFeed.value,
 );
+
+const autoAdvanceEnabled = computed(
+    () => playlistPlayback.value?.auto_advance_enabled === true,
+);
+
+const canAutoScrollFeed = computed(
+    () => autoAdvanceEnabled.value && feed.value.length > 1,
+);
+
+const loopsPerVideo = computed(() =>
+    Math.max(1, playlistPlayback.value?.loops_per_video ?? 1),
+);
+
+const displayReactionCount = computed(() => reactionCount.value + simulatedReactionBoost.value);
 
 const displayViewerCount = computed(() => {
     const meta = currentVideo.value?.metadata;
@@ -289,6 +359,68 @@ function stopViewerSimulation() {
     }
 }
 
+function likeSimulationEnabled(meta?: VideoMetadata | null): boolean {
+    return meta?.like_sim_enabled !== false;
+}
+
+function stopLikeSimulation() {
+    if (likeSimTimeout !== null) {
+        window.clearTimeout(likeSimTimeout);
+        likeSimTimeout = null;
+    }
+}
+
+function spawnFloatingReaction() {
+    const r: FloatingReaction = {
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        left: 74 + Math.floor(Math.random() * 20),
+        scale: 0.75 + Math.random() * 0.55,
+        delayMs: Math.floor(Math.random() * 180),
+        durationMs: 1100 + Math.floor(Math.random() * 700),
+    };
+    floatingReactions.value.push(r);
+    window.setTimeout(() => {
+        floatingReactions.value = floatingReactions.value.filter(
+            (x) => x.id !== r.id,
+        );
+    }, r.durationMs + r.delayMs + 80);
+}
+
+function spawnLikeBurst(count = 1) {
+    for (let i = 0; i < count; i++) {
+        window.setTimeout(() => spawnFloatingReaction(), i * 90 + Math.floor(Math.random() * 80));
+    }
+
+    simulatedReactionBoost.value += count;
+}
+
+function startLikeSimulation() {
+    stopLikeSimulation();
+    simulatedReactionBoost.value = 18 + Math.floor(Math.random() * 52);
+
+    const tick = () => {
+        const video = currentVideo.value;
+
+        if (!video || !likeSimulationEnabled(video.metadata)) {
+            likeSimTimeout = window.setTimeout(tick, 2000);
+
+            return;
+        }
+
+        const roll = Math.random();
+        const count =
+            roll > 0.88 ? 4 + Math.floor(Math.random() * 3) : roll > 0.62 ? 2 : 1;
+        spawnLikeBurst(count);
+
+        likeSimTimeout = window.setTimeout(
+            tick,
+            280 + Math.floor(Math.random() * 1200),
+        );
+    };
+
+    tick();
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     const h = new Headers(options?.headers ?? {});
     h.set('Accept', 'application/json');
@@ -328,11 +460,16 @@ async function loadFeed(page = 1, append = false) {
         const payload = await fetchJson<{
             data?: VideoItem[];
             meta?: { current_page: number; last_page: number };
+            playlist_playback?: PlaylistPlayback;
         }>(
             `/api/v1/player/feed?embed_slug=${encodeURIComponent(props.embedSlug)}&per_page=10&page=${page}`,
         );
         const items = payload.data ?? [];
         feed.value = append ? [...feed.value, ...items] : items;
+
+        if (!append && payload.playlist_playback) {
+            playlistPlayback.value = payload.playlist_playback;
+        }
         feedPage.value = payload.meta?.current_page ?? page;
         hasMoreFeed.value =
             (payload.meta?.current_page ?? page) <
@@ -407,19 +544,6 @@ function startViewerHeartbeat(video: VideoItem) {
     );
 }
 
-function spawnFloatingReaction() {
-    const r: FloatingReaction = {
-        id: Date.now() + Math.floor(Math.random() * 1000),
-        left: 20 + Math.floor(Math.random() * 60),
-    };
-    floatingReactions.value.push(r);
-    window.setTimeout(() => {
-        floatingReactions.value = floatingReactions.value.filter(
-            (x) => x.id !== r.id,
-        );
-    }, 1400);
-}
-
 async function sendReaction() {
     if (!currentVideo.value) {
         return;
@@ -462,24 +586,110 @@ function persistViewerName() {
     }
 }
 
-function pushComment(comment: CommentItem | null | undefined) {
-    if (!comment?.id) {
-        return;
-    }
-
-    if (comments.value.some((existing) => existing.id === comment.id)) {
-        return;
-    }
-
-    comments.value.unshift(comment);
+function commentExists(commentId: number): boolean {
+    return comments.value.some(
+        (existing) =>
+            existing.id === commentId ||
+            (existing.replies ?? []).some((reply) => reply.id === commentId),
+    );
 }
+
+function pushComment(comment: CommentItem | null | undefined) {
+    if (!comment?.id || commentExists(comment.id)) {
+        return;
+    }
+
+    const parentId = comment.parent_id ?? null;
+
+    if (parentId) {
+        const parent = comments.value.find((existing) => existing.id === parentId);
+
+        if (parent) {
+            parent.replies = [...(parent.replies ?? []), comment];
+
+            return;
+        }
+    }
+
+    comments.value.push({
+        ...comment,
+        replies: comment.replies ?? [],
+    });
+}
+
+function removeCommentById(commentId: number) {
+    comments.value = comments.value
+        .filter((comment) => comment.id !== commentId)
+        .map((comment) => ({
+            ...comment,
+            replies: (comment.replies ?? []).filter(
+                (reply) => reply.id !== commentId,
+            ),
+        }));
+}
+
+function removeCommentsForSession(sessionKey: string) {
+    comments.value = comments.value
+        .filter(
+            (comment) => comment.metadata?.session_key !== sessionKey,
+        )
+        .map((comment) => ({
+            ...comment,
+            replies: (comment.replies ?? []).filter(
+                (reply) => reply.metadata?.session_key !== sessionKey,
+            ),
+        }));
+}
+
+function handleCommentModerated(payload: {
+    comment_id?: number;
+    action?: string;
+    session_key?: string | null;
+}) {
+    if (payload.action === 'banned' && payload.session_key) {
+        removeCommentsForSession(payload.session_key);
+
+        return;
+    }
+
+    if (payload.comment_id) {
+        removeCommentById(payload.comment_id);
+    }
+}
+
+const displayComments = computed(() => {
+    const flat: Array<CommentItem & { depth: number }> = [];
+
+    for (const comment of comments.value) {
+        flat.push({ ...comment, depth: 0 });
+
+        for (const reply of comment.replies ?? []) {
+            flat.push({ ...reply, depth: 1 });
+        }
+    }
+
+    return flat.slice(-24).reverse();
+});
+
+const replyToComment = computed(() =>
+    replyToCommentId.value
+        ? comments.value.find((c) => c.id === replyToCommentId.value) ??
+          comments.value
+              .flatMap((c) => c.replies ?? [])
+              .find((r) => r.id === replyToCommentId.value) ??
+          null
+        : null,
+);
 
 async function loadComments(videoId: number, teamId: number) {
     try {
         const payload = await fetchJson<{ data?: CommentItem[] }>(
             `/api/v1/player/comments?team_id=${teamId}&video_id=${videoId}&limit=50`,
         );
-        comments.value = payload.data ?? [];
+        comments.value = (payload.data ?? []).map((comment) => ({
+            ...comment,
+            replies: comment.replies ?? [],
+        }));
     } catch {
         comments.value = [];
     }
@@ -507,6 +717,7 @@ async function sendComment() {
                     team_id: currentVideo.value.team_id,
                     video_id: currentVideo.value.id,
                     body,
+                    parent_id: replyToCommentId.value,
                     session_key: sessionKey,
                     metadata: {
                         sender_name: displayViewerName(),
@@ -518,6 +729,7 @@ async function sendComment() {
         const c = asData<CommentItem>(p);
 
         pushComment(c);
+        replyToCommentId.value = null;
 
         if (typeof p === 'object' && p && 'ai_replies' in p) {
             const aiReplies: CommentItem[] = Array.isArray((p as { ai_replies?: CommentItem[] }).ai_replies)
@@ -568,6 +780,7 @@ async function addToCart() {
     }
 
     try {
+        const variantId = tagVariantId(currentTag.value);
         const p = await fetchJson<{ data?: CartPayload } | CartPayload>(
             '/api/v1/player/cart/items',
             {
@@ -577,7 +790,9 @@ async function addToCart() {
                     team_id: currentVideo.value.team_id,
                     session_key: sessionKey,
                     product_id: currentTag.value.product.id,
-                    product_variant_id: selectedVariantId.value,
+                    ...(variantId != null
+                        ? { product_variant_id: variantId }
+                        : {}),
                     quantity: 1,
                 }),
             },
@@ -600,9 +815,21 @@ function defaultVariantForTag(tag: ProductTag): number | null {
     );
 }
 
+function variantBelongsToTag(tag: ProductTag, variantId: number | null): boolean {
+    if (variantId == null) {
+        return false;
+    }
+
+    return (tag.product?.variants ?? []).some((variant) => variant.id === variantId);
+}
+
 function tagVariantId(tag: ProductTag): number | null {
-    if (tag.id in variantByTagId.value) {
-        return variantByTagId.value[tag.id];
+    const selected = tag.id in variantByTagId.value
+        ? variantByTagId.value[tag.id]
+        : null;
+
+    if (variantBelongsToTag(tag, selected)) {
+        return selected;
     }
 
     return defaultVariantForTag(tag);
@@ -634,7 +861,9 @@ async function addTagToCart(tag: ProductTag, options?: { openCart?: boolean }) {
                     team_id: currentVideo.value.team_id,
                     session_key: sessionKey,
                     product_id: tag.product.id,
-                    product_variant_id: variantId,
+                    ...(variantId != null
+                        ? { product_variant_id: variantId }
+                        : {}),
                     quantity: 1,
                 }),
             },
@@ -788,6 +1017,14 @@ function toggleAudio() {
 }
 
 function nextVideo() {
+    advancePlaylistVideo();
+}
+
+function advancePlaylistVideo() {
+    if (feed.value.length === 0) {
+        return;
+    }
+
     if (currentIndex.value < feed.value.length - 1) {
         currentIndex.value += 1;
 
@@ -798,8 +1035,46 @@ function nextVideo() {
         void loadFeed(feedPage.value + 1, true).then(() => {
             if (currentIndex.value < feed.value.length - 1) {
                 currentIndex.value += 1;
+            } else if (feed.value.length > 0) {
+                currentIndex.value = 0;
             }
         });
+
+        return;
+    }
+
+    if (canAutoScrollFeed.value) {
+        currentIndex.value = 0;
+    }
+}
+
+function onVideoEnded() {
+    if (!autoAdvanceEnabled.value) {
+        return;
+    }
+
+    currentVideoPlayCount.value += 1;
+
+    if (currentVideoPlayCount.value < loopsPerVideo.value) {
+        if (videoElement.value) {
+            videoElement.value.currentTime = 0;
+            void videoElement.value.play().catch(() => {});
+        }
+
+        return;
+    }
+
+    currentVideoPlayCount.value = 0;
+
+    if (canAutoScrollFeed.value) {
+        advancePlaylistVideo();
+
+        return;
+    }
+
+    if (videoElement.value) {
+        videoElement.value.currentTime = 0;
+        void videoElement.value.play().catch(() => {});
     }
 }
 
@@ -821,11 +1096,22 @@ function goToVideo(index: number) {
     }
 }
 
+function isProductCarouselTouch(event: TouchEvent): boolean {
+    const target = event.target as HTMLElement | null;
+
+    return Boolean(target?.closest('.product-carousel-wrap'));
+}
+
 function onTouchStart(e: TouchEvent) {
     if (props.layout === 'carousel' || props.layout === 'product_page') {
         return;
     }
 
+    if (isProductCarouselTouch(e)) {
+        return;
+    }
+
+    touchStartX.value = e.changedTouches[0]?.clientX ?? null;
     touchStartY.value = e.changedTouches[0]?.clientY ?? null;
 }
 function onTouchEnd(e: TouchEvent) {
@@ -833,17 +1119,32 @@ function onTouchEnd(e: TouchEvent) {
         return;
     }
 
-    touchEndY.value = e.changedTouches[0]?.clientY ?? null;
-
-    if (touchStartY.value === null || touchEndY.value === null) {
+    if (isProductCarouselTouch(e)) {
         return;
     }
 
-    const d = touchStartY.value - touchEndY.value;
+    touchEndY.value = e.changedTouches[0]?.clientY ?? null;
+    const touchEndX = e.changedTouches[0]?.clientX ?? null;
 
-    if (d > 40) {
+    if (
+        touchStartY.value === null
+        || touchEndY.value === null
+        || touchStartX.value === null
+        || touchEndX === null
+    ) {
+        return;
+    }
+
+    const deltaY = touchStartY.value - touchEndY.value;
+    const deltaX = touchStartX.value - touchEndX;
+
+    if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+        return;
+    }
+
+    if (deltaY > 40) {
         nextVideo();
-    } else if (d < -40) {
+    } else if (deltaY < -40) {
         previousVideo();
     }
 }
@@ -875,7 +1176,17 @@ function subscribeToVideo(videoId: number) {
         })
         .listen('.comment.created', (e: { comment?: CommentItem }) => {
             pushComment(e.comment);
-        });
+        })
+        .listen(
+            '.comment.moderated',
+            (e: {
+                comment_id?: number;
+                action?: string;
+                session_key?: string | null;
+            }) => {
+                handleCommentModerated(e);
+            },
+        );
 }
 
 async function resetVideoPlayback() {
@@ -900,16 +1211,103 @@ watch(currentIndex, async () => {
         ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
 });
 
+watch(activeProductIndex, async () => {
+    const tag = currentTag.value;
+
+    if (tag) {
+        selectedVariantId.value = tagVariantId(tag);
+    }
+
+    if (!isProductPageLayout.value) {
+        await nextTick();
+        scrollCarouselToIndex(activeProductIndex.value);
+    }
+});
+
+function scrollCarouselToIndex(index: number): void {
+    const track = productCarouselRef.value;
+
+    if (!track) {
+        return;
+    }
+
+    const cards = Array.from(track.querySelectorAll<HTMLElement>('.product-card'));
+    const card = cards[index];
+
+    if (!card) {
+        return;
+    }
+
+    const trackWidth = track.clientWidth;
+    const cardWidth = card.offsetWidth;
+    const targetLeft = card.offsetLeft - Math.max(0, (trackWidth - cardWidth) / 2);
+
+    track.scrollTo({ left: Math.max(0, targetLeft), behavior: 'smooth' });
+}
+
+/* no-op kept so the @scroll template binding resolves without warnings */
+function onProductCarouselScroll(): void {}
+
+function onCarouselTouchStart(e: TouchEvent): void {
+    e.stopPropagation();
+    carouselSwipeStartX.value = e.changedTouches[0]?.clientX ?? null;
+    carouselSwipeStartY.value = e.changedTouches[0]?.clientY ?? null;
+}
+
+function onCarouselTouchEnd(e: TouchEvent): void {
+    e.stopPropagation();
+
+    const startX = carouselSwipeStartX.value;
+    const startY = carouselSwipeStartY.value;
+    carouselSwipeStartX.value = null;
+    carouselSwipeStartY.value = null;
+
+    if (startX === null || startY === null) {
+        return;
+    }
+
+    const dx = (e.changedTouches[0]?.clientX ?? startX) - startX;
+    const dy = (e.changedTouches[0]?.clientY ?? startY) - startY;
+
+    if (Math.abs(dx) <= Math.abs(dy) || Math.abs(dx) < 30) {
+        return;
+    }
+
+    if (dx < 0 && activeProductIndex.value < pinnedTags.value.length - 1) {
+        activeProductIndex.value += 1;
+    } else if (dx > 0 && activeProductIndex.value > 0) {
+        activeProductIndex.value -= 1;
+    }
+}
+
+watch(selectedVariantId, (variantId) => {
+    const tag = currentTag.value;
+
+    if (tag && variantBelongsToTag(tag, variantId)) {
+        variantByTagId.value = {
+            ...variantByTagId.value,
+            [tag.id]: variantId,
+        };
+    }
+});
+
 watch(currentVideo, async (video) => {
     if (!video) {
         return;
     }
 
     reactionCount.value = 0;
+    simulatedReactionBoost.value = 0;
+    currentVideoPlayCount.value = 0;
     viewerCount.value = 0;
     comments.value = [];
     liveShow.value = null;
     activeProductIndex.value = 0;
+    dismissedOverlayIds.value = new Set();
+    await nextTick();
+    if (productCarouselRef.value) {
+        productCarouselRef.value.scrollLeft = 0;
+    }
     const pinned = (video.product_tags ?? []).filter((t) => t.is_pinned);
     const productList =
         pinned.length > 0 ? pinned : (video.product_tags ?? []);
@@ -918,6 +1316,7 @@ watch(currentVideo, async (video) => {
     selectedVariantId.value = firstTag ? tagVariantId(firstTag) : null;
 
     stopViewerSimulation();
+    stopLikeSimulation();
     const meta = video.metadata;
 
     if (
@@ -926,6 +1325,10 @@ watch(currentVideo, async (video) => {
         meta.viewer_sim_max != null
     ) {
         startViewerSimulation(meta.viewer_sim_min, meta.viewer_sim_max);
+    }
+
+    if (likeSimulationEnabled(meta)) {
+        startLikeSimulation();
     }
 
     if (currentIndex.value >= feed.value.length - 2 && hasMoreFeed.value) {
@@ -969,6 +1372,10 @@ onMounted(async () => {
             startViewerSimulation(meta.viewer_sim_min, meta.viewer_sim_max);
         }
 
+        if (likeSimulationEnabled(meta)) {
+            startLikeSimulation();
+        }
+
         await initializeRealtime();
         subscribeToVideo(currentVideo.value.id);
         startViewerHeartbeat(currentVideo.value);
@@ -982,6 +1389,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
     stopViewerHeartbeat();
     stopViewerSimulation();
+    stopLikeSimulation();
 
     if (echo && currentChannel) {
         echo.leave(currentChannel);
@@ -1005,6 +1413,7 @@ onBeforeUnmount(() => {
             'player-root--carousel': layout === 'carousel',
             'player-root--product-page': layout === 'product_page',
             'player-root--inline': layout === 'inline',
+            'player-root--vertical': isVerticalFeedLayout,
         }"
     >
         <!-- ═══ LOADING ═══ -->
@@ -1051,7 +1460,7 @@ onBeforeUnmount(() => {
                 <rect x="2" y="2" width="20" height="20" rx="4" />
                 <path d="M10 8l6 4-6 4V8z" fill="currentColor" stroke="none" />
             </svg>
-            <p class="text-sm text-white/40">No videos published yet</p>
+            <p class="text-sm text-white/40">No videos livestream yet</p>
         </div>
 
         <!-- ═══ PLAYER ═══ -->
@@ -1080,9 +1489,10 @@ onBeforeUnmount(() => {
                     :muted="isMuted"
                     playsinline
                     autoplay
-                    loop
+                    :loop="!autoAdvanceEnabled"
                     preload="auto"
                     @loadeddata="playCurrentVideo"
+                    @ended="onVideoEnded"
                     @timeupdate="
                         currentTimeMs = Math.floor(
                             ($event.target as HTMLVideoElement).currentTime *
@@ -1100,45 +1510,82 @@ onBeforeUnmount(() => {
                 <div class="overlay-top"></div>
                 <div class="overlay-bottom"></div>
 
-                <!-- ── TOP HUD ── -->
-                <div class="hud-top">
-                    <!-- Live badge -->
-                    <div v-if="liveShowBadgeText" class="live-badge">
-                        <span class="live-dot"></span>
-                        {{ liveShowBadgeText }}
-                    </div>
-                    <div v-else class="flex-1" />
-
-                    <!-- Viewer count -->
-                    <div class="viewer-chip">
-                        <svg
-                            width="12"
-                            height="12"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
+                <!-- Rich timed overlays (flash / coupon / product hotspots) -->
+                <div
+                    class="timed-overlays-layer"
+                    :class="{
+                        'timed-overlays-layer--vertical': isVerticalFeedLayout,
+                    }"
+                    aria-live="polite"
+                >
+                    <template v-if="isVerticalFeedLayout">
+                        <div
+                            v-for="slot in OVERLAY_SLOTS"
+                            :key="slot"
+                            class="timed-overlays-slot"
+                            :class="`timed-overlays-slot--${slot}`"
                         >
-                            <path
-                                d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                            />
-                            <circle cx="12" cy="12" r="3" />
-                        </svg>
-                        <span>{{ displayViewerCount.toLocaleString() }}</span>
-                        <span class="opacity-50">·</span>
-                        <span
-                            >{{ currentIndex + 1 }}/{{ feed.length
-                            }}{{ hasMoreFeed ? '+' : '' }}</span
-                        >
-                    </div>
+                            <TransitionGroup name="timed-overlay">
+                                <TimedTagOverlay
+                                    v-for="tag in timedOverlaysForSlot(slot)"
+                                    :key="tag.id"
+                                    :tag="tag"
+                                    :current-time-ms="currentTimeMs"
+                                    docked
+                                    @dismiss="dismissTimedOverlay"
+                                    @add-to-cart="addTagToCart"
+                                />
+                            </TransitionGroup>
+                        </div>
+                    </template>
+                    <TransitionGroup v-else name="timed-overlay">
+                        <TimedTagOverlay
+                            v-for="tag in visibleTimedOverlays"
+                            :key="tag.id"
+                            :tag="tag"
+                            :current-time-ms="currentTimeMs"
+                            @dismiss="dismissTimedOverlay"
+                            @add-to-cart="addTagToCart"
+                        />
+                    </TransitionGroup>
                 </div>
+
+                <EmbedActionRail
+                    :live-show-badge-text="liveShowBadgeText"
+                    :display-viewer-count="displayViewerCount"
+                    :current-index="currentIndex"
+                    :feed-length="feed.length"
+                    :has-more-feed="hasMoreFeed"
+                    :is-muted="isMuted"
+                    :display-reaction-count="displayReactionCount"
+                    :comment-count="comments.length"
+                    :is-saved="isSaved"
+                    :cart-item-count="cartItems.length"
+                    :can-go-previous="canGoPrevious"
+                    :can-go-next="canGoNext"
+                    :is-carousel-layout="isCarouselLayout"
+                    :is-product-page-layout="isProductPageLayout"
+                    @toggle-audio="toggleAudio"
+                    @react="sendReaction"
+                    @toggle-comments="commentPanelOpen = !commentPanelOpen"
+                    @share="shareVideo"
+                    @save="saveVideo"
+                    @toggle-cart="cartOpen = !cartOpen"
+                    @previous-video="previousVideo"
+                    @next-video="nextVideo"
+                />
 
                 <!-- ── FLOATING HEARTS ── -->
                 <div
                     v-for="r in floatingReactions"
                     :key="r.id"
                     class="floating-heart"
-                    :style="{ left: `${r.left}%` }"
+                    :style="{
+                        left: `${r.left}%`,
+                        '--heart-scale': String(r.scale),
+                        '--heart-delay': `${r.delayMs}ms`,
+                        '--heart-duration': `${r.durationMs}ms`,
+                    }"
                 >
                     <svg
                         width="22"
@@ -1154,261 +1601,6 @@ onBeforeUnmount(() => {
                     </svg>
                 </div>
 
-                <!-- ── RIGHT ACTION RAIL ── -->
-                <div class="action-rail">
-                    <!-- Sound -->
-                    <button type="button" class="rail-btn" @click="toggleAudio">
-                        <span
-                            class="rail-icon"
-                            :class="!isMuted ? 'saved-active' : ''"
-                        >
-                            <svg
-                                v-if="isMuted"
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <polygon
-                                    points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
-                                />
-                                <line x1="23" y1="9" x2="17" y2="15" />
-                                <line x1="17" y1="9" x2="23" y2="15" />
-                            </svg>
-                            <svg
-                                v-else
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <polygon
-                                    points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
-                                />
-                                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                            </svg>
-                        </span>
-                        <span class="rail-label">{{
-                            isMuted ? 'Muted' : 'Sound'
-                        }}</span>
-                    </button>
-
-                    <!-- Heart / react -->
-                    <button
-                        type="button"
-                        class="rail-btn"
-                        @click="sendReaction"
-                    >
-                        <span class="rail-icon">
-                            <svg
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <path
-                                    d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
-                                />
-                            </svg>
-                        </span>
-                        <span class="rail-label">{{
-                            reactionCount || ''
-                        }}</span>
-                    </button>
-
-                    <!-- Comment -->
-                    <button
-                        type="button"
-                        class="rail-btn"
-                        @click="commentPanelOpen = !commentPanelOpen"
-                    >
-                        <span class="rail-icon">
-                            <svg
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <path
-                                    d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                                />
-                            </svg>
-                        </span>
-                        <span class="rail-label">{{
-                            comments.length || ''
-                        }}</span>
-                    </button>
-
-                    <!-- Share -->
-                    <button type="button" class="rail-btn" @click="shareVideo">
-                        <span class="rail-icon">
-                            <svg
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <circle cx="18" cy="5" r="3" />
-                                <circle cx="6" cy="12" r="3" />
-                                <circle cx="18" cy="19" r="3" />
-                                <line
-                                    x1="8.59"
-                                    y1="13.51"
-                                    x2="15.42"
-                                    y2="17.49"
-                                />
-                                <line
-                                    x1="15.41"
-                                    y1="6.51"
-                                    x2="8.59"
-                                    y2="10.49"
-                                />
-                            </svg>
-                        </span>
-                        <span class="rail-label">Share</span>
-                    </button>
-
-                    <!-- Save / Bookmark -->
-                    <button type="button" class="rail-btn" @click="saveVideo">
-                        <span
-                            class="rail-icon"
-                            :class="isSaved ? 'saved-active' : ''"
-                        >
-                            <svg
-                                width="22"
-                                height="22"
-                                viewBox="0 0 24 24"
-                                :fill="isSaved ? 'currentColor' : 'none'"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <path
-                                    d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"
-                                />
-                            </svg>
-                        </span>
-                        <span class="rail-label">{{
-                            isSaved ? 'Saved' : 'Save'
-                        }}</span>
-                    </button>
-
-                    <!-- Cart -->
-                    <button
-                        type="button"
-                        class="rail-btn"
-                        @click="cartOpen = !cartOpen"
-                    >
-                        <span class="rail-icon">
-                            <svg
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <circle cx="9" cy="21" r="1" />
-                                <circle cx="20" cy="21" r="1" />
-                                <path
-                                    d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"
-                                />
-                            </svg>
-                        </span>
-                        <span v-if="cartItems.length" class="cart-badge">{{
-                            cartItems.length
-                        }}</span>
-                        <span class="rail-label">Cart</span>
-                    </button>
-
-                    <!-- Navigation (vertical feed only; carousel uses playlist rail) -->
-                    <div v-if="!isCarouselLayout && !isProductPageLayout" class="rail-nav">
-                        <button
-                            type="button"
-                            class="nav-btn"
-                            :disabled="!canGoPrevious"
-                            @click="previousVideo"
-                        >
-                            <svg
-                                width="18"
-                                height="18"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2.5"
-                            >
-                                <polyline points="18 15 12 9 6 15" />
-                            </svg>
-                        </button>
-                        <button
-                            type="button"
-                            class="nav-btn"
-                            :disabled="!canGoNext"
-                            @click="nextVideo"
-                        >
-                            <svg
-                                width="18"
-                                height="18"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2.5"
-                            >
-                                <polyline points="6 9 12 15 18 9" />
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- ── POPUP PRODUCT (timed) ── -->
-                <Transition v-if="!isProductPageLayout" name="popup">
-                    <div v-if="popupTag?.product" class="popup-card">
-                        <p class="popup-label">Limited offer</p>
-                        <p class="popup-title">{{ popupTag.product.title }}</p>
-                        <div class="popup-price-row">
-                            <span class="popup-price">{{
-                                popupTag.product.sale_price ||
-                                popupTag.product.price
-                            }}</span>
-                            <span
-                                v-if="popupTag.discount_percent"
-                                class="popup-discount"
-                                >-{{ popupTag.discount_percent }}%</span
-                            >
-                        </div>
-                        <button
-                            type="button"
-                            class="popup-btn"
-                            @click="addTagToCart(popupTag)"
-                        >
-                            {{ popupTag.cta_label || 'Buy now' }}
-                        </button>
-                    </div>
-                </Transition>
                 </div>
 
                 <!-- ── BOTTOM INFO + PRODUCT CAROUSEL ── -->
@@ -1432,22 +1624,24 @@ onBeforeUnmount(() => {
                     <div
                         v-if="pinnedTags.length > 0"
                         class="product-carousel-wrap"
+                        @touchstart="onCarouselTouchStart"
+                        @touchmove.stop.prevent
+                        @touchend="onCarouselTouchEnd"
                     >
                         <!-- Scroll track -->
                         <div
+                            ref="productCarouselRef"
                             class="product-carousel"
                             :class="{
                                 'product-carousel--stacked':
                                     isProductPageLayout,
                             }"
                         >
-                            <component
-                                :is="isProductPageLayout ? 'div' : 'button'"
+                            <div
                                 v-for="(tag, idx) in pinnedTags"
                                 :key="tag.id"
-                                :type="
-                                    isProductPageLayout ? undefined : 'button'
-                                "
+                                role="button"
+                                tabindex="0"
                                 :class="[
                                     'product-card',
                                     isProductPageLayout
@@ -1462,6 +1656,8 @@ onBeforeUnmount(() => {
                                         ? undefined
                                         : (activeProductIndex = idx)
                                 "
+                                @keydown.enter.prevent="activeProductIndex = idx"
+                                @keydown.space.prevent="activeProductIndex = idx"
                             >
                                 <div
                                     class="product-card-main"
@@ -1481,6 +1677,8 @@ onBeforeUnmount(() => {
                                             :src="tag.product.image_url"
                                             :alt="tag.product?.title"
                                             class="product-img"
+                                            draggable="false"
+                                            @dragstart.prevent
                                         />
                                         <div
                                             v-else
@@ -1610,7 +1808,7 @@ onBeforeUnmount(() => {
                                         </button>
                                     </div>
                                 </div>
-                            </component>
+                            </div>
                         </div>
 
                         <!-- Dot indicators (when >1) -->
@@ -1776,13 +1974,14 @@ onBeforeUnmount(() => {
                         </button>
                     </div>
                     <div class="comment-list">
-                        <p v-if="comments.length === 0" class="comment-empty">
+                        <p v-if="displayComments.length === 0" class="comment-empty">
                             No comments yet. Be first!
                         </p>
                         <div
-                            v-for="c in comments.slice(0, 12)"
+                            v-for="c in displayComments"
                             :key="c.id"
                             class="comment-item"
+                            :class="{ 'comment-item--reply': c.depth > 0 }"
                         >
                             <div
                                 class="comment-avatar"
@@ -1801,11 +2000,32 @@ onBeforeUnmount(() => {
                                     {{ c.metadata.sender_name }}
                                 </p>
                                 <p class="comment-body">
-                                    <ChatMessageBody :text="c.body" variant="embed" />
+                                    <ChatMessageBody
+                                        :text="c.body"
+                                        variant="embed"
+                                    />
                                 </p>
+                                <button
+                                    v-if="c.depth === 0 && c.metadata?.sender_type === 'attendee'"
+                                    type="button"
+                                    class="comment-reply-btn"
+                                    @click="replyToCommentId = c.id"
+                                >
+                                    Reply
+                                </button>
                             </div>
                         </div>
                     </div>
+                    <p v-if="replyToComment" class="comment-replying">
+                        Replying to {{ replyToComment.metadata?.sender_name || 'viewer' }}
+                        <button
+                            type="button"
+                            class="comment-reply-cancel"
+                            @click="replyToCommentId = null"
+                        >
+                            Cancel
+                        </button>
+                    </p>
                     <div class="comment-name-row">
                         <input
                             v-model="viewerName"
@@ -1984,11 +2204,19 @@ onBeforeUnmount(() => {
         #f2efea;
 }
 
+:global(html),
+:global(body) {
+    overflow-x: hidden;
+    overscroll-behavior: none;
+}
+
 :global(#embed-player-app) {
     min-height: 100dvh;
     display: flex;
     align-items: stretch;
     justify-content: center;
+    overflow-x: hidden;
+    overscroll-behavior: none;
 }
 
 /* ── Root ── */
@@ -2014,6 +2242,7 @@ onBeforeUnmount(() => {
     color: #fff;
     overflow: hidden;
     position: relative;
+    overscroll-behavior: none;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     box-shadow: 0 22px 80px rgba(0, 0, 0, 0.45);
 }
@@ -2046,15 +2275,6 @@ onBeforeUnmount(() => {
     max-height: min(78vh, 760px);
 }
 
-.player-root--carousel .hud-top {
-    z-index: 40;
-}
-
-.player-root--carousel .action-rail {
-    z-index: 45;
-    bottom: 148px;
-}
-
 .player-root--carousel .bottom-area {
     z-index: 38;
     padding-bottom: 18px;
@@ -2067,10 +2287,6 @@ onBeforeUnmount(() => {
 
 .player-root--carousel .popup-card {
     z-index: 42;
-}
-
-.player-root--carousel .rail-nav {
-    z-index: 41;
 }
 
 .player-root--carousel .panel {
@@ -2154,16 +2370,6 @@ onBeforeUnmount(() => {
     font-size: 13px;
     font-weight: 600;
     color: #6b7280;
-}
-
-.player-root--product-page .action-rail {
-    z-index: 45;
-    bottom: 24px;
-    right: 14px;
-}
-
-.player-root--product-page .hud-top {
-    z-index: 40;
 }
 
 .player-root--product-page .floating-heart {
@@ -2567,10 +2773,6 @@ onBeforeUnmount(() => {
         max-height: min(82vh, 820px);
     }
 
-    .player-root--carousel .action-rail {
-        bottom: 128px;
-    }
-
     .player-root--carousel .floating-heart {
         bottom: 180px;
     }
@@ -2678,6 +2880,69 @@ onBeforeUnmount(() => {
 .player-video {
     z-index: 1;
 }
+
+.timed-overlays-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 18;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.timed-overlays-layer--vertical {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-content: stretch;
+    box-sizing: border-box;
+    padding: 56px 64px 200px 10px;
+}
+
+.timed-overlays-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    pointer-events: none;
+}
+
+.timed-overlays-slot--top {
+    align-items: flex-end;
+}
+
+.timed-overlays-slot--middle {
+    align-items: center;
+    justify-content: center;
+    padding: 6px 0;
+    overflow: hidden;
+}
+
+.timed-overlays-slot--bottom {
+    align-items: flex-start;
+}
+
+.player-root--vertical .timed-overlays-slot .timed-overlay {
+    pointer-events: auto;
+}
+
+.timed-overlay-enter-active,
+.timed-overlay-leave-active {
+    transition:
+        opacity 0.28s ease,
+        transform 0.28s ease;
+}
+
+.timed-overlay-enter-from,
+.timed-overlay-leave-to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+}
+
+.timed-overlays-layer--vertical .timed-overlay-enter-from,
+.timed-overlays-layer--vertical .timed-overlay-leave-to {
+    transform: translateY(8px) scale(0.98);
+}
+
 .overlay-top {
     position: absolute;
     inset: 0;
@@ -2705,168 +2970,29 @@ onBeforeUnmount(() => {
     z-index: 2;
 }
 
-/* ── HUD top ── */
-.hud-top {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 14px 0;
-}
-.live-badge {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    background: linear-gradient(135deg, #e8563a, #ff4d42);
-    box-shadow: 0 8px 24px rgba(232, 86, 58, 0.34);
-    backdrop-filter: blur(10px);
-    border-radius: 999px;
-    padding: 4px 10px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-}
-.live-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #fff;
-    animation: pulse 1.2s infinite;
-}
-@keyframes pulse {
-    0%,
-    100% {
-        opacity: 1;
-        transform: scale(1);
-    }
-    50% {
-        opacity: 0.4;
-        transform: scale(0.7);
-    }
-}
-.viewer-chip {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    background: rgba(255, 255, 255, 0.13);
-    backdrop-filter: blur(14px);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 999px;
-    padding: 5px 10px;
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.9);
-}
-
-/* ── Action rail ── */
-.action-rail {
-    position: absolute;
-    right: 12px;
-    bottom: 182px;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-}
-.rail-btn {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    background: rgba(255, 255, 255, 0.12);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 16px;
-    padding: 9px 8px 6px;
-    cursor: pointer;
-    transition:
-        transform 0.15s,
-        background 0.15s;
-    min-width: 46px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-.rail-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-    transform: translateY(-1px) scale(1.04);
-}
-.rail-btn:active {
-    transform: scale(0.96);
-}
-.rail-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.35));
-}
-.rail-label {
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.8);
-    white-space: nowrap;
-}
-.saved-active {
-    color: #ffb35c;
-}
-.cart-badge {
-    position: absolute;
-    top: -4px;
-    right: -4px;
-    background: #e8563a;
-    color: #fff;
-    border-radius: 999px;
-    font-size: 9px;
-    font-weight: 700;
-    padding: 1px 5px;
-    line-height: 1.4;
-}
-.rail-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: 4px;
-}
-.nav-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.13);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    cursor: pointer;
-    transition: background 0.15s;
-    color: #fff;
-}
-.nav-btn:disabled {
-    opacity: 0.25;
-    cursor: default;
-}
-.nav-btn:not(:disabled):hover {
-    background: rgba(232, 86, 58, 0.72);
-}
-
-/* ── Floating hearts ── */
+/* ── Floating hearts (simulated + user likes) ── */
 .floating-heart {
     position: absolute;
-    bottom: 160px;
+    bottom: 148px;
     pointer-events: none;
     z-index: 20;
-    animation: float-up 1.4s ease-out forwards;
+    animation: float-up var(--heart-duration, 1.4s) ease-out var(--heart-delay, 0ms)
+        forwards;
+    transform: scale(var(--heart-scale, 1));
+    filter: drop-shadow(0 2px 6px rgba(255, 77, 109, 0.45));
 }
 @keyframes float-up {
     0% {
+        opacity: 0;
+        transform: translateY(8px) scale(calc(var(--heart-scale, 1) * 0.6));
+    }
+    12% {
         opacity: 1;
-        transform: translateY(0) scale(1);
     }
     100% {
         opacity: 0;
-        transform: translateY(-130px) scale(1.3);
+        transform: translateY(-150px) translateX(-12px)
+            scale(calc(var(--heart-scale, 1) * 1.35));
     }
 }
 
@@ -2964,6 +3090,15 @@ onBeforeUnmount(() => {
     margin-bottom: 3px;
     text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
     letter-spacing: -0.01em;
+    overflow: hidden;
+    /* max-width: 80%; */
+    text-overflow: ellipsis;
+    /* white-space: nowrap; */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    line-clamp: 3; 
+    box-orient: vertical;
 }
 .video-desc {
     font-size: 12px;
@@ -2983,15 +3118,19 @@ onBeforeUnmount(() => {
     border-radius: 22px;
     padding: 10px 10px 9px;
     box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+    /* touch-action and overscroll are managed by the JS swipe handler */
+    touch-action: none;
 }
 .product-carousel {
     display: flex;
     gap: 8px;
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
+    overflow-x: scroll;
+    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     padding-bottom: 2px;
+    touch-action: none;
+    user-select: none;
 }
 .product-carousel::-webkit-scrollbar {
     display: none;
@@ -3001,7 +3140,7 @@ onBeforeUnmount(() => {
     align-items: center;
     gap: 8px;
     min-width: 200px;
-    scroll-snap-align: start;
+    scroll-snap-align: center;
     background: rgba(255, 255, 255, 0.12);
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 16px;
@@ -3012,6 +3151,9 @@ onBeforeUnmount(() => {
         border-color 0.15s;
     text-align: left;
     flex-shrink: 0;
+    touch-action: none;
+    -webkit-user-drag: none;
+    user-select: none;
 }
 .product-card--active {
     background: rgba(255, 255, 255, 0.22);
@@ -3265,6 +3407,41 @@ onBeforeUnmount(() => {
     font-size: 12px;
     text-align: center;
 }
+.comment-item--reply {
+    margin-left: 28px;
+    padding-left: 8px;
+    border-left: 2px solid rgba(232, 86, 58, 0.35);
+}
+
+.comment-reply-btn {
+    margin-top: 4px;
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #e8563a;
+    cursor: pointer;
+}
+
+.comment-replying {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: rgba(232, 86, 58, 0.08);
+    font-size: 11px;
+    color: #6b7280;
+}
+
+.comment-reply-cancel {
+    margin-left: 8px;
+    border: none;
+    background: none;
+    color: #e8563a;
+    font-weight: 700;
+    cursor: pointer;
+}
+
 .comment-item {
     display: flex;
     align-items: flex-start;
@@ -3392,6 +3569,8 @@ onBeforeUnmount(() => {
     border-bottom: 1px solid rgba(17, 24, 39, 0.08);
 }
 .cart-item-info {
+    min-width: 0;
+    flex: 1;
 }
 .cart-item-name {
     font-size: 13px;

@@ -20,6 +20,8 @@ class VideoProductTagResource extends JsonResource
             'ends_at_ms' => $this->ends_at_ms,
             'cta_label' => $this->cta_label,
             'position' => $this->position,
+            'overlay_kind' => $this->overlay_kind ?? 'product',
+            'coupon_code' => $this->coupon_code,
             'discount_percent' => $this->discount_percent,
             'is_pinned' => $this->is_pinned,
             'sort_order' => $this->sort_order,

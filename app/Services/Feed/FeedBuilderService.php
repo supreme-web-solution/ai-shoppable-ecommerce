@@ -28,9 +28,19 @@ class FeedBuilderService
         if ($embed->video_id) {
             $query->where('id', $embed->video_id);
         } elseif ($embed->playlist_id) {
-            $query->whereHas('playlists', fn ($playlistQuery) => $playlistQuery->whereKey($embed->playlist_id));
+            $playlistId = (int) $embed->playlist_id;
+
+            $query
+                ->join('playlist_video', function ($join) use ($playlistId): void {
+                    $join->on('videos.id', '=', 'playlist_video.video_id')
+                        ->where('playlist_video.playlist_id', '=', $playlistId);
+                })
+                ->select('videos.*')
+                ->orderBy('playlist_video.sort_order');
+        } else {
+            $query->orderByDesc('published_at');
         }
 
-        return $query->orderByDesc('published_at')->paginate($perPage);
+        return $query->paginate($perPage);
     }
 }

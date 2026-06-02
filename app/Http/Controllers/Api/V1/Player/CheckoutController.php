@@ -63,6 +63,33 @@ class CheckoutController extends Controller
             ], 201);
         }
 
+        $shopifyLines = [];
+        $wooLines = [];
+
+        if ($resolved['provider'] === 'shopify') {
+            $shopifyLines = $externalCheckoutService->shopifyCartLines($cart);
+
+            if ($shopifyLines === []) {
+                return response()->json([
+                    'message' => 'Your cart has no Shopify products. Only items synced from Shopify can be checked out on your store. Use Stripe/PayPal for local products, or add Shopify-synced products to the cart.',
+                    'mode' => 'external_unavailable',
+                    'settings_url' => '/settings/integrations',
+                ], 422);
+            }
+        }
+
+        if ($resolved['provider'] === 'woocommerce') {
+            $wooLines = $externalCheckoutService->wooCartLines($cart);
+
+            if ($wooLines === []) {
+                return response()->json([
+                    'message' => 'Your cart has no WooCommerce products. Only items synced from WooCommerce can be checked out on your store. Use Stripe/PayPal for local products, or add WooCommerce-synced products to the cart.',
+                    'mode' => 'external_unavailable',
+                    'settings_url' => '/settings/integrations',
+                ], 422);
+            }
+        }
+
         $session = $externalCheckoutService->createSession($cart, $team, $resolved['provider']);
 
         return response()->json([
@@ -70,6 +97,8 @@ class CheckoutController extends Controller
             'provider' => $resolved['provider'],
             'checkout_url' => $session->checkout_url,
             'session_id' => $session->id,
+            'shopify_lines' => $resolved['provider'] === 'shopify' ? count($shopifyLines) : null,
+            'woo_lines' => $resolved['provider'] === 'woocommerce' ? count($wooLines) : null,
         ], 201);
     }
 }

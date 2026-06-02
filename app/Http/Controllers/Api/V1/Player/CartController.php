@@ -61,22 +61,21 @@ class CartController extends Controller
         $product = Product::query()->findOrFail($validated['product_id']);
         abort_if($product->team_id !== $validated['team_id'], 422, 'Product does not belong to team.');
 
-        $variantId = (int) ($validated['product_variant_id'] ?? 0);
-        if ($variantId > 0) {
-            $variant = ProductVariant::query()->findOrFail($variantId);
-            abort_if($variant->product_id !== $product->id, 422, 'Variant does not belong to product.');
-            abort_if($variant->team_id !== $validated['team_id'], 422, 'Variant does not belong to team.');
-        }
+        $resolvedVariantId = $this->resolveVariantId(
+            $product,
+            isset($validated['product_variant_id']) ? (int) $validated['product_variant_id'] : null,
+        );
 
         $quantity = (int) ($validated['quantity'] ?? 1);
+        $unitPrice = $this->resolveUnitPrice($product, $resolvedVariantId);
 
         $item = $cart->items()->firstOrNew([
             'product_id' => $product->id,
-            'product_variant_id' => $validated['product_variant_id'] ?? null,
+            'product_variant_id' => $resolvedVariantId,
         ]);
 
         $item->quantity = ($item->exists ? $item->quantity : 0) + $quantity;
-        $item->unit_price = $product->sale_price ?? $product->price;
+        $item->unit_price = $unitPrice;
         $item->line_total = $item->unit_price * $item->quantity;
         $item->save();
 
@@ -103,5 +102,40 @@ class CartController extends Controller
         $cart->update(['total_amount' => $cart->items()->sum('line_total')]);
 
         return new CartResource($cart->fresh('items.product'));
+    }
+
+    protected function resolveVariantId(Product $product, ?int $requestedVariantId): ?int
+    {
+        if ($requestedVariantId !== null && $requestedVariantId > 0) {
+            $variant = ProductVariant::query()->find($requestedVariantId);
+
+            if (
+                $variant !== null
+                && $variant->product_id === $product->id
+                && $variant->team_id === $product->team_id
+            ) {
+                return $variant->id;
+            }
+        }
+
+        $fallback = $product->variants()
+            ->orderByDesc('is_default')
+            ->orderBy('id')
+            ->first();
+
+        return $fallback?->id;
+    }
+
+    protected function resolveUnitPrice(Product $product, ?int $variantId): float
+    {
+        if ($variantId !== null) {
+            $variant = ProductVariant::query()->find($variantId);
+
+            if ($variant !== null) {
+                return (float) ($variant->sale_price ?? $variant->price ?? $product->sale_price ?? $product->price);
+            }
+        }
+
+        return (float) ($product->sale_price ?? $product->price);
     }
 }

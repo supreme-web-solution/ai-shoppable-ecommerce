@@ -65,3 +65,15 @@ export function parseMessageParts(message: string): MessagePart[] {
 
     return parts;
 }
+
+export function extractLinkHrefs(message: string): string[] {
+    const hrefs = new Set<string>();
+
+    for (const part of parseMessageParts(message)) {
+        if (part.type === 'link') {
+            hrefs.add(part.href);
+        }
+    }
+
+    return [...hrefs];
+}

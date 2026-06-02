@@ -2,6 +2,7 @@ import '../../css/app.css';
 import { createApp } from 'vue';
 import EmbedShell from '@/embed/EmbedShell.vue';
 import { getEmbedOrigin } from '@/embed/config';
+import { normalizeEmbedDisplayType } from '@/lib/videoEmbed';
 
 function injectStylesheet(origin: string): void {
     if (document.querySelector('link[data-supreme-embed]')) {
@@ -45,7 +46,9 @@ function bootstrap(): void {
         return;
     }
 
-    const embedType = script.getAttribute('data-type') ?? 'vertical_feed';
+    const embedType = normalizeEmbedDisplayType(
+        script.getAttribute('data-type'),
+    );
     const embedName = script.getAttribute('data-name') ?? '';
     const height = script.getAttribute('data-height') ?? '700';
     const targetSelector = script.getAttribute('data-target');

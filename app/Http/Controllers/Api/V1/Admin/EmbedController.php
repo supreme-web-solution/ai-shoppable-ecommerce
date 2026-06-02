@@ -23,10 +23,14 @@ class EmbedController extends Controller
     {
         $teamId = $this->resolveTeamId($request);
 
+        $perPage = min($request->integer('per_page', 15), 200);
+
         $embeds = Embed::query()
             ->where('team_id', $teamId)
+            ->when($request->filled('playlist_id'), fn ($query) => $query->where('playlist_id', $request->integer('playlist_id')))
+            ->when($request->filled('video_id'), fn ($query) => $query->where('video_id', $request->integer('video_id')))
             ->latest()
-            ->paginate(15);
+            ->paginate($perPage);
 
         return EmbedResource::collection($embeds);
     }

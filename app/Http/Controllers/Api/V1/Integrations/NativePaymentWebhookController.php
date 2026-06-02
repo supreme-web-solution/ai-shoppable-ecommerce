@@ -4,11 +4,16 @@ namespace App\Http\Controllers\Api\V1\Integrations;
 
 use App\Http\Controllers\Controller;
 use App\Models\Order;
+use App\Services\Checkout\NativePaymentConfirmationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class NativePaymentWebhookController extends Controller
 {
+    public function __construct(
+        protected NativePaymentConfirmationService $confirmationService,
+    ) {}
+
     public function stripe(Request $request)
     {
         $payload = $request->all();
@@ -31,7 +36,12 @@ class NativePaymentWebhookController extends Controller
             return response()->json(['received' => true]);
         }
 
-        $this->markOrderPaid($order, 'stripe', (string) data_get($object, 'id', ''));
+        $this->confirmationService->markOrderPaid(
+            $order,
+            'stripe',
+            (string) data_get($object, 'id', ''),
+            'webhook',
+        );
 
         return response()->json(['received' => true]);
     }
@@ -56,7 +66,12 @@ class NativePaymentWebhookController extends Controller
             return response()->json(['received' => true]);
         }
 
-        $this->markOrderPaid($order, 'paypal', (string) data_get($payload, 'resource.id', ''));
+        $this->confirmationService->markOrderPaid(
+            $order,
+            'paypal',
+            (string) data_get($payload, 'resource.id', ''),
+            'webhook',
+        );
 
         return response()->json(['received' => true]);
     }
@@ -105,31 +120,4 @@ class NativePaymentWebhookController extends Controller
             : null;
     }
 
-    protected function markOrderPaid(Order $order, string $provider, string $paymentReference): void
-    {
-        if ($order->status === 'paid') {
-            return;
-        }
-
-        $order->update([
-            'status' => 'paid',
-            'payment_reference' => $paymentReference ?: $order->payment_reference,
-            'metadata' => array_merge((array) ($order->metadata ?? []), [
-                'payment_provider' => $provider,
-                'paid_confirmed_at' => now()->toIso8601String(),
-            ]),
-        ]);
-
-        $order->cart?->update([
-            'status' => 'checked_out',
-            'checkout_mode' => 'native',
-            'external_provider' => 'none',
-        ]);
-
-        Log::info('Native checkout order marked paid from webhook', [
-            'order_id' => $order->id,
-            'order_number' => $order->order_number,
-            'provider' => $provider,
-        ]);
-    }
 }

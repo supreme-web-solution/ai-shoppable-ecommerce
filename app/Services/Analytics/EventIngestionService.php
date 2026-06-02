@@ -2,11 +2,14 @@
 
 namespace App\Services\Analytics;
 
-use App\Jobs\AggregateAnalyticsJob;
 use App\Models\AnalyticsEvent;
 
 class EventIngestionService
 {
+    public function __construct(
+        protected RollupService $rollupService,
+    ) {}
+
     /**
      * @param  array<string, mixed>  $payload
      */
@@ -24,12 +27,12 @@ class EventIngestionService
             'occurred_at' => $payload['occurred_at'] ?? now(),
         ]);
 
-        AggregateAnalyticsJob::dispatch(
+        $this->rollupService->increment(
             teamId: $event->team_id,
             metricDate: $event->occurred_at->toDateString(),
             metricName: $event->event_name,
             videoId: $event->video_id,
-        )->onQueue(config('queue.names.analytics', 'analytics'));
+        );
 
         return $event;
     }

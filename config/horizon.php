@@ -101,6 +101,7 @@ return [
         'redis:realtime' => 10,
         'redis:media' => 90,
         'redis:ai' => 120,
+        'redis:embeddings' => 180,
         'redis:webhooks' => 60,
         'redis:integration' => 120,
         'redis:analytics' => 120,
@@ -256,6 +257,19 @@ return [
             'timeout' => 900,
             'nice' => 0,
         ],
+        'embeddings' => [
+            'connection' => 'redis',
+            'queue' => ['embeddings'],
+            'balance' => 'simple',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 5,
+            'timeout' => 900,
+            'nice' => 0,
+        ],
         'webhooks' => [
             'connection' => 'redis',
             'queue' => ['webhooks'],
@@ -326,6 +340,9 @@ return [
             'ai' => [
                 'maxProcesses' => 4,
             ],
+            'embeddings' => [
+                'maxProcesses' => 4,
+            ],
             'webhooks' => [
                 'maxProcesses' => 4,
             ],
@@ -345,6 +362,7 @@ return [
             'realtime' => ['maxProcesses' => 1],
             'media' => ['maxProcesses' => 1],
             'ai' => ['maxProcesses' => 1],
+            'embeddings' => ['maxProcesses' => 1],
             'webhooks' => ['maxProcesses' => 1],
             'integration' => ['maxProcesses' => 1],
             'analytics' => ['maxProcesses' => 1],
@@ -364,6 +382,9 @@ return [
                 'maxProcesses' => 3,
             ],
             'ai' => [
+                'maxProcesses' => 2,
+            ],
+            'embeddings' => [
                 'maxProcesses' => 2,
             ],
             'webhooks' => [

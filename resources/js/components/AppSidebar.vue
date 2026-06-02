@@ -5,6 +5,7 @@ import {
     BarChart3,
     Clapperboard,
     Film,
+    GraduationCap,
     LayoutGrid,
     Layers3,
     MessageSquare,
@@ -37,6 +38,7 @@ const navSections: NavSection[] = [
     {
         label: 'Overview',
         items: [
+            { title: 'Tutorial', href: '/tutorial', icon: GraduationCap },
             { title: 'Dashboard', href: '/dashboard', icon: LayoutGrid },
             { title: 'Analytics', href: '/analytics', icon: BarChart3 },
         ],
@@ -76,7 +78,7 @@ const currentPath = computed(() => {
 
 function isActive(href: string) {
     const path = currentPath.value;
-    if (href === '/dashboard') return path === href;
+    if (href === '/tutorial' || href === '/dashboard') return path === href;
     if (href === '/content') return path === '/content' || (path.startsWith('/content/') && !path.startsWith('/content/create'));
     return path === href || path.startsWith(href + '/');
 }

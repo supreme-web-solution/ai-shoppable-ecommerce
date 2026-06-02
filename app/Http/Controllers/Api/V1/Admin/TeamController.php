@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Team;
+use App\Services\Integrations\ShopifyTokenService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
@@ -67,6 +68,10 @@ class TeamController extends Controller
         ]);
 
         $team->update($validated);
+
+        if (isset($validated['settings']['integrations']['shopify'])) {
+            app(ShopifyTokenService::class)->forget($team->id);
+        }
 
         return $team->fresh();
     }

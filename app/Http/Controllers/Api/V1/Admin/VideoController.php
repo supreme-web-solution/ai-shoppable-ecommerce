@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\StoreVideoRequest;
 use App\Http\Resources\Api\V1\VideoResource;
 use App\Jobs\ProcessVideoAssetJob;
+use App\Jobs\RefreshKnowledgeEmbeddingsJob;
 use App\Models\Video;
 use App\Services\Media\LocalVideoStagingService;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -73,6 +74,9 @@ class VideoController extends Controller
         $this->assertBelongsToCurrentTeam($request, (int) $request->input('team_id'));
 
         $data = $request->validated();
+        if (isset($data['metadata']) && is_array($data['metadata'])) {
+            $data['metadata'] = $this->normalizeVideoMetadata($data['metadata']);
+        }
 
         if (! empty($data['local_file_path'])) {
             $data['status'] = 'processing';
@@ -88,6 +92,8 @@ class VideoController extends Controller
             app(LocalVideoStagingService::class)->rememberForVideo($video, $localPath);
             $this->dispatchVideoProcessing($video->id, $localPath);
         }
+
+        RefreshKnowledgeEmbeddingsJob::dispatch('video', (int) $video->id);
 
         return new VideoResource($video);
     }
@@ -113,6 +119,11 @@ class VideoController extends Controller
             'duration_seconds' => ['sometimes', 'integer', 'min:0'],
             'published_at' => ['sometimes', 'nullable', 'date'],
             'metadata' => ['sometimes', 'nullable', 'array'],
+            'metadata.ai_assistant_enabled' => ['sometimes', 'boolean'],
+            'metadata.knowledge_base_text' => ['sometimes', 'nullable', 'string'],
+            'metadata.knowledge_sources' => ['sometimes', 'array', 'max:3'],
+            'metadata.knowledge_sources.*.title' => ['required_with:metadata.knowledge_sources', 'string', 'max:255'],
+            'metadata.knowledge_sources.*.content' => ['required_with:metadata.knowledge_sources', 'string'],
             'local_file_path' => ['sometimes', 'nullable', 'string', 'max:1000'],
         ]);
 
@@ -129,6 +140,10 @@ class VideoController extends Controller
             app(LocalVideoStagingService::class)->deleteForVideo($video);
         }
 
+        if (array_key_exists('metadata', $validated) && is_array($validated['metadata'])) {
+            $validated['metadata'] = $this->normalizeVideoMetadata($validated['metadata']);
+        }
+
         $video->update($validated);
 
         if ($localFilePath) {
@@ -136,7 +151,37 @@ class VideoController extends Controller
             $this->dispatchVideoProcessing($video->id, $localFilePath);
         }
 
+        if (array_key_exists('metadata', $validated)) {
+            RefreshKnowledgeEmbeddingsJob::dispatch('video', (int) $video->id);
+        }
+
         return new VideoResource($video->fresh('productTags.product'));
+    }
+
+    /**
+     * @param  array<string, mixed>  $metadata
+     * @return array<string, mixed>
+     */
+    protected function normalizeVideoMetadata(array $metadata): array
+    {
+        $sources = collect((array) ($metadata['knowledge_sources'] ?? []))
+            ->take(3)
+            ->filter(fn (mixed $source): bool => is_array($source))
+            ->map(fn (array $source): array => [
+                'title' => trim((string) ($source['title'] ?? '')),
+                'content' => trim((string) ($source['content'] ?? '')),
+            ])
+            ->filter(fn (array $source): bool => $source['title'] !== '' && $source['content'] !== '')
+            ->values()
+            ->all();
+
+        $metadata['ai_assistant_enabled'] = (bool) ($metadata['ai_assistant_enabled'] ?? false);
+        $metadata['knowledge_base_text'] = isset($metadata['knowledge_base_text'])
+            ? trim((string) $metadata['knowledge_base_text'])
+            : null;
+        $metadata['knowledge_sources'] = $sources;
+
+        return $metadata;
     }
 
     protected function dispatchVideoProcessing(int $videoId, string $localFilePath): void

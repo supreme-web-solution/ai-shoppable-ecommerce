@@ -7,10 +7,8 @@ use App\Models\Team;
 use App\Models\User;
 use App\Services\Ai\AiAvatarVideoService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -122,7 +120,7 @@ class AiContentTest extends TestCase
         Http::assertSentCount(10);
     }
 
-    public function test_avatar_generation_sends_product_image_as_heygen_background(): void
+    public function test_avatar_generation_uses_presenter_only_heygen_payload(): void
     {
         [$team, $owner] = $this->createTeamWithOwner();
         $product = Product::query()->create([
@@ -144,14 +142,6 @@ class AiContentTest extends TestCase
                     'status' => 'pending',
                 ],
             ]),
-            'https://api.heygen.com/v3/videos/v_123' => Http::response([
-                'data' => [
-                    'status' => 'completed',
-                    'video_url' => 'https://cdn.example.com/render.mp4',
-                    'thumbnail_url' => 'https://cdn.example.com/render.jpg',
-                    'duration' => 42,
-                ],
-            ]),
         ]);
 
         Sanctum::actingAs($owner);
@@ -166,10 +156,6 @@ class AiContentTest extends TestCase
             'product_ids' => [$product->id],
         ];
 
-        $this->postJson('/api/v1/admin/ai/avatar-videos', $input)->assertStatus(202)
-            ->assertJsonPath('generation.type', 'avatar_video')
-            ->assertJsonPath('video.metadata.product_ids.0', $product->id);
-
         app(AiAvatarVideoService::class)->submit($input);
 
         Http::assertSent(function ($request): bool {
@@ -180,32 +166,20 @@ class AiContentTest extends TestCase
                 && data_get($payload, 'avatar_id') === 'look_123'
                 && data_get($payload, 'voice_id') === 'voice_123'
                 && data_get($payload, 'aspect_ratio') === '9:16'
-                && data_get($payload, 'background.type') === 'image'
-                && data_get($payload, 'background.url') === 'https://cdn.example.com/camera-bag.jpg';
+                && data_get($payload, 'background') === null
+                && data_get($payload, 'motion_prompt') === null;
         });
     }
 
-    public function test_avatar_generation_uploads_custom_visual_to_heygen_asset_background(): void
+    public function test_avatar_generation_can_send_product_placement_settings_to_heygen(): void
     {
         [$team, $owner] = $this->createTeamWithOwner();
         config(['services.heygen.api_key' => 'test-heygen-key']);
-        Storage::fake('public');
-
-        $storedPath = UploadedFile::fake()
-            ->image('ad-visual.png', 900, 1200)
-            ->store('uploads/ai-visuals', 'public');
 
         Http::fake([
-            'https://api.heygen.com/v3/assets' => Http::response([
-                'data' => [
-                    'asset_id' => 'asset_product_visual',
-                    'url' => 'https://files.heygen.ai/assets/asset_product_visual.png',
-                    'mime_type' => 'image/png',
-                ],
-            ]),
             'https://api.heygen.com/v3/videos' => Http::response([
                 'data' => [
-                    'video_id' => 'v_456',
+                    'video_id' => 'v_placement',
                     'status' => 'pending',
                 ],
             ]),
@@ -215,26 +189,33 @@ class AiContentTest extends TestCase
 
         app(AiAvatarVideoService::class)->submit([
             'team_id' => $team->id,
-            'title' => 'AI Presenter Demo',
-            'script' => 'This is a shoppable product demo script for testing.',
+            'title' => 'Placement Demo',
+            'script' => 'This product is amazing.',
             'language' => 'en',
             'avatar_id' => 'look_123',
             'voice_id' => 'voice_123',
-            'ad_style' => 'avatar_beside_product',
-            'visual_file_path' => Storage::disk('public')->path($storedPath),
+            'product_placement_enabled' => true,
+            'product_placement_image_url' => 'https://cdn.example.com/product-bottle.png',
+            'product_placement_position' => 'top_right',
+            'product_placement_scale' => 0.45,
+            'product_placement_opacity' => 0.9,
+            'product_placement_offset_x' => 0.05,
+            'product_placement_offset_y' => -0.03,
+            'product_placement_motion_prompt' => 'Hold the bottle naturally and point to it.',
         ]);
-
-        Http::assertSent(function ($request): bool {
-            return $request->url() === 'https://api.heygen.com/v3/assets';
-        });
 
         Http::assertSent(function ($request): bool {
             $payload = $request->data();
 
             return $request->url() === 'https://api.heygen.com/v3/videos'
-                && data_get($payload, 'background.type') === 'image'
-                && data_get($payload, 'background.asset_id') === 'asset_product_visual'
-                && data_get($payload, 'motion_prompt') !== null;
+                && data_get($payload, 'watermark.image.type') === 'url'
+                && data_get($payload, 'watermark.image.url') === 'https://cdn.example.com/product-bottle.png'
+                && data_get($payload, 'watermark.placement.position') === 'top_right'
+                && (float) data_get($payload, 'watermark.scale') === 0.45
+                && (float) data_get($payload, 'watermark.opacity') === 0.9
+                && (float) data_get($payload, 'watermark.placement.offset_x') === 0.05
+                && (float) data_get($payload, 'watermark.placement.offset_y') === -0.03
+                && data_get($payload, 'motion_prompt') === 'Hold the bottle naturally and point to it.';
         });
     }
 

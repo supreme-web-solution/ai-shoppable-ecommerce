@@ -41,6 +41,11 @@ class StoreVideoRequest extends FormRequest
             'duration_seconds' => ['nullable', 'integer', 'min:0'],
             'published_at' => ['nullable', 'date'],
             'metadata' => ['nullable', 'array'],
+            'metadata.ai_assistant_enabled' => ['nullable', 'boolean'],
+            'metadata.knowledge_base_text' => ['nullable', 'string'],
+            'metadata.knowledge_sources' => ['nullable', 'array', 'max:3'],
+            'metadata.knowledge_sources.*.title' => ['required_with:metadata.knowledge_sources', 'string', 'max:255'],
+            'metadata.knowledge_sources.*.content' => ['required_with:metadata.knowledge_sources', 'string'],
             'local_file_path' => ['nullable', 'string', 'max:1000'],
         ];
     }

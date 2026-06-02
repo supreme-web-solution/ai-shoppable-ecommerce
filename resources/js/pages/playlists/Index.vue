@@ -2,6 +2,8 @@
 import { Head, Link } from '@inertiajs/vue3';
 import {
     Check,
+    ChevronLeft,
+    ChevronRight,
     Code2,
     Film,
     Globe,
@@ -15,7 +17,7 @@ import {
     Video,
     XCircle,
 } from 'lucide-vue-next';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -37,6 +39,8 @@ import {
     embedDisplayLabel,
     embedScriptCode,
     ensureEmbedForPlaylist,
+    findEmbedForPlaylist,
+    normalizeEmbedDisplayType,
     replaceEmbedInList,
     updateEmbedDisplayType,
 } from '@/lib/videoEmbed';
@@ -48,6 +52,11 @@ type VideoOption = {
     status?: string;
 };
 
+type PlaylistSettings = {
+    auto_advance_enabled?: boolean;
+    loops_per_video?: number;
+};
+
 type PlaylistItem = {
     id: number;
     title: string;
@@ -55,6 +64,7 @@ type PlaylistItem = {
     description?: string | null;
     is_active: boolean;
     is_public: boolean;
+    settings?: PlaylistSettings | null;
     videos?: VideoOption[];
 };
 
@@ -81,6 +91,15 @@ const embedTypeSavingId = ref<number | null>(null);
 
 const embedApi = { getList, postJson, patchJson };
 
+const PLAYLISTS_PER_PAGE = 12;
+const playlistPage = ref(1);
+const playlistMeta = ref({
+    current_page: 1,
+    last_page: 1,
+    total: 0,
+});
+let playlistSearchTimer: number | null = null;
+
 /* ── create modal ── */
 const createModalOpen = ref(false);
 const createForm = ref({
@@ -96,17 +115,24 @@ const contentModalOpen = ref(false);
 const contentModalPlaylist = ref<PlaylistItem | null>(null);
 const contentVideoIds = ref<number[]>([]);
 const contentVideoSearch = ref('');
+const playbackAutoAdvance = ref(false);
+const playbackLoopsPerVideo = ref(1);
 
-const filteredPlaylists = computed(() => {
-    const q = search.value.trim().toLowerCase();
-    if (!q) return playlists.value;
-    return playlists.value.filter(
-        (p) =>
-            p.title.toLowerCase().includes(q) ||
-            p.slug.toLowerCase().includes(q) ||
-            (p.description?.toLowerCase().includes(q) ?? false),
-    );
+const playlistTotalPages = computed(() =>
+    Math.max(1, playlistMeta.value.last_page),
+);
+
+const playlistRangeStart = computed(() => {
+    if (playlistMeta.value.total === 0) {
+        return 0;
+    }
+
+    return (playlistMeta.value.current_page - 1) * PLAYLISTS_PER_PAGE + 1;
 });
+
+const playlistRangeEnd = computed(() =>
+    Math.min(playlistMeta.value.current_page * PLAYLISTS_PER_PAGE, playlistMeta.value.total),
+);
 
 const filteredVideosForCreate = computed(() => {
     const q = createVideoSearch.value.trim().toLowerCase();
@@ -120,8 +146,8 @@ const filteredVideosForContent = computed(() => {
     return videos.value.filter((v) => v.title.toLowerCase().includes(q));
 });
 
-const publicCount = computed(() => playlists.value.filter((p) => p.is_public).length);
-const totalVideosInPlaylists = computed(() =>
+const publicCountOnPage = computed(() => playlists.value.filter((p) => p.is_public).length);
+const videosOnPage = computed(() =>
     playlists.value.reduce((sum, p) => sum + (p.videos?.length ?? 0), 0),
 );
 
@@ -143,9 +169,16 @@ function embedForPlaylist(playlistId: number): EmbedItem | undefined {
 }
 
 async function resolvePlaylistEmbed(playlist: PlaylistItem): Promise<EmbedItem | null> {
-    const existing = embedForPlaylist(playlist.id);
-    if (existing) {
-        return existing;
+    const cached = embedForPlaylist(playlist.id);
+    if (cached) {
+        return cached;
+    }
+
+    const fromApi = await findEmbedForPlaylist(embedApi, playlist.id);
+    if (fromApi) {
+        embeds.value = replaceEmbedInList(embeds.value, fromApi);
+
+        return fromApi;
     }
 
     const created = await ensureEmbedForPlaylist(
@@ -163,9 +196,7 @@ async function resolvePlaylistEmbed(playlist: PlaylistItem): Promise<EmbedItem |
 }
 
 function playlistEmbedType(playlistId: number): EmbedDisplayType {
-    const type = embedForPlaylist(playlistId)?.type;
-
-    return (type as EmbedDisplayType) || 'vertical_feed';
+    return normalizeEmbedDisplayType(embedForPlaylist(playlistId)?.type);
 }
 
 async function changePlaylistEmbedType(
@@ -175,21 +206,48 @@ async function changePlaylistEmbedType(
     embedTypeSavingId.value = playlist.id;
     errorText.value = '';
 
+    let previous: EmbedItem | null = null;
+
     try {
         const embed = await resolvePlaylistEmbed(playlist);
         if (!embed) {
             throw new Error('Could not load embed.');
         }
 
+        previous = { ...embed };
+        embeds.value = replaceEmbedInList(embeds.value, {
+            ...embed,
+            type,
+        });
+
         const updated = await updateEmbedDisplayType(embedApi, embed.id, type);
         if (updated) {
             embeds.value = replaceEmbedInList(embeds.value, updated);
         }
     } catch (err) {
+        if (previous) {
+            embeds.value = replaceEmbedInList(embeds.value, previous);
+        }
         errorText.value = err instanceof Error ? err.message : 'Could not update embed display.';
     } finally {
         embedTypeSavingId.value = null;
     }
+}
+
+async function loadPlaylists(page = playlistPage.value) {
+    const playlistPayload = await getList<PlaylistItem>('/api/v1/admin/playlists', {
+        per_page: PLAYLISTS_PER_PAGE,
+        page,
+        ...(search.value.trim() ? { search: search.value.trim() } : {}),
+    });
+
+    playlists.value = playlistPayload.data ?? [];
+    playlistMeta.value = {
+        current_page: playlistPayload.meta?.current_page ?? page,
+        last_page: playlistPayload.meta?.last_page ?? 1,
+        total: playlistPayload.meta?.total ?? playlists.value.length,
+    };
+    playlistPage.value = playlistMeta.value.current_page;
 }
 
 async function loadData() {
@@ -197,20 +255,55 @@ async function loadData() {
     errorText.value = '';
     try {
         await ensureTeam();
-        const [playlistPayload, videoPayload, embedPayload] = await Promise.all([
-            getList<PlaylistItem>('/api/v1/admin/playlists'),
+        const [videoPayload, embedPayload] = await Promise.all([
             getList<VideoOption>('/api/v1/admin/videos'),
-            getList<EmbedItem>('/api/v1/admin/embeds'),
+            getList<EmbedItem>('/api/v1/admin/embeds', { per_page: 200 }),
         ]);
-        playlists.value = playlistPayload.data ?? [];
         videos.value = videoPayload.data ?? [];
         embeds.value = embedPayload.data ?? [];
+        await loadPlaylists(playlistPage.value);
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not load playlists.';
     } finally {
         loading.value = false;
     }
 }
+
+function goToPlaylistPage(page: number) {
+    const next = Math.max(1, Math.min(page, playlistTotalPages.value));
+    if (next === playlistPage.value) {
+        return;
+    }
+
+    playlistPage.value = next;
+    loading.value = true;
+    errorText.value = '';
+    loadPlaylists(next)
+        .catch((err) => {
+            errorText.value = err instanceof Error ? err.message : 'Could not load playlists.';
+        })
+        .finally(() => {
+            loading.value = false;
+        });
+}
+
+watch(search, () => {
+    if (playlistSearchTimer !== null) {
+        window.clearTimeout(playlistSearchTimer);
+    }
+
+    playlistSearchTimer = window.setTimeout(() => {
+        playlistPage.value = 1;
+        loading.value = true;
+        loadPlaylists(1)
+            .catch((err) => {
+                errorText.value = err instanceof Error ? err.message : 'Could not load playlists.';
+            })
+            .finally(() => {
+                loading.value = false;
+            });
+    }, 300);
+});
 
 function openCreateModal() {
     createForm.value = { title: '', slug: '', description: '', video_ids: [] };
@@ -243,6 +336,7 @@ async function createPlaylist() {
         if (created) await resolvePlaylistEmbed(created);
 
         createModalOpen.value = false;
+        playlistPage.value = 1;
         await loadData();
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not create playlist.';
@@ -255,7 +349,16 @@ function openContentModal(playlist: PlaylistItem) {
     contentModalPlaylist.value = playlist;
     contentVideoIds.value = (playlist.videos ?? []).map((v) => v.id);
     contentVideoSearch.value = '';
+    playbackAutoAdvance.value = Boolean(playlist.settings?.auto_advance_enabled);
+    playbackLoopsPerVideo.value = Math.min(
+        20,
+        Math.max(1, Number(playlist.settings?.loops_per_video ?? 1)),
+    );
     contentModalOpen.value = true;
+}
+
+function playlistAutoAdvanceEnabled(playlist: PlaylistItem): boolean {
+    return Boolean(playlist.settings?.auto_advance_enabled);
 }
 
 function toggleContentVideo(videoId: number) {
@@ -270,8 +373,17 @@ async function savePlaylistContent() {
     saving.value = true;
     errorText.value = '';
     try {
+        const existingSettings = contentModalPlaylist.value.settings ?? {};
+
         await patchJson(`/api/v1/admin/playlists/${contentModalPlaylist.value.id}`, {
             video_ids: contentVideoIds.value.map(Number),
+            settings: {
+                ...existingSettings,
+                auto_advance_enabled: playbackAutoAdvance.value,
+                loops_per_video: playbackAutoAdvance.value
+                    ? Math.min(20, Math.max(1, playbackLoopsPerVideo.value))
+                    : 1,
+            },
         });
         contentModalOpen.value = false;
         contentModalPlaylist.value = null;
@@ -341,7 +453,7 @@ onMounted(loadData);
 <template>
     <Head title="Playlists" />
 
-    <div class="playlists-root flex h-full flex-1 flex-col gap-5 p-4 md:p-5">
+    <div class="playlists-root flex min-h-screen flex-1 flex-col gap-5 p-4 md:p-5">
 
         <!-- Header -->
         <div class="flex flex-wrap items-end justify-between gap-4">
@@ -383,13 +495,13 @@ onMounted(loadData);
         </div>
 
         <!-- Stats row -->
-        <div v-if="!loading && playlists.length > 0" class="grid gap-3 sm:grid-cols-3">
+        <div v-if="!loading && playlistMeta.total > 0" class="grid gap-3 sm:grid-cols-3">
             <div class="stat-card flex items-center gap-4 rounded-2xl p-4">
                 <div class="stat-icon flex size-10 items-center justify-center rounded-xl">
                     <Layers3 class="size-5 text-[#E8563A]" />
                 </div>
                 <div>
-                    <p class="text-2xl font-black leading-none text-gray-900">{{ playlists.length }}</p>
+                    <p class="text-2xl font-black leading-none text-gray-900">{{ playlistMeta.total }}</p>
                     <p class="mt-0.5 text-xs text-gray-500">Total playlists</p>
                 </div>
             </div>
@@ -398,8 +510,8 @@ onMounted(loadData);
                     <Globe class="size-5 text-[#E8563A]" />
                 </div>
                 <div>
-                    <p class="text-2xl font-black leading-none text-gray-900">{{ publicCount }}</p>
-                    <p class="mt-0.5 text-xs text-gray-500">Public feeds</p>
+                    <p class="text-2xl font-black leading-none text-gray-900">{{ publicCountOnPage }}</p>
+                    <p class="mt-0.5 text-xs text-gray-500">Public on this page</p>
                 </div>
             </div>
             <div class="stat-card flex items-center gap-4 rounded-2xl p-4">
@@ -407,8 +519,8 @@ onMounted(loadData);
                     <Film class="size-5 text-[#E8563A]" />
                 </div>
                 <div>
-                    <p class="text-2xl font-black leading-none text-gray-900">{{ totalVideosInPlaylists }}</p>
-                    <p class="mt-0.5 text-xs text-gray-500">Videos grouped</p>
+                    <p class="text-2xl font-black leading-none text-gray-900">{{ videosOnPage }}</p>
+                    <p class="mt-0.5 text-xs text-gray-500">Videos on this page</p>
                 </div>
             </div>
         </div>
@@ -421,12 +533,12 @@ onMounted(loadData);
 
         <!-- Loading skeletons -->
         <div v-if="loading" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <Skeleton v-for="n in 6" :key="n" class="h-64 rounded-2xl" />
+            <Skeleton v-for="n in PLAYLISTS_PER_PAGE" :key="n" class="h-64 rounded-2xl" />
         </div>
 
         <!-- Empty -->
         <div
-            v-else-if="filteredPlaylists.length === 0"
+            v-else-if="playlists.length === 0"
             class="empty-card flex flex-col items-center justify-center gap-5 rounded-2xl border border-dashed py-20 text-center"
         >
             <div class="stat-icon flex size-16 items-center justify-center rounded-2xl">
@@ -445,9 +557,10 @@ onMounted(loadData);
         </div>
 
         <!-- Playlist grid -->
-        <div v-else class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        <div v-else class="space-y-5">
+            <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             <div
-                v-for="playlist in filteredPlaylists"
+                v-for="playlist in playlists"
                 :key="playlist.id"
                 class="playlist-card group flex flex-col overflow-hidden rounded-2xl transition-all hover:-translate-y-0.5"
             >
@@ -514,11 +627,17 @@ onMounted(loadData);
                         No videos yet
                     </div>
 
-                    <div class="mt-2.5 flex items-center gap-3">
+                    <div class="mt-2.5 flex flex-wrap items-center gap-2">
                         <div class="flex items-center gap-1 text-xs text-gray-500">
                             <Film class="size-3.5" />
                             {{ playlist.videos?.length ?? 0 }} video{{ (playlist.videos?.length ?? 0) !== 1 ? 's' : '' }}
                         </div>
+                        <span
+                            v-if="playlistAutoAdvanceEnabled(playlist)"
+                            class="rounded-full bg-[#E8563A]/10 px-2 py-0.5 text-[10px] font-semibold text-[#E8563A]"
+                        >
+                            Auto-advance · {{ playlist.settings?.loops_per_video ?? 1 }}× each
+                        </span>
                         <div v-if="embedForPlaylist(playlist.id)" class="flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-500">
                             <Link2 class="size-3.5 shrink-0" />
                             <span class="truncate">/embed/{{ embedForPlaylist(playlist.id)?.slug }}</span>
@@ -602,6 +721,46 @@ onMounted(loadData);
                             <Trash2 class="size-3.5" />
                         </button>
                     </div>
+                </div>
+            </div>
+            </div>
+
+            <div
+                v-if="playlistTotalPages > 1"
+                class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#F0EDE8] bg-white px-4 py-3 shadow-sm"
+            >
+                <p class="text-sm text-gray-600">
+                    Showing
+                    <span class="font-semibold text-gray-900">{{ playlistRangeStart }}–{{ playlistRangeEnd }}</span>
+                    of
+                    <span class="font-semibold text-gray-900">{{ playlistMeta.total }}</span>
+                </p>
+                <div class="flex items-center gap-2">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        class="rounded-full"
+                        :disabled="playlistPage <= 1 || loading"
+                        @click="goToPlaylistPage(playlistPage - 1)"
+                    >
+                        <ChevronLeft class="mr-1 size-4" />
+                        Previous
+                    </Button>
+                    <span class="min-w-[5.5rem] text-center text-xs font-medium text-gray-500">
+                        Page {{ playlistPage }} / {{ playlistTotalPages }}
+                    </span>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        class="rounded-full"
+                        :disabled="playlistPage >= playlistTotalPages || loading"
+                        @click="goToPlaylistPage(playlistPage + 1)"
+                    >
+                        Next
+                        <ChevronRight class="ml-1 size-4" />
+                    </Button>
                 </div>
             </div>
         </div>
@@ -742,6 +901,36 @@ onMounted(loadData);
             </div>
 
             <div class="flex-1 overflow-y-auto px-4 py-3">
+                <div class="mb-4 space-y-3 rounded-xl border border-[#F0EDE8] bg-[#FAF8F5] p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="space-y-1">
+                            <p class="text-sm font-semibold text-gray-900">Embed auto-advance</p>
+                            <p class="text-xs text-muted-foreground">
+                                When enabled, the embed feed plays each video a set number of times, then scrolls to the
+                                next. At the end of the playlist it starts again from the first video.
+                            </p>
+                        </div>
+                        <label class="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
+                            <input v-model="playbackAutoAdvance" type="checkbox" class="peer sr-only" />
+                            <div class="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-[#E8563A] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
+                        </label>
+                    </div>
+                    <div v-if="playbackAutoAdvance" class="space-y-1.5">
+                        <Label for="loops-per-video">Plays per video before next</Label>
+                        <Input
+                            id="loops-per-video"
+                            v-model.number="playbackLoopsPerVideo"
+                            type="number"
+                            min="1"
+                            max="20"
+                            class="search-input max-w-[120px]"
+                        />
+                        <p class="text-[11px] text-muted-foreground">
+                            Example: 2 means each video plays twice, then the feed advances (swipe up also works).
+                        </p>
+                    </div>
+                </div>
+
                 <div v-if="videos.length === 0" class="py-10 text-center text-sm text-muted-foreground">
                     No shoppable videos available.
                 </div>
@@ -788,7 +977,7 @@ onMounted(loadData);
                 <Button variant="ghost" @click="contentModalOpen = false">Cancel</Button>
                 <Button class="cta-btn" :disabled="saving" @click="savePlaylistContent">
                     <Loader2 v-if="saving" class="mr-2 size-4 animate-spin" />
-                    {{ saving ? 'Saving…' : 'Save videos' }}
+                    {{ saving ? 'Saving…' : 'Save playlist' }}
                 </Button>
             </DialogFooter>
         </DialogContent>

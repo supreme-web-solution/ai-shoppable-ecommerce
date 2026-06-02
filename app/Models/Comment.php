@@ -15,6 +15,7 @@ class Comment extends Model
         'team_id',
         'video_id',
         'user_id',
+        'session_key',
         'parent_id',
         'body',
         'is_pinned',

@@ -2,12 +2,14 @@
 
 use App\Http\Controllers\CheckoutPageController;
 use App\Http\Controllers\EmbedPageController;
+use App\Http\Controllers\TutorialController;
 use App\Http\Controllers\WebinarPageController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'Welcome')->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('tutorial', [TutorialController::class, 'index'])->name('tutorial.index');
     Route::inertia('dashboard', 'Dashboard')->name('dashboard');
     Route::inertia('content', 'content/Index')->name('content.index');
     Route::inertia('content/create', 'content/Create')->name('content.create');

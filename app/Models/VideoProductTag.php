@@ -17,6 +17,8 @@ class VideoProductTag extends Model
         'ends_at_ms',
         'cta_label',
         'position',
+        'overlay_kind',
+        'coupon_code',
         'discount_percent',
         'is_pinned',
         'sort_order',

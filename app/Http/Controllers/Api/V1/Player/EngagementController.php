@@ -13,6 +13,7 @@ use App\Models\Reaction;
 use App\Models\Video;
 use App\Services\Ai\WebinarAssistantService;
 use App\Models\ViewerSession;
+use App\Support\CommentQuery;
 use App\Support\SafeBroadcast;
 use App\Support\TeamApiAuthorizer;
 use Illuminate\Http\JsonResponse;
@@ -54,11 +55,13 @@ class EngagementController extends Controller
 
         $limit = (int) ($validated['limit'] ?? 50);
 
-        $comments = Comment::query()
-            ->where('team_id', $teamId)
-            ->where('video_id', $videoId)
-            ->where('is_hidden', false)
-            ->orderByDesc('id')
+        $comments = CommentQuery::visibleForPlayer($teamId, $videoId)
+            ->whereNull('parent_id')
+            ->with([
+                'replies' => fn ($query) => CommentQuery::applyVisibleForPlayer($query, $teamId, $videoId)
+                    ->orderBy('id'),
+            ])
+            ->orderBy('id')
             ->limit($limit)
             ->get();
 
@@ -129,9 +132,16 @@ class EngagementController extends Controller
             'session_key' => $sessionKey !== '' ? $sessionKey : null,
         ]);
 
+        $parentId = $request->input('parent_id');
+        if ($parentId) {
+            $parent = Comment::query()->findOrFail((int) $parentId);
+            abort_unless($parent->video_id === $video->id, 422, 'Parent comment must belong to this video.');
+        }
+
         $comment = Comment::query()->create([
             ...$request->validated(),
             'user_id' => $request->user()?->id,
+            'session_key' => $sessionKey !== '' ? $sessionKey : null,
             'metadata' => $metadata,
         ]);
 
@@ -147,11 +157,9 @@ class EngagementController extends Controller
         $aiEnabled = (bool) data_get($videoMetadata, 'ai_assistant_enabled', false);
 
         if ($aiEnabled) {
-            $knowledge = $assistantService->extractKnowledgeFromSettings($videoMetadata);
-            $replyText = $assistantService->buildReplyFromKnowledge(
+            $replyText = $assistantService->buildReplyForVideo(
+                video: $video,
                 question: (string) $comment->body,
-                knowledge: $knowledge,
-                contextTitle: (string) $video->title,
             );
 
             $aiComment = Comment::query()->create([

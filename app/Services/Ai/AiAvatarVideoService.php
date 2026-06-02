@@ -2,7 +2,6 @@
 
 namespace App\Services\Ai;
 
-use App\Models\Product;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -25,10 +24,9 @@ class AiAvatarVideoService
                 'title' => $input['title'] ?? null,
                 'avatar_id' => $input['avatar_id'] ?? null,
                 'voice_id' => $input['voice_id'] ?? null,
-                'ad_style' => $this->adStyle($input),
-                'has_visual_file' => filled($input['visual_file_path'] ?? null),
-                'visual_url' => $input['visual_url'] ?? null,
                 'product_ids' => $input['product_ids'] ?? [],
+                'product_placement_enabled' => (bool) ($input['product_placement_enabled'] ?? false),
+                'product_placement_image_url' => $input['product_placement_image_url'] ?? null,
                 'script_length' => strlen((string) ($input['script'] ?? '')),
             ]);
 
@@ -119,7 +117,7 @@ class AiAvatarVideoService
      */
     protected function submitToHeyGen(string $apiKey, array $input): ?array
     {
-        $payload = $this->buildVideoPayload($input, $apiKey);
+        $payload = $this->buildVideoPayload($input);
 
         if ($payload === null) {
             Log::warning('HeyGen avatar video payload could not be built', [
@@ -137,8 +135,9 @@ class AiAvatarVideoService
                 'avatar_id' => $payload['avatar_id'] ?? null,
                 'voice_id' => $payload['voice_id'] ?? null,
                 'aspect_ratio' => $payload['aspect_ratio'] ?? null,
-                'ad_style' => $this->adStyle($input),
-                'has_visual_background' => data_get($payload, 'background.url') !== null || data_get($payload, 'background.asset_id') !== null,
+                'fit' => $payload['fit'] ?? null,
+                'has_watermark' => isset($payload['watermark']),
+                'has_motion_prompt' => isset($payload['motion_prompt']),
                 'script_length' => strlen((string) ($payload['script'] ?? '')),
             ]);
 
@@ -171,8 +170,6 @@ class AiAvatarVideoService
                 'status' => 'processing',
                 'avatar_id' => $payload['avatar_id'],
                 'voice_id' => $payload['voice_id'] ?? null,
-                'ad_style' => $this->adStyle($input),
-                'visual_background' => $payload['background'] ?? null,
             ];
         } catch (\Throwable $exception) {
             Log::warning('HeyGen avatar video request threw exception', [
@@ -267,7 +264,7 @@ class AiAvatarVideoService
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>|null
      */
-    protected function buildVideoPayload(array $input, string $apiKey): ?array
+    protected function buildVideoPayload(array $input): ?array
     {
         $avatarId = $this->resolveAvatarId($input);
 
@@ -286,19 +283,33 @@ class AiAvatarVideoService
             'fit' => 'cover',
         ];
 
-        $motionPrompt = $this->motionPromptForStyle($input);
-        if ($motionPrompt !== '') {
-            $payload['motion_prompt'] = $motionPrompt;
-            $payload['expressiveness'] = 'medium';
-        }
-
         if ($voiceId !== '') {
             $payload['voice_id'] = $voiceId;
         }
 
-        $background = $this->visualBackground($input, $apiKey);
-        if ($background !== null) {
-            $payload['background'] = $background;
+        $productPlacementEnabled = (bool) ($input['product_placement_enabled'] ?? false);
+        $productPlacementImageUrl = trim((string) ($input['product_placement_image_url'] ?? ''));
+        if ($productPlacementEnabled && $productPlacementImageUrl !== '') {
+            $watermark = [
+                'image' => [
+                    'type' => 'url',
+                    'url' => $productPlacementImageUrl,
+                ],
+                'placement' => [
+                    'position' => (string) ($input['product_placement_position'] ?? 'bottom_right'),
+                    'offset_x' => isset($input['product_placement_offset_x']) ? (float) $input['product_placement_offset_x'] : 0,
+                    'offset_y' => isset($input['product_placement_offset_y']) ? (float) $input['product_placement_offset_y'] : 0,
+                ],
+                'scale' => isset($input['product_placement_scale']) ? (float) $input['product_placement_scale'] : 0.3,
+                'opacity' => isset($input['product_placement_opacity']) ? (float) $input['product_placement_opacity'] : 1,
+            ];
+
+            $payload['watermark'] = $watermark;
+
+            $motionPrompt = trim((string) ($input['product_placement_motion_prompt'] ?? ''));
+            if ($motionPrompt !== '') {
+                $payload['motion_prompt'] = $motionPrompt;
+            }
         }
 
         return $payload;
@@ -328,11 +339,59 @@ class AiAvatarVideoService
         return '';
     }
 
+    public function resolveVoiceIdForLanguage(
+        string $languageCode,
+        string $preferredVoiceId = '',
+        string $avatarId = '',
+    ): string {
+        if ($preferredVoiceId !== '') {
+            return $preferredVoiceId;
+        }
+
+        $label = AiTranslationService::languageLabel($languageCode);
+        $options = $this->options();
+        $voices = collect($options['voices'] ?? []);
+
+        $matched = $voices->first(function (array $voice) use ($label, $languageCode): bool {
+            $voiceLanguage = strtolower((string) ($voice['language'] ?? ''));
+
+            return $voiceLanguage !== ''
+                && (
+                    str_contains($voiceLanguage, strtolower($label))
+                    || str_contains($voiceLanguage, strtolower($languageCode))
+                );
+        });
+
+        if ($matched) {
+            return (string) ($matched['voice_id'] ?? '');
+        }
+
+        if ($avatarId !== '') {
+            return $this->resolveVoiceId(['voice_id' => ''], $avatarId);
+        }
+
+        return (string) data_get($voices->first(), 'voice_id', '');
+    }
+
     /**
      * @param  array<string, mixed>  $input
      */
     protected function resolveVoiceId(array $input, string $avatarId): string
     {
+        $language = strtolower(trim((string) ($input['language'] ?? '')));
+
+        if ($language !== '') {
+            $localized = $this->resolveVoiceIdForLanguage(
+                $language,
+                trim((string) ($input['voice_id'] ?? '')),
+                $avatarId,
+            );
+
+            if ($localized !== '') {
+                return $localized;
+            }
+        }
+
         $voiceId = trim((string) ($input['voice_id'] ?? ''));
 
         if ($voiceId !== '') {
@@ -353,153 +412,6 @@ class AiAvatarVideoService
         }
 
         return trim((string) config('services.heygen.default_voice_id', ''));
-    }
-
-    /**
-     * @param  array<string, mixed>  $input
-     * @return array{type: string, url?: string, asset_id?: string}|null
-     */
-    protected function visualBackground(array $input, string $apiKey): ?array
-    {
-        $style = $this->adStyle($input);
-
-        if ($style === 'avatar_only') {
-            return null;
-        }
-
-        $assetId = $this->uploadVisualAsset($apiKey, (string) ($input['visual_file_path'] ?? ''));
-        if ($assetId !== '') {
-            return [
-                'type' => 'image',
-                'asset_id' => $assetId,
-            ];
-        }
-
-        $visualUrl = $this->publicHttpsUrl((string) ($input['visual_url'] ?? ''));
-        if ($visualUrl !== '') {
-            return [
-                'type' => 'image',
-                'url' => $visualUrl,
-            ];
-        }
-
-        $product = $this->resolveProducts($input)
-            ->first(fn (Product $product): bool => $this->publicHttpsUrl((string) $product->image_url) !== '');
-
-        if (! $product) {
-            return null;
-        }
-
-        $url = $this->publicHttpsUrl((string) $product->image_url);
-
-        return [
-            'type' => 'image',
-            'url' => $url,
-        ];
-    }
-
-    protected function motionPromptForStyle(array $input): string
-    {
-        return match ($this->adStyle($input)) {
-            'avatar_beside_product' => 'Present the product confidently and gesture toward the product visual beside you.',
-            'product_card_overlay' => 'Speak like a short social commerce ad and gesture naturally as product details appear.',
-            'full_product_background' => 'Stand in front of the product visual and explain the benefits with confident hand gestures.',
-            'template_ad_scene' => 'Deliver an energetic product advertisement and gesture naturally toward the product scene.',
-            default => '',
-        };
-    }
-
-    protected function adStyle(array $input): string
-    {
-        return (string) ($input['ad_style'] ?? 'avatar_beside_product');
-    }
-
-    protected function publicHttpsUrl(string $url): string
-    {
-        $url = trim($url);
-
-        if (! str_starts_with($url, 'https://')) {
-            return '';
-        }
-
-        return filter_var($url, FILTER_VALIDATE_URL) !== false ? $url : '';
-    }
-
-    protected function uploadVisualAsset(string $apiKey, string $filePath): string
-    {
-        $filePath = trim($filePath);
-
-        if (! $this->isReadableLocalVisualPath($filePath)) {
-            return '';
-        }
-
-        try {
-            $response = Http::timeout(60)
-                ->withHeaders([
-                    'x-api-key' => $apiKey,
-                    'Idempotency-Key' => 'ai-visual-'.substr(hash('sha256', $filePath.'|'.(string) filemtime($filePath)), 0, 32),
-                ])
-                ->attach('file', file_get_contents($filePath), basename($filePath))
-                ->post('https://api.heygen.com/v3/assets');
-
-            if (! $response->successful()) {
-                Log::warning('HeyGen visual asset upload failed', [
-                    'status' => $response->status(),
-                    'body' => Str::limit($response->body(), 800),
-                ]);
-
-                return '';
-            }
-
-            $assetId = (string) data_get($response->json(), 'data.asset_id', '');
-
-            Log::info('HeyGen visual asset uploaded', [
-                'asset_id' => $assetId,
-                'url' => data_get($response->json(), 'data.url'),
-                'mime_type' => data_get($response->json(), 'data.mime_type'),
-            ]);
-
-            return $assetId;
-        } catch (\Throwable $exception) {
-            Log::warning('HeyGen visual asset upload threw exception', [
-                'message' => $exception->getMessage(),
-            ]);
-
-            return '';
-        }
-    }
-
-    protected function isReadableLocalVisualPath(string $filePath): bool
-    {
-        if ($filePath === '' || ! is_file($filePath) || ! is_readable($filePath)) {
-            return false;
-        }
-
-        $realPath = realpath($filePath);
-        $storagePath = realpath(storage_path());
-
-        return $realPath !== false
-            && $storagePath !== false
-            && Str::startsWith($realPath, $storagePath);
-    }
-
-    /**
-     * @param  array<string, mixed>  $input
-     * @return Collection<int, Product>
-     */
-    protected function resolveProducts(array $input): Collection
-    {
-        $teamId = (int) ($input['team_id'] ?? 0);
-        $productIds = collect($input['product_ids'] ?? [])->filter()->values();
-
-        if ($teamId < 1 || $productIds->isEmpty()) {
-            return collect();
-        }
-
-        return Product::query()
-            ->where('team_id', $teamId)
-            ->whereIn('id', $productIds)
-            ->get();
     }
 
     /**

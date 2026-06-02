@@ -204,7 +204,7 @@ onMounted(loadProducts);
 <template>
     <Head title="Products" />
 
-    <div class="page-root flex h-full flex-1 flex-col gap-6 p-4 md:p-6">
+    <div class="page-root flex min-h-screen flex-1 flex-col gap-6 p-4 md:p-6">
 
         <!-- Header -->
         <div class="flex flex-wrap items-center justify-between gap-3">

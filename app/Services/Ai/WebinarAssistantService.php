@@ -2,17 +2,39 @@
 
 namespace App\Services\Ai;
 
+use App\Models\Video;
 use App\Models\LiveShow;
 use Illuminate\Support\Facades\Http;
 
 class WebinarAssistantService
 {
+    public function __construct(
+        protected KnowledgeEmbeddingPipelineService $embeddingPipeline,
+        protected KnowledgeSourceService $knowledgeSourceService,
+    ) {}
+
     public function buildReply(LiveShow $liveShow, string $question): string
     {
-        $settings = is_array($liveShow->settings) ? $liveShow->settings : [];
-        $knowledge = $this->extractKnowledgeFromSettings($settings);
+        $knowledge = $this->embeddingPipeline->contextForLiveShow($liveShow, $question);
 
-        return $this->buildReplyFromKnowledge($question, $knowledge, (string) $liveShow->title);
+        return $this->buildReplyFromKnowledge(
+            question: $question,
+            knowledge: $knowledge,
+            contextTitle: (string) $liveShow->title,
+            assistantContext: 'webinar',
+        );
+    }
+
+    public function buildReplyForVideo(Video $video, string $question): string
+    {
+        $knowledge = $this->embeddingPipeline->contextForVideo($video, $question);
+
+        return $this->buildReplyFromKnowledge(
+            question: $question,
+            knowledge: $knowledge,
+            contextTitle: (string) $video->title,
+            assistantContext: 'live session',
+        );
     }
 
     /**
@@ -20,20 +42,17 @@ class WebinarAssistantService
      */
     public function extractKnowledgeFromSettings(array $settings): string
     {
-        $sources = (array) data_get($settings, 'knowledge_sources', []);
-        $knowledge = collect($sources)
-            ->filter(fn (mixed $s): bool => is_array($s) && ! empty($s['content']))
-            ->map(fn (array $s): string => sprintf("## %s\n%s", $s['title'] ?? 'Source', trim((string) $s['content'])))
-            ->implode("\n\n---\n\n");
-
-        if ($knowledge === '') {
-            $knowledge = trim((string) data_get($settings, 'knowledge_base_text', ''));
-        }
-
-        return $knowledge;
+        return $this->knowledgeSourceService->toKnowledgeText(
+            $this->knowledgeSourceService->normalizeSources($settings),
+        );
     }
 
-    public function buildReplyFromKnowledge(string $question, string $knowledge, string $contextTitle): string
+    public function buildReplyFromKnowledge(
+        string $question,
+        string $knowledge,
+        string $contextTitle,
+        string $assistantContext = 'live session',
+    ): string
     {
         if ($knowledge === '') {
             return 'Thanks for your question. A host will respond shortly.';
@@ -41,20 +60,35 @@ class WebinarAssistantService
 
         $openAiKey = trim((string) config('services.openai.api_key'));
         if ($openAiKey !== '') {
-            $reply = $this->replyWithOpenAi($openAiKey, $question, $knowledge, $contextTitle);
+            $reply = $this->replyWithOpenAi(
+                $openAiKey,
+                $question,
+                $knowledge,
+                $contextTitle,
+                $assistantContext,
+            );
             if ($reply !== null) {
-                return $reply;
+                return $this->sanitizeAssistantReply($reply, $assistantContext);
             }
         }
 
-        return $this->replyFromKnowledgeBase($question, $knowledge);
+        return $this->sanitizeAssistantReply(
+            $this->replyFromKnowledgeBase($question, $knowledge),
+            $assistantContext,
+        );
     }
 
-    protected function replyWithOpenAi(string $apiKey, string $question, string $knowledge, string $webinarTitle): ?string
+    protected function replyWithOpenAi(
+        string $apiKey,
+        string $question,
+        string $knowledge,
+        string $contextTitle,
+        string $assistantContext,
+    ): ?string
     {
         $prompt = trim(<<<PROMPT
-You are assisting webinar attendees.
-Webinar: {$webinarTitle}
+You are assisting attendees in a {$assistantContext}.
+Context title: {$contextTitle}
 
 Knowledge base:
 {$knowledge}
@@ -62,7 +96,9 @@ Knowledge base:
 Attendee question:
 {$question}
 
-Reply in plain text with short, helpful guidance. If unknown, say the host will follow up.
+Reply in plain text with short, helpful guidance.
+Do not call this a webinar unless the context is actually webinar.
+If unknown, say the host will follow up.
 PROMPT);
 
         try {
@@ -71,7 +107,7 @@ PROMPT);
                 ->post(rtrim((string) config('services.openai.base_url'), '/').'/chat/completions', [
                     'model' => config('services.openai.model', 'gpt-4o-mini'),
                     'messages' => [
-                        ['role' => 'system', 'content' => 'You are a concise webinar assistant.'],
+                        ['role' => 'system', 'content' => 'You are a concise live chat assistant.'],
                         ['role' => 'user', 'content' => $prompt],
                     ],
                 ]);
@@ -128,5 +164,17 @@ PROMPT);
         }
 
         return 'Thanks for your question. I could not find that in the knowledge base yet, but the host can answer it live.';
+    }
+
+    protected function sanitizeAssistantReply(string $reply, string $assistantContext): string
+    {
+        if ($assistantContext === 'webinar') {
+            return $reply;
+        }
+
+        $sanitized = preg_replace('/\bwebinars\b/i', 'live sessions', $reply) ?? $reply;
+        $sanitized = preg_replace('/\bwebinar\b/i', 'live session', $sanitized) ?? $sanitized;
+
+        return $sanitized;
     }
 }

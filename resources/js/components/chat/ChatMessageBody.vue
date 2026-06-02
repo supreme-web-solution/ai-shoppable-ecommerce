@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { parseMessageParts } from '@/lib/linkifyMessage';
+import LinkPreviewCard from '@/components/chat/LinkPreviewCard.vue';
+import { extractLinkHrefs, parseMessageParts } from '@/lib/linkifyMessage';
 
 const props = withDefaults(
     defineProps<{
         text: string;
         variant?: 'default' | 'on-primary' | 'embed';
+        showLinkPreviews?: boolean;
     }>(),
     {
         variant: 'default',
+        showLinkPreviews: true,
     },
 );
 
 const parts = computed(() => parseMessageParts(props.text));
+const previewUrls = computed(() =>
+    props.showLinkPreviews ? extractLinkHrefs(props.text).slice(0, 2) : [],
+);
 </script>
 
 <template>
@@ -28,11 +34,18 @@ const parts = computed(() => parseMessageParts(props.text));
             >{{ part.text }}</a>
             <span v-else>{{ part.text }}</span>
         </template>
+        <LinkPreviewCard
+            v-for="url in previewUrls"
+            :key="url"
+            :url="url"
+            :variant="variant"
+        />
     </span>
 </template>
 
 <style scoped>
 .chat-message-body {
+    display: block;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;

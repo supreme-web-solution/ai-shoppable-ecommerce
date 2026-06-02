@@ -21,14 +21,25 @@ class PlaylistController extends Controller
     public function index(Request $request)
     {
         $teamId = $this->resolveTeamId($request);
+        $perPage = min($request->integer('per_page', 12), 100);
+        $search = trim((string) $request->string('search', ''));
 
-        $playlists = Playlist::query()
+        $query = Playlist::query()
             ->where('team_id', $teamId)
             ->with('videos')
-            ->latest()
-            ->paginate(15);
+            ->latest();
 
-        return PlaylistResource::collection($playlists);
+        if ($search !== '') {
+            $like = '%'.$search.'%';
+            $query->where(function ($builder) use ($like): void {
+                $builder
+                    ->where('title', 'like', $like)
+                    ->orWhere('slug', 'like', $like)
+                    ->orWhere('description', 'like', $like);
+            });
+        }
+
+        return PlaylistResource::collection($query->paginate($perPage));
     }
 
     public function store(StorePlaylistRequest $request)
@@ -74,6 +85,8 @@ class PlaylistController extends Controller
             'is_active' => ['sometimes', 'boolean'],
             'is_public' => ['sometimes', 'boolean'],
             'settings' => ['sometimes', 'array'],
+            'settings.auto_advance_enabled' => ['sometimes', 'boolean'],
+            'settings.loops_per_video' => ['sometimes', 'integer', 'min:1', 'max:20'],
             'video_ids' => ['sometimes', 'array'],
             'video_ids.*' => ['integer', 'exists:videos,id'],
         ]);

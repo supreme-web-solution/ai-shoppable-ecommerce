@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\StoreLiveShowRequest;
 use App\Http\Resources\Api\V1\LiveShowResource;
+use App\Jobs\RefreshKnowledgeEmbeddingsJob;
 use App\Models\LiveShow;
 use App\Models\LiveShowMessage;
 use App\Models\LiveShowRegistration;
@@ -47,6 +48,7 @@ class LiveShowController extends Controller
         $validated = $request->validated();
         $validated['settings'] = $this->normalizeSettings($validated['settings'] ?? []);
         $liveShow = LiveShow::query()->create($validated);
+        RefreshKnowledgeEmbeddingsJob::dispatch('live_show', (int) $liveShow->id);
 
         if ($request->filled('featured_product_ids')) {
             $syncData = collect($request->input('featured_product_ids'))
@@ -88,6 +90,9 @@ class LiveShowController extends Controller
             'settings.chat_enabled' => ['sometimes', 'boolean'],
             'settings.ai_assistant_enabled' => ['sometimes', 'boolean'],
             'settings.knowledge_base_text' => ['sometimes', 'nullable', 'string'],
+            'settings.knowledge_sources' => ['sometimes', 'array', 'max:3'],
+            'settings.knowledge_sources.*.title' => ['required_with:settings.knowledge_sources', 'string', 'max:255'],
+            'settings.knowledge_sources.*.content' => ['required_with:settings.knowledge_sources', 'string'],
             'featured_product_ids' => ['sometimes', 'array'],
             'featured_product_ids.*' => ['integer', 'exists:products,id'],
         ]);
@@ -100,6 +105,9 @@ class LiveShowController extends Controller
         }
 
         $liveShow->update($payload);
+        if (array_key_exists('settings', $payload)) {
+            RefreshKnowledgeEmbeddingsJob::dispatch('live_show', (int) $liveShow->id);
+        }
 
         if (array_key_exists('featured_product_ids', $validated)) {
             $syncData = collect($validated['featured_product_ids'])

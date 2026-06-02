@@ -20,6 +20,7 @@ return [
         'realtime' => env('QUEUE_REALTIME', 'realtime'),
         'media' => env('QUEUE_MEDIA', 'media'),
         'ai' => env('QUEUE_AI', 'ai'),
+        'embeddings' => env('QUEUE_EMBEDDINGS', 'embeddings'),
         'webhooks' => env('QUEUE_WEBHOOKS', 'webhooks'),
         'integration' => env('QUEUE_INTEGRATION', 'integration'),
         'analytics' => env('QUEUE_ANALYTICS', 'analytics'),

@@ -9,8 +9,11 @@ import {
     Clapperboard,
     Eye,
     Film,
+    Globe,
     Heart,
     ImageOff,
+    Link2,
+    Lock,
     Loader2,
     MessageCircle,
     Package,
@@ -20,6 +23,7 @@ import {
     Search,
     Share2,
     ShoppingBag,
+    Info,
     Sparkles,
     Tag,
     Upload,
@@ -27,7 +31,7 @@ import {
     Wand2,
     XCircle,
 } from 'lucide-vue-next';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -41,7 +45,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAdminApi } from '@/composables/useAdminApi';
-
 defineOptions({
     layout: {
         breadcrumbs: [
@@ -74,8 +77,6 @@ type AiGenerationItem = {
     video_id?: number | null;
 };
 
-type AdStyle = 'avatar_only' | 'avatar_beside_product' | 'product_card_overlay' | 'full_product_background' | 'template_ad_scene';
-
 type HeyGenAvatarOption = {
     id: string;
     name: string;
@@ -105,6 +106,8 @@ type HeyGenOptions = {
     message?: string | null;
 };
 
+type ProductPlacementPosition = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
+
 const { teamId, apiFetch, getList, postJson, uploadFile, ensureTeam } = useAdminApi();
 
 /* ── top-level tabs ── */
@@ -120,34 +123,6 @@ const AI_STEPS = [
     { n: 4, label: 'Review', icon: Sparkles },
 ];
 
-const adStyleOptions: Array<{ value: AdStyle; title: string; description: string }> = [
-    {
-        value: 'avatar_only',
-        title: 'Avatar only',
-        description: 'Classic presenter video with no product visual background.',
-    },
-    {
-        value: 'avatar_beside_product',
-        title: 'Avatar beside product',
-        description: 'Use a product visual while the avatar presents beside it.',
-    },
-    {
-        value: 'product_card_overlay',
-        title: 'Product card overlay',
-        description: 'Best for shop-style ads with a visual product card feel.',
-    },
-    {
-        value: 'full_product_background',
-        title: 'Full product background',
-        description: 'Use the image as the full scene behind the avatar.',
-    },
-    {
-        value: 'template_ad_scene',
-        title: 'Template ad scene',
-        description: 'Prepared for future HeyGen template scenes.',
-    },
-];
-
 function goStep(n: number) {
     aiStep.value = Math.max(1, Math.min(4, n));
 }
@@ -155,6 +130,8 @@ function goStep(n: number) {
 /* ── global error / notice ── */
 const errorText = ref('');
 const scriptGenerationNotice = ref('');
+const scriptEntryMode = ref<'ai' | 'manual'>('ai');
+const manualScriptPanelOpen = ref(false);
 
 /* ── upload form state ── */
 const uploading = ref(false);
@@ -163,22 +140,75 @@ const heygenOptions = ref<HeyGenOptions>({ enabled: false, avatars: [], voices: 
 const heygenLoading = ref(false);
 const heygenError = ref('');
 const aiGenerating = ref(false);
+const productPlacementUploading = ref(false);
 
 /* ── video file + preview ── */
 const selectedFile = ref<File | null>(null);
 const previewVideoUrl = ref<string | null>(null);
 const thumbnailPreviewUrl = ref<string | null>(null);
-const adVisualPreviewUrl = ref<string | null>(null);
-const adVisualUploading = ref(false);
-
 /* ── product modal ── */
 const productModalOpen = ref(false);
 const productSearch = ref('');
+const aiProductSearch = ref('');
+const PRODUCTS_PER_PAGE = 5;
+const aiProductPage = ref(1);
+const modalProductPage = ref(1);
 
-const filteredProducts = computed(() => {
-    const q = productSearch.value.trim().toLowerCase();
-    if (!q) return products.value;
-    return products.value.filter((p) => p.title.toLowerCase().includes(q));
+function filterProductsByQuery(list: ProductOption[], query: string): ProductOption[] {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+        return list;
+    }
+
+    return list.filter(
+        (p) =>
+            p.title.toLowerCase().includes(q)
+            || (p.description?.toLowerCase().includes(q) ?? false),
+    );
+}
+
+const filteredProducts = computed(() => filterProductsByQuery(products.value, productSearch.value));
+
+const filteredAiProducts = computed(() => filterProductsByQuery(products.value, aiProductSearch.value));
+
+const aiProductTotalPages = computed(() =>
+    Math.max(1, Math.ceil(filteredAiProducts.value.length / PRODUCTS_PER_PAGE)),
+);
+
+const modalProductTotalPages = computed(() =>
+    Math.max(1, Math.ceil(filteredProducts.value.length / PRODUCTS_PER_PAGE)),
+);
+
+const paginatedAiProducts = computed(() => {
+    const start = (aiProductPage.value - 1) * PRODUCTS_PER_PAGE;
+
+    return filteredAiProducts.value.slice(start, start + PRODUCTS_PER_PAGE);
+});
+
+const paginatedModalProducts = computed(() => {
+    const start = (modalProductPage.value - 1) * PRODUCTS_PER_PAGE;
+
+    return filteredProducts.value.slice(start, start + PRODUCTS_PER_PAGE);
+});
+
+watch(aiProductSearch, () => {
+    aiProductPage.value = 1;
+});
+
+watch(productSearch, () => {
+    modalProductPage.value = 1;
+});
+
+watch(aiProductTotalPages, (total) => {
+    if (aiProductPage.value > total) {
+        aiProductPage.value = total;
+    }
+});
+
+watch(modalProductTotalPages, (total) => {
+    if (modalProductPage.value > total) {
+        modalProductPage.value = total;
+    }
 });
 
 /* ── upload form ── */
@@ -192,6 +222,12 @@ const uploadForm = ref({
 
 /* ── viewer simulation ── */
 const viewerSim = ref({ enabled: false, min: 50, max: 500 });
+
+const visibilityOptions = [
+    { value: 'public', label: 'Public', icon: Globe },
+    { value: 'unlisted', label: 'Unlisted', icon: Link2 },
+    { value: 'private', label: 'Private', icon: Lock },
+] as const;
 
 /* ── AI script form ── */
 const scriptForm = ref({
@@ -210,11 +246,55 @@ const avatarForm = ref({
     language: 'en',
     avatar_id: '',
     voice_id: '',
-    ad_style: 'avatar_only' as AdStyle,
-    visual_url: '',
-    visual_file_path: '',
     product_ids: [] as number[],
 });
+
+const enableEmbedOverlays = ref(true);
+const productPlacement = ref({
+    enabled: false,
+    image_url: '',
+    position: 'bottom_right' as ProductPlacementPosition,
+    scale: 0.3,
+    opacity: 1,
+    offset_x: 0,
+    offset_y: 0,
+    motion_prompt: '',
+});
+const productPlacementPreviewUrl = ref<string | null>(null);
+
+const SUPPORTED_LANGUAGES = [
+    { code: 'en', label: 'English' },
+    { code: 'es', label: 'Spanish' },
+    { code: 'fr', label: 'French' },
+    { code: 'de', label: 'German' },
+    { code: 'pt', label: 'Portuguese' },
+    { code: 'it', label: 'Italian' },
+    { code: 'ar', label: 'Arabic' },
+    { code: 'hi', label: 'Hindi' },
+    { code: 'zh', label: 'Chinese' },
+    { code: 'ja', label: 'Japanese' },
+] as const;
+
+const multilingualMode = ref(false);
+const selectedLanguages = ref<string[]>(['en']);
+
+function toggleTargetLanguage(code: string) {
+    if (selectedLanguages.value.includes(code)) {
+        if (selectedLanguages.value.length > 1) {
+            selectedLanguages.value = selectedLanguages.value.filter(
+                (lang) => lang !== code,
+            );
+        }
+
+        return;
+    }
+
+    if (selectedLanguages.value.length >= 8) {
+        return;
+    }
+
+    selectedLanguages.value = [...selectedLanguages.value, code];
+}
 
 /* ── voice audio preview ── */
 const playingVoiceId = ref('');
@@ -368,20 +448,14 @@ function onThumbnailFileSelected(event: Event) {
     thumbnailPreviewUrl.value = URL.createObjectURL(file);
 }
 
-async function onAdVisualFileSelected(event: Event) {
+async function onProductPlacementImageSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
-
     if (!file) {
         return;
     }
 
-    if (adVisualPreviewUrl.value?.startsWith('blob:')) {
-        URL.revokeObjectURL(adVisualPreviewUrl.value);
-    }
-
-    adVisualPreviewUrl.value = URL.createObjectURL(file);
-    adVisualUploading.value = true;
+    productPlacementUploading.value = true;
     errorText.value = '';
 
     try {
@@ -391,41 +465,47 @@ async function onAdVisualFileSelected(event: Event) {
         formData.append('team_id', String(teamId.value));
         formData.append('file', file);
 
-        const payload = await apiFetch<{ visual_url: string; visual_file_path: string }>('/api/v1/admin/ai/visuals', {
-            method: 'POST',
-            body: formData,
-        });
+        const upload = await apiFetch<{ url?: string; path?: string }>(
+            '/api/v1/admin/ai/product-placement-image',
+            {
+                method: 'POST',
+                body: formData,
+            },
+        );
 
-        avatarForm.value.visual_url = payload.visual_url;
-        avatarForm.value.visual_file_path = payload.visual_file_path;
-
-        if (avatarForm.value.ad_style === 'avatar_only') {
-            avatarForm.value.ad_style = 'avatar_beside_product';
+        const uploadedUrl = String(upload.url ?? '');
+        if (uploadedUrl === '') {
+            throw new Error('Upload succeeded but no image URL was returned.');
         }
+
+        if (productPlacementPreviewUrl.value?.startsWith('blob:')) {
+            URL.revokeObjectURL(productPlacementPreviewUrl.value);
+        }
+
+        productPlacementPreviewUrl.value = URL.createObjectURL(file);
+        productPlacement.value.image_url = uploadedUrl;
+        productPlacement.value.enabled = true;
     } catch (err) {
-        errorText.value = err instanceof Error ? err.message : 'Product visual upload failed.';
-        avatarForm.value.visual_url = '';
-        avatarForm.value.visual_file_path = '';
+        errorText.value = err instanceof Error ? err.message : 'Could not upload product image.';
     } finally {
-        adVisualUploading.value = false;
+        productPlacementUploading.value = false;
         input.value = '';
     }
 }
 
-function clearAdVisual() {
-    if (adVisualPreviewUrl.value?.startsWith('blob:')) {
-        URL.revokeObjectURL(adVisualPreviewUrl.value);
+function clearProductPlacementImage() {
+    if (productPlacementPreviewUrl.value?.startsWith('blob:')) {
+        URL.revokeObjectURL(productPlacementPreviewUrl.value);
     }
 
-    adVisualPreviewUrl.value = null;
-    avatarForm.value.visual_url = '';
-    avatarForm.value.visual_file_path = '';
+    productPlacementPreviewUrl.value = null;
+    productPlacement.value.image_url = '';
 }
 
 onUnmounted(() => {
     if (previewVideoUrl.value) URL.revokeObjectURL(previewVideoUrl.value);
     if (thumbnailPreviewUrl.value?.startsWith('blob:')) URL.revokeObjectURL(thumbnailPreviewUrl.value);
-    if (adVisualPreviewUrl.value?.startsWith('blob:')) URL.revokeObjectURL(adVisualPreviewUrl.value);
+    if (productPlacementPreviewUrl.value?.startsWith('blob:')) URL.revokeObjectURL(productPlacementPreviewUrl.value);
     audioInstance?.pause();
 });
 
@@ -498,7 +578,35 @@ async function submitUpload() {
     }
 }
 
+const scriptTargetWords = computed(() => Math.max(30, Math.round(scriptForm.value.duration_seconds * 2.4)));
+
+const scriptWordCount = computed(() => {
+    const text = avatarForm.value.script.trim();
+    if (!text) return 0;
+    return text.split(/\s+/).filter(Boolean).length;
+});
+
+const scriptEstimatedSeconds = computed(() =>
+    scriptWordCount.value > 0 ? Math.round(scriptWordCount.value / 2.4) : 0,
+);
+
+const showScriptEditor = computed(
+    () =>
+        manualScriptPanelOpen.value
+        || (scriptEntryMode.value === 'ai' && avatarForm.value.script.trim().length > 0),
+);
+
+const canGenerateAvatar = computed(() =>
+    Boolean(avatarForm.value.title && avatarForm.value.script)
+    && (
+        !productPlacement.value.enabled
+        || productPlacement.value.image_url.trim() !== ''
+    ),
+);
+
 async function generateScript() {
+    scriptEntryMode.value = 'ai';
+    manualScriptPanelOpen.value = false;
     aiGenerating.value = true;
     errorText.value = '';
     scriptGenerationNotice.value = '';
@@ -512,9 +620,9 @@ async function generateScript() {
         if (gen.output?.full_script) avatarForm.value.script = gen.output.full_script;
         if (!avatarForm.value.title) avatarForm.value.title = `AI Video — ${scriptForm.value.topic}`;
         if (gen.provider && gen.provider !== 'openai') {
-            scriptGenerationNotice.value = 'No OpenAI key found — used fallback template. Set OPENAI_API_KEY for real AI scripts.';
+            scriptGenerationNotice.value = `Template script (~${scriptTargetWords.value} words for ${scriptForm.value.duration_seconds}s). Set OPENAI_API_KEY for AI-written scripts.`;
         } else {
-            scriptGenerationNotice.value = '✓ Script generated.';
+            scriptGenerationNotice.value = `✓ Script generated for ~${scriptForm.value.duration_seconds}s (${scriptTargetWords.value} words target).`;
         }
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Script generation failed.';
@@ -523,15 +631,10 @@ async function generateScript() {
     }
 }
 
-function skipScript() {
-    const product = avatarSelectedProducts.value[0];
-    const name = product?.title ?? 'this product';
-    const price = product ? formatPrice(product.currency, product.sale_price || product.price) : '$29.99';
-    avatarForm.value.script = `Hey, stop scrolling — you need to see ${name}.\n\nThis is the product everyone's talking about, and right now you can grab it for just ${price}.\n\nTap the card below and shop now before it sells out.`;
-    if (!avatarForm.value.title) {
-        avatarForm.value.title = `${name} — AI Ad`;
-    }
-    scriptGenerationNotice.value = '⚠ TEST MODE — dummy script inserted, no OpenAI call made.';
+function useManualScript() {
+    scriptEntryMode.value = 'manual';
+    manualScriptPanelOpen.value = true;
+    scriptGenerationNotice.value = `Write or paste your own script below. Aim for ~${scriptTargetWords.value} words (~${scriptForm.value.duration_seconds}s when read aloud).`;
 }
 
 async function generateAvatarVideo() {
@@ -539,14 +642,68 @@ async function generateAvatarVideo() {
     errorText.value = '';
     try {
         await ensureTeam();
-        const payload = await postJson<unknown>('/api/v1/admin/ai/avatar-videos', { ...avatarForm.value });
 
-        const responseVideo =
-            payload && typeof payload === 'object' && 'video' in payload
-                ? unwrapVideo((payload as { video?: unknown }).video)
-                : null;
+        const useMultilingual =
+            multilingualMode.value && selectedLanguages.value.length > 1;
 
-        if (responseVideo?.id) await attachProducts(responseVideo.id, avatarForm.value.product_ids);
+        if (useMultilingual) {
+            const payload = await postJson<{
+                videos?: Array<{ video?: unknown; language?: string }>;
+            }>('/api/v1/admin/ai/multilingual-videos', {
+                ...avatarForm.value,
+                enable_embed_overlays: enableEmbedOverlays.value,
+                product_placement_enabled: productPlacement.value.enabled,
+                product_placement_image_url: productPlacement.value.image_url || null,
+                product_placement_position: productPlacement.value.position,
+                product_placement_scale: productPlacement.value.scale,
+                product_placement_opacity: productPlacement.value.opacity,
+                product_placement_offset_x: productPlacement.value.offset_x,
+                product_placement_offset_y: productPlacement.value.offset_y,
+                product_placement_motion_prompt: productPlacement.value.motion_prompt || null,
+                languages: selectedLanguages.value,
+            });
+
+            for (const item of payload.videos ?? []) {
+                const video = unwrapVideo(item.video);
+                if (video?.id) {
+                    await attachProducts(video.id, avatarForm.value.product_ids);
+                }
+            }
+        } else {
+            const language = multilingualMode.value
+                ? selectedLanguages.value[0] ?? 'en'
+                : avatarForm.value.language;
+
+            const payload = await postJson<unknown>(
+                '/api/v1/admin/ai/avatar-videos',
+                {
+                    ...avatarForm.value,
+                    enable_embed_overlays: enableEmbedOverlays.value,
+                    product_placement_enabled: productPlacement.value.enabled,
+                    product_placement_image_url: productPlacement.value.image_url || null,
+                    product_placement_position: productPlacement.value.position,
+                    product_placement_scale: productPlacement.value.scale,
+                    product_placement_opacity: productPlacement.value.opacity,
+                    product_placement_offset_x: productPlacement.value.offset_x,
+                    product_placement_offset_y: productPlacement.value.offset_y,
+                    product_placement_motion_prompt: productPlacement.value.motion_prompt || null,
+                    language,
+                },
+            );
+
+            const responseVideo =
+                payload && typeof payload === 'object' && 'video' in payload
+                    ? unwrapVideo((payload as { video?: unknown }).video)
+                    : null;
+
+            if (responseVideo?.id) {
+                await attachProducts(
+                    responseVideo.id,
+                    avatarForm.value.product_ids,
+                );
+            }
+        }
+
         router.visit('/content');
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Avatar video generation failed.';
@@ -603,7 +760,8 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
 <template>
     <Head title="Create Shoppable Video" />
 
-    <div class="create-root flex h-full flex-1 flex-col gap-6 p-4 md:p-6">
+    <div class="create-root flex min-h-screen flex-1 flex-col gap-6 p-4 md:p-6">
+    <!-- <div class="create-root flex h-full flex-1 flex-col gap-6 p-4 md:p-6"> -->
 
         <!-- Header -->
         <div class="flex flex-wrap items-center gap-3">
@@ -745,21 +903,20 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     <Label>Visibility</Label>
                                     <div class="flex gap-2">
                                         <button
-                                            v-for="vis in [
-                                                { value: 'public', label: '🌍 Public' },
-                                                { value: 'unlisted', label: '🔗 Unlisted' },
-                                                { value: 'private', label: '🔒 Private' },
-                                            ]"
+                                            v-for="vis in visibilityOptions"
                                             :key="vis.value"
                                             type="button"
                                             :class="[
-                                                'flex-1 rounded-xl border py-2 text-sm font-medium transition-all',
-                                        uploadForm.visibility === vis.value
-                                            ? 'border-[#E8563A] bg-[#E8563A]/10 text-[#E8563A] font-semibold'
-                                            : 'border-border text-muted-foreground hover:border-[#E8563A]/40',
+                                                'flex flex-1 items-center justify-center gap-1.5 rounded-xl border py-2 text-sm font-medium transition-all',
+                                                uploadForm.visibility === vis.value
+                                                    ? 'border-[#E8563A] bg-[#E8563A]/10 text-[#E8563A] font-semibold'
+                                                    : 'border-border text-muted-foreground hover:border-[#E8563A]/40',
                                             ]"
                                             @click="uploadForm.visibility = vis.value"
-                                        >{{ vis.label }}</button>
+                                        >
+                                            <component :is="vis.icon" class="size-3.5 shrink-0" />
+                                            {{ vis.label }}
+                                        </button>
                                     </div>
                                 </div>
                             </CardContent>
@@ -831,20 +988,21 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                 </div>
                             </CardHeader>
                             <CardContent v-if="uploadSelectedProducts.length" class="pt-0">
-                                <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                                <div class="max-h-48 space-y-2 overflow-y-auto">
                                     <div
                                         v-for="p in uploadSelectedProducts"
                                         :key="p.id"
-                                        class="flex items-center gap-2 rounded-xl border bg-muted/40 p-2"
+                                        class="flex items-center gap-3 rounded-xl border border-[#E8563A]/30 bg-[#E8563A]/5 p-2.5"
                                     >
-                                        <div class="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-background">
+                                        <div class="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-background">
                                             <img v-if="p.image_url" :src="p.image_url" class="h-full w-full object-cover" :alt="p.title">
                                             <ImageOff v-else class="size-4 text-muted-foreground" />
                                         </div>
-                                        <div class="min-w-0">
-                                            <p class="truncate text-xs font-semibold">{{ p.title }}</p>
-                                            <p class="text-[10px] text-muted-foreground">{{ formatPrice(p.currency, p.sale_price || p.price) }}</p>
+                                        <div class="min-w-0 flex-1">
+                                            <p class="truncate text-sm font-semibold">{{ p.title }}</p>
+                                            <p class="text-xs text-[#E8563A]">{{ formatPrice(p.currency, p.sale_price || p.price) }}</p>
                                         </div>
+                                        <Check class="size-4 shrink-0 text-[#E8563A]" />
                                     </div>
                                 </div>
                             </CardContent>
@@ -863,7 +1021,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     </div>
                                     <label class="relative mt-0.5 inline-flex cursor-pointer items-center">
                                         <input v-model="viewerSim.enabled" type="checkbox" class="peer sr-only">
-                                        <div class="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-sky-500 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
+                                        <div class="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-[#E8563A] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
                                     </label>
                                 </div>
                             </CardHeader>
@@ -957,49 +1115,115 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             </Button>
                         </div>
 
-                        <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                            <button
-                                v-for="p in products"
-                                :key="p.id"
-                                type="button"
-                                :class="[
-                                    'group relative overflow-hidden rounded-2xl border-2 bg-background text-left transition-all',
-                                    avatarForm.product_ids.includes(p.id)
-                                        ? 'border-[#E8563A] shadow-md shadow-[#E8563A]/10'
-                                        : 'border-border hover:border-[#E8563A]/40',
-                                ]"
-                                @click="toggleAiProduct(p.id)"
-                            >
-                                <!-- Product image -->
-                                <div class="aspect-square bg-muted">
-                                    <img
-                                        v-if="p.image_url"
-                                        :src="p.image_url"
-                                        :alt="p.title"
-                                        class="h-full w-full object-cover"
-                                    >
-                                    <div v-else class="flex h-full items-center justify-center">
-                                        <ImageOff class="size-8 text-muted-foreground/40" />
-                                    </div>
-                                </div>
-
-                                <!-- Selected overlay -->
-                                <div
-                                    v-if="avatarForm.product_ids.includes(p.id)"
-                                    class="absolute inset-0 bg-[#E8563A]/10"
+                        <template v-else>
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <p class="text-xs text-muted-foreground">
+                                    {{ filteredAiProducts.length }} of {{ products.length }} products
+                                    <span v-if="avatarForm.product_ids.length">
+                                        · {{ avatarForm.product_ids.length }} selected
+                                    </span>
+                                </p>
+                                <p
+                                    v-if="filteredAiProducts.length > PRODUCTS_PER_PAGE"
+                                    class="text-xs font-medium text-muted-foreground"
                                 >
-                                    <div class="absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-[#E8563A] shadow">
-                                        <Check class="size-3.5 text-white" />
-                                    </div>
-                                </div>
+                                    Page {{ aiProductPage }} of {{ aiProductTotalPages }}
+                                </p>
+                            </div>
 
-                                <!-- Info -->
-                                <div class="p-2.5">
-                                    <p class="truncate text-xs font-semibold leading-tight">{{ p.title }}</p>
-                                    <p class="mt-0.5 text-xs font-bold text-[#E8563A]">{{ formatPrice(p.currency, p.sale_price || p.price) }}</p>
+                            <div class="relative">
+                                <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                                <Input
+                                    v-model="aiProductSearch"
+                                    placeholder="Search products by name…"
+                                    class="h-10 pl-9"
+                                />
+                            </div>
+
+                            <div
+                                v-if="filteredAiProducts.length === 0"
+                                class="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground"
+                            >
+                                No products match your search.
+                            </div>
+
+                            <div v-else class="space-y-2">
+                                <button
+                                    v-for="p in paginatedAiProducts"
+                                    :key="p.id"
+                                    type="button"
+                                    :class="[
+                                        'flex w-full items-center gap-3 rounded-2xl border-2 bg-background p-3 text-left transition-all',
+                                        avatarForm.product_ids.includes(p.id)
+                                            ? 'border-[#E8563A] bg-[#E8563A]/5 shadow-sm shadow-[#E8563A]/10'
+                                            : 'border-border hover:border-[#E8563A]/35 hover:bg-muted/30',
+                                    ]"
+                                    @click="toggleAiProduct(p.id)"
+                                >
+                                    <div class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-muted">
+                                        <img
+                                            v-if="p.image_url"
+                                            :src="p.image_url"
+                                            :alt="p.title"
+                                            class="h-full w-full object-cover"
+                                        >
+                                        <ImageOff v-else class="size-5 text-muted-foreground/50" />
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="truncate font-semibold text-foreground">{{ p.title }}</p>
+                                        <p class="mt-0.5 text-sm font-medium text-[#E8563A]">
+                                            {{ formatPrice(p.currency, p.sale_price || p.price) }}
+                                        </p>
+                                        <p
+                                            v-if="p.description"
+                                            class="mt-0.5 line-clamp-1 text-xs text-muted-foreground"
+                                        >
+                                            {{ p.description }}
+                                        </p>
+                                    </div>
+                                    <div
+                                        :class="[
+                                            'flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition-all',
+                                            avatarForm.product_ids.includes(p.id)
+                                                ? 'border-[#E8563A] bg-[#E8563A] text-white'
+                                                : 'border-muted-foreground/30 bg-background',
+                                        ]"
+                                    >
+                                        <Check
+                                            v-if="avatarForm.product_ids.includes(p.id)"
+                                            class="size-4"
+                                        />
+                                    </div>
+                                </button>
+
+                                <div
+                                    v-if="aiProductTotalPages > 1"
+                                    class="flex items-center justify-between gap-2 pt-1"
+                                >
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        :disabled="aiProductPage <= 1"
+                                        @click="aiProductPage--"
+                                    >
+                                        Previous
+                                    </Button>
+                                    <span class="text-xs text-muted-foreground">
+                                        Showing {{ paginatedAiProducts.length }} of {{ filteredAiProducts.length }}
+                                    </span>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        :disabled="aiProductPage >= aiProductTotalPages"
+                                        @click="aiProductPage++"
+                                    >
+                                        Next
+                                    </Button>
                                 </div>
-                            </button>
-                        </div>
+                            </div>
+                        </template>
 
                         <div class="flex justify-end pt-2">
                             <Button @click="goStep(2)">
@@ -1044,7 +1268,12 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
 
                                 <!-- Duration quick-pick -->
                                 <div class="space-y-1.5">
-                                    <Label>Duration</Label>
+                                    <div class="flex flex-wrap items-center justify-between gap-2">
+                                        <Label>Duration</Label>
+                                        <span class="text-xs text-muted-foreground">
+                                            Target ~{{ scriptTargetWords }} words at natural pace
+                                        </span>
+                                    </div>
                                     <div class="flex flex-wrap gap-2">
                                         <button
                                             v-for="sec in [15, 30, 45, 60]"
@@ -1061,7 +1290,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     </div>
                                 </div>
 
-                                <!-- Generate + Skip row -->
+                                <!-- Generate + manual row -->
                                 <div class="flex gap-2">
                                     <Button class="flex-1" :disabled="aiGenerating" @click="generateScript">
                                         <Loader2 v-if="aiGenerating" class="mr-2 size-4 animate-spin" />
@@ -1070,12 +1299,12 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     </Button>
                                     <Button
                                         type="button"
-                                        variant="outline"
+                                        :variant="scriptEntryMode === 'manual' ? 'default' : 'outline'"
                                         :disabled="aiGenerating"
-                                        class="shrink-0 gap-1.5 border-dashed text-muted-foreground hover:text-foreground"
-                                        @click="skipScript"
+                                        class="shrink-0"
+                                        @click="useManualScript"
                                     >
-                                        Skip (test)
+                                        Write manually
                                     </Button>
                                 </div>
 
@@ -1084,22 +1313,42 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     v-if="scriptGenerationNotice"
                                     :class="[
                                         'rounded-lg border px-3 py-2 text-xs',
-                                        scriptGenerationNotice.includes('TEST MODE')
-                                            ? 'border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-400'
-                                            : scriptGenerationNotice.includes('No OpenAI')
-                                                ? 'border-orange-300 bg-orange-50 text-orange-800 dark:bg-orange-950/30 dark:text-orange-400'
+                                        scriptGenerationNotice.includes('OPENAI')
+                                            || scriptGenerationNotice.includes('Template')
+                                            ? 'border-orange-300 bg-orange-50 text-orange-800 dark:bg-orange-950/30 dark:text-orange-400'
+                                            : scriptEntryMode === 'manual'
+                                                ? 'border-blue-300 bg-blue-50 text-blue-900 dark:bg-blue-950/30 dark:text-blue-300'
                                                 : 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400',
                                     ]"
                                 >
                                     {{ scriptGenerationNotice }}
                                 </p>
 
-                                <!-- Script editor -->
-                                <div v-if="avatarForm.script" class="space-y-1.5">
-                                    <Label>Script — edit freely</Label>
+                                <!-- Script editor (AI: after generate; manual: after "Write manually") -->
+                                <div v-if="showScriptEditor" class="space-y-1.5">
+                                    <div class="flex flex-wrap items-center justify-between gap-2">
+                                        <Label>
+                                            {{ scriptEntryMode === 'manual' ? 'Your script' : 'Script — edit freely' }}
+                                        </Label>
+                                        <span
+                                            v-if="scriptWordCount > 0"
+                                            class="text-xs"
+                                            :class="Math.abs(scriptEstimatedSeconds - scriptForm.duration_seconds) <= 8
+                                                ? 'text-muted-foreground'
+                                                : 'font-medium text-amber-700 dark:text-amber-400'"
+                                        >
+                                            {{ scriptWordCount }} words · ~{{ scriptEstimatedSeconds }}s read
+                                            <template v-if="Math.abs(scriptEstimatedSeconds - scriptForm.duration_seconds) > 8">
+                                                (target {{ scriptForm.duration_seconds }}s)
+                                            </template>
+                                        </span>
+                                    </div>
                                     <textarea
                                         v-model="avatarForm.script"
-                                        rows="8"
+                                        :rows="scriptEntryMode === 'manual' ? 12 : 10"
+                                        :placeholder="scriptEntryMode === 'manual'
+                                            ? `Paste or type your script here… Aim for about ${scriptTargetWords} words for a ${scriptForm.duration_seconds}-second video.`
+                                            : 'Generate with AI or switch to Write manually to paste your own script…'"
                                         class="w-full rounded-xl border bg-background px-3 py-2.5 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                     />
                                 </div>
@@ -1111,7 +1360,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                 <ChevronLeft class="mr-1.5 size-4" />
                                 Back
                             </Button>
-                            <Button :disabled="!avatarForm.script" @click="goStep(3)">
+                            <Button :disabled="!avatarForm.script.trim()" @click="goStep(3)">
                                 Continue
                                 <ChevronRight class="ml-1.5 size-4" />
                             </Button>
@@ -1224,7 +1473,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     </select>
                                 </div>
                                 <p class="text-[11px] text-muted-foreground">
-                                    Showing {{ filteredHeyGenAvatars.length }} of {{ heygenOptions.avatars.length }} avatars. Use Refresh to pull the wider HeyGen catalog.
+                                    Showing {{ filteredHeyGenAvatars.length }} of {{ heygenOptions.avatars.length }} avatars. Use Refresh to pull the wider catalog.
                                 </p>
                             </div>
 
@@ -1314,7 +1563,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                         :key="voice.voice_id"
                                         type="button"
                                         :class="[
-                                            'flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                            'flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring bg-background',
                                             avatarForm.voice_id === voice.voice_id
                                                 ? 'border-[#E8563A] bg-[#E8563A]/5 shadow-md shadow-[#E8563A]/10'
                                                 : 'border-border hover:border-[#E8563A]/40',
@@ -1411,76 +1660,136 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             </div>
                         </div>
 
+                        <!-- <div class="flex gap-2 rounded-xl border border-[#E8563A]/20 bg-[#E8563A]/5 px-3 py-2.5 text-xs text-foreground">
+                            <Info class="mt-0.5 size-4 shrink-0 text-[#E8563A]" />
+                            <p>
+                                HeyGen renders your presenter on a clean background. Tagged products appear as
+                                shoppable buy cards in your embed player — not composited into the video.
+                            </p>
+                        </div> -->
+
+                        <Card>
+                            <CardContent class="space-y-3 pt-5">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="space-y-1">
+                                        <Label>Shoppable embed overlays</Label>
+                                        <p class="text-xs text-muted-foreground">
+                                            Product buy cards in the phone preview are always available when you tag products.
+                                            After the video renders, add <strong>timed overlays</strong> (coupons, CTAs, extra tags) on the video edit page.
+                                        </p>
+                                    </div>
+                                    <label class="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
+                                        <input v-model="enableEmbedOverlays" type="checkbox" class="peer sr-only">
+                                        <div class="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-[#E8563A] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
+                                    </label>
+                                </div>
+                                <p v-if="enableEmbedOverlays && avatarSelectedProducts.length" class="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                                    {{ avatarSelectedProducts.length }} product{{ avatarSelectedProducts.length > 1 ? 's' : '' }} will appear as buy cards in the embed.
+                                    Plan timed coupon or CTA overlays in Edit after publish.
+                                </p>
+                            </CardContent>
+                        </Card>
+
                         <Card>
                             <CardContent class="space-y-4 pt-5">
-                                <div class="space-y-1">
-                                    <Label>Product ad style</Label>
-                                    <p class="text-xs text-muted-foreground">
-                                        Choose how HeyGen should use a product visual. Uploaded visuals are sent to HeyGen as reusable assets.
-                                    </p>
-                                </div>
-
-                                <div class="grid gap-2 sm:grid-cols-2">
-                                    <button
-                                        v-for="style in adStyleOptions"
-                                        :key="style.value"
-                                        type="button"
-                                        :class="[
-                                            'rounded-2xl border p-3 text-left transition-all',
-                                            avatarForm.ad_style === style.value
-                                                ? 'border-[#E8563A] bg-[#E8563A]/10 ring-2 ring-[#E8563A]/20'
-                                                : 'border-border bg-background hover:border-[#E8563A]/40',
-                                        ]"
-                                        @click="avatarForm.ad_style = style.value"
-                                    >
-                                        <p class="text-sm font-semibold">{{ style.title }}</p>
-                                        <p class="mt-1 text-xs text-muted-foreground">{{ style.description }}</p>
-                                    </button>
-                                </div>
-
-                                <div v-if="avatarForm.ad_style !== 'avatar_only'" class="grid gap-3 rounded-2xl border bg-muted/20 p-3 sm:grid-cols-[96px_1fr]">
-                                    <div class="flex aspect-square items-center justify-center overflow-hidden rounded-xl border bg-background">
-                                        <img
-                                            v-if="adVisualPreviewUrl || avatarForm.visual_url || avatarSelectedProducts[0]?.image_url"
-                                            :src="adVisualPreviewUrl || avatarForm.visual_url || avatarSelectedProducts[0]?.image_url || ''"
-                                            class="h-full w-full object-cover"
-                                            alt="Product ad visual"
-                                        >
-                                        <ImageOff v-else class="size-6 text-muted-foreground/40" />
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="space-y-1">
+                                        <Label>Product placement</Label>
+                                        <p class="text-xs text-muted-foreground">
+                                            Watermark + motion prompt controls. For true in-hand compositing variations, use HeyGen's Product Placement app.
+                                        </p>
                                     </div>
+                                    <label class="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
+                                        <input v-model="productPlacement.enabled" type="checkbox" class="peer sr-only">
+                                        <div class="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-[#E8563A] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
+                                    </label>
+                                </div>
 
-                                    <div class="space-y-2">
-                                        <div>
-                                            <p class="text-sm font-medium">Ad visual image</p>
-                                            <p class="text-xs text-muted-foreground">
-                                                Optional. If you do not upload one, the first selected product image will be used when it has a public HTTPS URL.
-                                            </p>
+                                <div v-if="productPlacement.enabled" class="space-y-3">
+                                    <div class="grid gap-3 sm:grid-cols-[120px_1fr]">
+                                        <div class="relative h-24 w-24 overflow-hidden rounded-xl border bg-muted">
+                                            <img
+                                                v-if="productPlacementPreviewUrl || productPlacement.image_url"
+                                                :src="productPlacementPreviewUrl || productPlacement.image_url"
+                                                alt="Product placement image"
+                                                class="h-full w-full object-cover"
+                                            >
+                                            <div v-else class="flex h-full items-center justify-center text-[10px] text-muted-foreground">
+                                                No image
+                                            </div>
                                         </div>
-
-                                        <div class="flex flex-wrap gap-2">
-                                            <label class="inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:border-[#E8563A]/40 hover:bg-[#E8563A]/5">
-                                                <Loader2 v-if="adVisualUploading" class="size-4 animate-spin" />
-                                                <Upload v-else class="size-4" />
-                                                {{ adVisualUploading ? 'Uploading…' : 'Upload product visual' }}
+                                        <div class="space-y-2">
+                                            <label class="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed py-2.5 text-xs text-muted-foreground transition-colors hover:border-[#E8563A]/40 hover:bg-[#E8563A]/5 hover:text-[#E8563A]">
+                                                <Upload class="size-3.5" />
+                                                {{ productPlacementUploading ? 'Uploading…' : 'Upload product image' }}
                                                 <input
                                                     type="file"
+                                                    accept="image/png,image/jpeg,image/webp"
                                                     class="hidden"
-                                                    accept="image/png,image/jpeg"
-                                                    :disabled="adVisualUploading"
-                                                    @change="onAdVisualFileSelected"
+                                                    :disabled="productPlacementUploading"
+                                                    @change="onProductPlacementImageSelected"
                                                 >
                                             </label>
-
-                                            <Button
-                                                v-if="avatarForm.visual_url"
-                                                type="button"
-                                                variant="ghost"
-                                                size="sm"
-                                                @click="clearAdVisual"
-                                            >
-                                                Remove visual
-                                            </Button>
+                                            <Input
+                                                v-model="productPlacement.image_url"
+                                                type="url"
+                                                placeholder="Or paste a public product image URL"
+                                                class="h-9 text-xs"
+                                            />
+                                            <div class="flex gap-2">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    :disabled="!productPlacement.image_url && !productPlacementPreviewUrl"
+                                                    @click="clearProductPlacementImage"
+                                                >
+                                                    Clear image
+                                                </Button>
+                                                <span class="text-[11px] text-muted-foreground">
+                                                    PNG/JPG/WebP recommended
+                                                </span>
+                                            </div>
                                         </div>
+                                    </div>
+
+                                    <div class="grid gap-3 sm:grid-cols-2">
+                                        <div class="space-y-1">
+                                            <Label class="text-xs">Placement</Label>
+                                            <select
+                                                v-model="productPlacement.position"
+                                                class="h-9 w-full rounded-lg border bg-background px-2 text-xs"
+                                            >
+                                                <option value="top_left">Top left</option>
+                                                <option value="top_right">Top right</option>
+                                                <option value="bottom_left">Bottom left</option>
+                                                <option value="bottom_right">Bottom right</option>
+                                            </select>
+                                        </div>
+                                        <div class="space-y-1">
+                                            <Label class="text-xs">Scale (0.1 - 2.0)</Label>
+                                            <Input v-model.number="productPlacement.scale" type="number" min="0.1" max="2" step="0.05" class="h-9 text-xs" />
+                                        </div>
+                                        <div class="space-y-1">
+                                            <Label class="text-xs">Opacity (0 - 1)</Label>
+                                            <Input v-model.number="productPlacement.opacity" type="number" min="0" max="1" step="0.05" class="h-9 text-xs" />
+                                        </div>
+                                        <div class="space-y-1">
+                                            <Label class="text-xs">Offset X / Y (-1 to 1)</Label>
+                                            <div class="grid grid-cols-2 gap-2">
+                                                <Input v-model.number="productPlacement.offset_x" type="number" min="-1" max="1" step="0.01" class="h-9 text-xs" placeholder="X" />
+                                                <Input v-model.number="productPlacement.offset_y" type="number" min="-1" max="1" step="0.01" class="h-9 text-xs" placeholder="Y" />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="space-y-1">
+                                        <Label class="text-xs">Motion prompt (optional)</Label>
+                                        <Input
+                                            v-model="productPlacement.motion_prompt"
+                                            placeholder="e.g. Hold the product near chest level and gesture to it naturally."
+                                            class="h-9 text-xs"
+                                        />
                                     </div>
                                 </div>
                             </CardContent>
@@ -1517,20 +1826,90 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             </span>
                         </div>
 
+                        <Card>
+                            <CardContent class="space-y-3 pt-5">
+                                <div class="flex items-center justify-between gap-3">
+                                    <div>
+                                        <p class="text-sm font-semibold">Multilingual versions</p>
+                                        <p class="text-xs text-muted-foreground">
+                                            Translate the script and queue one render per language (auto voice per locale).
+                                        </p>
+                                    </div>
+                                    <label class="relative inline-flex cursor-pointer items-center">
+                                        <input
+                                            v-model="multilingualMode"
+                                            type="checkbox"
+                                            class="peer sr-only"
+                                        >
+                                        <div class="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-[#E8563A] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
+                                    </label>
+                                </div>
+                                <div
+                                    v-if="multilingualMode"
+                                    class="flex flex-wrap gap-2"
+                                >
+                                    <button
+                                        v-for="lang in SUPPORTED_LANGUAGES"
+                                        :key="lang.code"
+                                        type="button"
+                                        :class="[
+                                            'rounded-full border px-3 py-1 text-xs font-semibold transition-colors',
+                                            selectedLanguages.includes(lang.code)
+                                                ? 'border-[#E8563A] bg-[#E8563A]/10 text-[#E8563A]'
+                                                : 'border-border bg-background text-muted-foreground hover:border-[#E8563A]/40',
+                                        ]"
+                                        @click="toggleTargetLanguage(lang.code)"
+                                    >
+                                        {{ lang.label }}
+                                    </button>
+                                </div>
+                                <p
+                                    v-if="multilingualMode && selectedLanguages.length > 1"
+                                    class="text-xs font-medium text-[#E8563A]"
+                                >
+                                    Will create {{ selectedLanguages.length }} localized videos.
+                                </p>
+                                <p
+                                    v-if="multilingualMode && selectedLanguages.length > 1 && avatarForm.voice_id"
+                                    class="text-xs text-muted-foreground"
+                                >
+                                    Your selected voice ({{ selectedHeyGenVoice?.name ?? 'presenter' }}) will be used for every language version.
+                                </p>
+                                <p
+                                    v-else-if="multilingualMode && selectedLanguages.length > 1"
+                                    class="text-xs text-muted-foreground"
+                                >
+                                    Pick a voice on the Presenter step — otherwise each language may auto-select a different HeyGen voice.
+                                </p>
+                            </CardContent>
+                        </Card>
+
                         <!-- Generate button -->
                         <Button
                             class="w-full bg-[#E8563A] text-white shadow-lg shadow-[#E8563A]/30 hover:bg-[#D44A2F]"
                             size="lg"
-                            :disabled="aiGenerating || !avatarForm.title || !avatarForm.script"
+                            :disabled="aiGenerating || !canGenerateAvatar"
                             @click="generateAvatarVideo"
                         >
                             <Loader2 v-if="aiGenerating" class="mr-2 size-5 animate-spin" />
                             <Sparkles v-else class="mr-2 size-5" />
-                            {{ aiGenerating ? 'Queuing your video render…' : 'Generate AI avatar video' }}
+                            {{
+                                aiGenerating
+                                    ? 'Queuing your video render…'
+                                    : multilingualMode && selectedLanguages.length > 1
+                                      ? `Generate ${selectedLanguages.length} language versions`
+                                      : 'Generate AI avatar video'
+                            }}
                         </Button>
 
                         <p class="text-center text-xs text-muted-foreground">
-                            Powered by HeyGen · renders in 1–5 min · you'll see it on the Videos page
+                            Powered by HeyGen · renders in 1–5 min · you'll see them on the Videos page
+                        </p>
+                        <p
+                            v-if="productPlacement.enabled && !productPlacement.image_url.trim()"
+                            class="text-center text-xs text-amber-700"
+                        >
+                            Upload or paste a product image URL to use product placement.
                         </p>
 
                         <div class="flex justify-start pt-1">
@@ -1707,7 +2086,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
 
     <!-- Product selection modal (upload tab) -->
     <Dialog v-model:open="productModalOpen">
-        <DialogContent class="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-[520px]">
+        <DialogContent class="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-[560px]">
             <DialogHeader class="shrink-0 border-b px-6 py-4">
                 <DialogTitle class="flex items-center gap-2">
                     <Package class="size-4 text-orange-500" />
@@ -1728,42 +2107,91 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
             <div class="flex-1 overflow-y-auto px-4 py-3">
                 <div v-if="filteredProducts.length === 0" class="py-8 text-center text-sm text-muted-foreground">
                     No products found.
-                    <Link href="/products" class="mt-1 block text-primary underline">Add products first →</Link>
+                    <Link href="/products" class="mt-1 block text-[#E8563A] underline">Add products first →</Link>
                 </div>
                 <div v-else class="space-y-2">
+                    <p
+                        v-if="filteredProducts.length > PRODUCTS_PER_PAGE"
+                        class="pb-1 text-center text-xs text-muted-foreground"
+                    >
+                        Page {{ modalProductPage }} of {{ modalProductTotalPages }} · {{ PRODUCTS_PER_PAGE }} per page
+                    </p>
                     <button
-                        v-for="product in filteredProducts"
+                        v-for="product in paginatedModalProducts"
                         :key="product.id"
                         type="button"
                         :class="[
-                            'flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors',
-                            activeProductIds.includes(product.id) ? 'border-primary/60 bg-primary/5' : 'hover:bg-muted/50',
+                            'flex w-full items-center gap-3 rounded-2xl border-2 p-3 text-left transition-all',
+                            activeProductIds.includes(product.id)
+                                ? 'border-[#E8563A] bg-[#E8563A]/5 shadow-sm'
+                                : 'border-border hover:border-[#E8563A]/35 hover:bg-muted/30',
                         ]"
                         @click="toggleProductInModal(product.id)"
                     >
-                        <div class="shrink-0">
-                            <img v-if="product.image_url" :src="product.image_url" :alt="product.title" class="h-12 w-12 rounded-lg border object-cover">
-                            <div v-else class="flex h-12 w-12 items-center justify-center rounded-lg border bg-muted">
-                                <ImageOff class="size-5 text-muted-foreground" />
-                            </div>
+                        <div class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-muted">
+                            <img
+                                v-if="product.image_url"
+                                :src="product.image_url"
+                                :alt="product.title"
+                                class="h-full w-full object-cover"
+                            >
+                            <ImageOff v-else class="size-5 text-muted-foreground" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <p class="font-medium">{{ product.title }}</p>
-                            <p v-if="product.description" class="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{{ product.description }}</p>
-                            <p class="mt-1 text-sm font-semibold">
+                            <p class="truncate font-semibold">{{ product.title }}</p>
+                            <p class="mt-0.5 text-sm font-medium text-[#E8563A]">
                                 {{ formatPrice(product.currency, product.sale_price || product.price) }}
-                                <span v-if="product.sale_price" class="ml-1 text-xs font-normal text-muted-foreground line-through">
+                                <span
+                                    v-if="product.sale_price"
+                                    class="ml-1 text-xs font-normal text-muted-foreground line-through"
+                                >
                                     {{ formatPrice(product.currency, product.price) }}
                                 </span>
                             </p>
+                            <p
+                                v-if="product.description"
+                                class="mt-0.5 line-clamp-1 text-xs text-muted-foreground"
+                            >
+                                {{ product.description }}
+                            </p>
                         </div>
-                        <div :class="[
-                            'flex size-6 shrink-0 items-center justify-center rounded-full border-2 transition-all',
-                            activeProductIds.includes(product.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40',
-                        ]">
-                            <Check v-if="activeProductIds.includes(product.id)" class="size-3.5" />
+                        <div
+                            :class="[
+                                'flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition-all',
+                                activeProductIds.includes(product.id)
+                                    ? 'border-[#E8563A] bg-[#E8563A] text-white'
+                                    : 'border-muted-foreground/30',
+                            ]"
+                        >
+                            <Check v-if="activeProductIds.includes(product.id)" class="size-4" />
                         </div>
                     </button>
+                    <div
+                        v-if="modalProductTotalPages > 1"
+                        class="flex items-center justify-between gap-2 pt-2"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            :disabled="modalProductPage <= 1"
+                            @click="modalProductPage--"
+                        >
+                            Previous
+                        </Button>
+                        <span class="text-xs text-muted-foreground">
+                            {{ paginatedModalProducts.length }} on this page
+                        </span>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            :disabled="modalProductPage >= modalProductTotalPages"
+                            @click="modalProductPage++"
+                        >
+                            Next
+                        </Button>
+                    </div>
                 </div>
             </div>
 

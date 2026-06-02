@@ -30,6 +30,7 @@ const props = defineProps<{
     order: CheckoutOrder;
     token: string;
     paymentStatus?: string;
+    confirmationError?: string | null;
 }>();
 
 const loading = ref(false);
@@ -41,8 +42,8 @@ const isPaid = computed(() => props.order.status === 'paid');
 const isPending = computed(() => props.order.status === 'pending');
 
 const statusMessage = computed(() => {
-    if (props.paymentStatus === 'success') {
-        return { type: 'info', text: 'Your payment is being confirmed. This page will update once the order is marked paid.' };
+    if (props.confirmationError) {
+        return { type: 'warning', text: props.confirmationError };
     }
 
     if (props.paymentStatus === 'cancelled') {

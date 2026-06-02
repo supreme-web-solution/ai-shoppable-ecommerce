@@ -6,8 +6,10 @@ import {
     Check,
     Copy,
     Film,
+    Globe,
     ImageOff,
     Link2,
+    Lock,
     Loader2,
     MessageCircle,
     Package,
@@ -70,6 +72,12 @@ type ProductOption = {
     description?: string | null;
 };
 
+type TagPositionDraft = {
+    x?: number;
+    y?: number;
+    anchor?: string;
+};
+
 type TagDraft = {
     product_id: number;
     starts_at_ms: number;
@@ -77,8 +85,66 @@ type TagDraft = {
     cta_label: string;
     discount_percent: number;
     is_pinned: boolean;
+    overlay_kind: 'product' | 'flash' | 'coupon';
+    coupon_code: string;
+    position: TagPositionDraft | null;
     sort_order?: number;
 };
+
+type KnowledgeSourceDraft = {
+    title: string;
+    content: string;
+};
+
+const OVERLAY_KIND_OPTIONS = [
+    { value: 'product', label: 'Product hotspot' },
+    { value: 'flash', label: 'Flash discount' },
+    { value: 'coupon', label: 'Coupon drop' },
+] as const;
+
+const OVERLAY_ANCHOR_OPTIONS = [
+    { value: 'bottom-left', label: 'Bottom left' },
+    { value: 'bottom-right', label: 'Bottom right' },
+    { value: 'top-right', label: 'Top right' },
+    { value: 'center', label: 'Center' },
+] as const;
+
+function defaultPositionForKind(kind: TagDraft['overlay_kind']): TagPositionDraft {
+    if (kind === 'flash') {
+        return { x: 4, y: 10, anchor: 'top-right' };
+    }
+    if (kind === 'coupon') {
+        return { x: 50, y: 42, anchor: 'center' };
+    }
+
+    return { x: 4, y: 10, anchor: 'bottom-left' };
+}
+
+function onOverlayAnchorChange(tag: TagDraft) {
+    const anchor = tag.position?.anchor ?? 'bottom-left';
+    if (anchor === 'top-right' || anchor === 'top-left') {
+        tag.position = { x: 4, y: 10, anchor };
+    } else if (anchor === 'center') {
+        tag.position = { x: 50, y: 42, anchor };
+    } else {
+        tag.position = { x: 4, y: 10, anchor };
+    }
+}
+
+function onOverlayKindChange(tag: TagDraft) {
+    if (tag.overlay_kind === 'flash' || tag.overlay_kind === 'coupon') {
+        tag.is_pinned = false;
+    }
+    tag.position = defaultPositionForKind(tag.overlay_kind);
+}
+
+function onTagPinnedChange(tag: TagDraft) {
+    if (tag.is_pinned && (tag.overlay_kind === 'flash' || tag.overlay_kind === 'coupon')) {
+        tag.overlay_kind = 'product';
+        tag.coupon_code = '';
+        tag.position = defaultPositionForKind('product');
+    }
+}
 
 const { getList, postJson, patchJson, apiFetch, uploadFile, ensureTeam } = useAdminApi();
 
@@ -202,9 +268,16 @@ const viewerSim = ref({
     min: 50,
     max: 500,
 });
+
+const visibilityOptions = [
+    { value: 'public', label: 'Public', icon: Globe },
+    { value: 'unlisted', label: 'Unlisted', icon: Link2 },
+    { value: 'private', label: 'Private', icon: Lock },
+] as const;
 const aiAssistant = ref({
     enabled: false,
     knowledgeBaseText: '',
+    knowledgeSources: [] as KnowledgeSourceDraft[],
 });
 const videoMetadata = ref<Record<string, unknown>>({});
 
@@ -246,9 +319,27 @@ function toggleProductInModal(productId: number) {
             cta_label: 'Shop now',
             discount_percent: 0,
             is_pinned: true,
+            overlay_kind: 'product',
+            coupon_code: '',
+            position: defaultPositionForKind('product'),
             sort_order: tagDrafts.value.length,
         });
     }
+}
+
+function addKnowledgeSource() {
+    if (aiAssistant.value.knowledgeSources.length >= 3) {
+        return;
+    }
+
+    aiAssistant.value.knowledgeSources.push({
+        title: '',
+        content: '',
+    });
+}
+
+function removeKnowledgeSource(index: number) {
+    aiAssistant.value.knowledgeSources.splice(index, 1);
 }
 
 function removeTag(index: number) {
@@ -284,6 +375,21 @@ async function loadVideo() {
         }
         aiAssistant.value.enabled = Boolean(meta?.ai_assistant_enabled);
         aiAssistant.value.knowledgeBaseText = String(meta?.knowledge_base_text ?? '');
+        const rawKnowledgeSources = Array.isArray(meta?.knowledge_sources) ? meta.knowledge_sources : [];
+        aiAssistant.value.knowledgeSources = rawKnowledgeSources
+            .filter((source): source is Record<string, unknown> => source !== null && typeof source === 'object')
+            .slice(0, 3)
+            .map((source) => ({
+                title: String(source.title ?? '').trim(),
+                content: String(source.content ?? '').trim(),
+            }))
+            .filter((source) => source.title !== '' && source.content !== '');
+        if (aiAssistant.value.knowledgeSources.length === 0 && aiAssistant.value.knowledgeBaseText.trim() !== '') {
+            aiAssistant.value.knowledgeSources = [{
+                title: 'Knowledge Hub',
+                content: aiAssistant.value.knowledgeBaseText.trim(),
+            }];
+        }
 
         // load existing product tags
         const tagsPayload = await apiFetch<{ data: Array<{
@@ -293,18 +399,34 @@ async function loadVideo() {
             cta_label?: string;
             discount_percent?: number;
             is_pinned?: boolean;
+            overlay_kind?: TagDraft['overlay_kind'];
+            coupon_code?: string | null;
+            position?: TagPositionDraft | null;
             sort_order?: number;
         }> }>(`/api/v1/admin/videos/${props.videoId}/product-tags`);
 
-        tagDrafts.value = (tagsPayload.data ?? []).map((tag, i) => ({
-            product_id: tag.product_id,
-            starts_at_ms: tag.starts_at_ms ?? 0,
-            ends_at_ms: tag.ends_at_ms ?? 0,
-            cta_label: tag.cta_label ?? 'Shop now',
-            discount_percent: Number(tag.discount_percent ?? 0),
-            is_pinned: Boolean(tag.is_pinned),
-            sort_order: tag.sort_order ?? i,
-        }));
+        tagDrafts.value = (tagsPayload.data ?? []).map((tag, i) => {
+            const overlayKind =
+                tag.overlay_kind === 'flash' ||
+                tag.overlay_kind === 'coupon' ||
+                tag.overlay_kind === 'product'
+                    ? tag.overlay_kind
+                    : 'product';
+
+            return {
+                product_id: tag.product_id,
+                starts_at_ms: tag.starts_at_ms ?? 0,
+                ends_at_ms: tag.ends_at_ms ?? 0,
+                cta_label: tag.cta_label ?? 'Shop now',
+                discount_percent: Number(tag.discount_percent ?? 0),
+                is_pinned: Boolean(tag.is_pinned),
+                overlay_kind: overlayKind,
+                coupon_code: tag.coupon_code ?? '',
+                position:
+                    tag.position ?? defaultPositionForKind(overlayKind),
+                sort_order: tag.sort_order ?? i,
+            };
+        });
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not load video.';
     } finally {
@@ -331,6 +453,7 @@ async function saveVideo() {
         delete nextMetadata.viewer_sim_max;
         delete nextMetadata.ai_assistant_enabled;
         delete nextMetadata.knowledge_base_text;
+        delete nextMetadata.knowledge_sources;
 
         if (viewerSim.value.enabled) {
             nextMetadata.viewer_sim_enabled = true;
@@ -339,10 +462,20 @@ async function saveVideo() {
         }
 
         if (aiAssistant.value.enabled) {
+            const knowledgeSources = aiAssistant.value.knowledgeSources
+                .slice(0, 3)
+                .map((source) => ({
+                    title: source.title.trim(),
+                    content: source.content.trim(),
+                }))
+                .filter((source) => source.title !== '' && source.content !== '');
+
             nextMetadata.ai_assistant_enabled = true;
-            nextMetadata.knowledge_base_text = aiAssistant.value.knowledgeBaseText.trim();
+            nextMetadata.knowledge_sources = knowledgeSources;
+            nextMetadata.knowledge_base_text = knowledgeSources[0]?.content ?? aiAssistant.value.knowledgeBaseText.trim();
         } else {
             nextMetadata.ai_assistant_enabled = false;
+            nextMetadata.knowledge_sources = [];
         }
 
         await patchJson(`/api/v1/admin/videos/${props.videoId}`, {
@@ -547,7 +680,7 @@ onUnmounted(stopPolling);
 <template>
     <Head title="Edit Shoppable Video" />
 
-    <div class="edit-root flex h-full flex-1 flex-col gap-5 p-4 md:p-5">
+    <div class="edit-root flex min-h-screen flex-1 flex-col gap-5 p-4 md:p-5">
 
         <!-- ── Header ── -->
         <div class="flex flex-wrap items-center justify-between gap-3">
@@ -683,21 +816,20 @@ onUnmounted(stopPolling);
                             <label class="field-label">Visibility</label>
                             <div class="flex gap-2">
                                 <button
-                                    v-for="vis in [
-                                        { value: 'public', label: '🌍 Public' },
-                                        { value: 'unlisted', label: '🔗 Unlisted' },
-                                        { value: 'private', label: '🔒 Private' },
-                                    ]"
+                                    v-for="vis in visibilityOptions"
                                     :key="vis.value"
                                     type="button"
                                     :class="[
-                                        'flex-1 rounded-xl border py-2 text-sm font-medium transition-all',
+                                        'flex flex-1 items-center justify-center gap-1.5 rounded-xl border py-2 text-sm font-medium transition-all',
                                         form.visibility === vis.value
                                             ? 'border-[#E8563A] bg-[#E8563A]/10 text-[#E8563A] font-semibold'
                                             : 'border-gray-200 bg-white text-gray-500 hover:border-[#E8563A]/40',
                                     ]"
                                     @click="form.visibility = vis.value"
-                                >{{ vis.label }}</button>
+                                >
+                                    <component :is="vis.icon" class="size-3.5 shrink-0" />
+                                    {{ vis.label }}
+                                </button>
                             </div>
                         </div>
 
@@ -795,16 +927,50 @@ onUnmounted(stopPolling);
                                 <div class="h-6 w-11 rounded-full bg-gray-200 transition-colors peer-checked:bg-[#E8563A] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
                             </label>
                         </div>
-                        <div v-if="aiAssistant.enabled" class="space-y-1.5">
-                            <label class="field-label">Knowledge base document</label>
-                            <textarea
-                                v-model="aiAssistant.knowledgeBaseText"
-                                rows="5"
-                                class="field-textarea"
-                                placeholder="Paste product FAQ, shipping policy, returns, sizing details, promos, etc."
-                            />
+                        <div v-if="aiAssistant.enabled" class="space-y-3">
+                            <div class="flex items-center justify-between">
+                                <label class="field-label">Knowledge sources (max 3)</label>
+                                <button
+                                    type="button"
+                                    class="ghost-btn inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold"
+                                    :disabled="aiAssistant.knowledgeSources.length >= 3"
+                                    @click="addKnowledgeSource"
+                                >
+                                    <Plus class="size-3.5" />
+                                    Add source
+                                </button>
+                            </div>
+                            <div
+                                v-for="(source, sourceIndex) in aiAssistant.knowledgeSources"
+                                :key="sourceIndex"
+                                class="rounded-xl border border-gray-200 bg-white p-3 space-y-2"
+                            >
+                                <div class="flex items-center gap-2">
+                                    <Input
+                                        v-model="source.title"
+                                        class="h-8 text-xs"
+                                        placeholder="Source title (e.g. Shipping policy)"
+                                    />
+                                    <button
+                                        type="button"
+                                        class="flex size-7 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-400 transition-colors hover:bg-red-100 hover:text-red-600"
+                                        @click="removeKnowledgeSource(sourceIndex)"
+                                    >
+                                        <Trash2 class="size-3.5" />
+                                    </button>
+                                </div>
+                                <textarea
+                                    v-model="source.content"
+                                    rows="4"
+                                    class="field-textarea"
+                                    placeholder="Paste concise facts, FAQs, and policies for this source."
+                                />
+                            </div>
+                            <div v-if="aiAssistant.knowledgeSources.length === 0" class="rounded-xl border border-dashed border-gray-200 p-3 text-xs text-gray-500">
+                                Add at least one source so AI can answer with grounded information.
+                            </div>
                             <p class="text-xs text-gray-500">
-                                Tip: Add concise facts and policies. AI uses this text first when replying in live chat.
+                                AI chunks these sources, creates embeddings, and retrieves best matches per viewer message.
                             </p>
                         </div>
                     </div>
@@ -862,6 +1028,22 @@ onUnmounted(stopPolling);
                                 </div>
                                 <div class="grid gap-2 sm:grid-cols-2">
                                     <div>
+                                        <label class="field-label mb-1 block">Overlay type</label>
+                                        <select
+                                            v-model="tag.overlay_kind"
+                                            class="h-8 w-full rounded-lg border border-gray-200 bg-white px-2 text-xs"
+                                            @change="onOverlayKindChange(tag)"
+                                        >
+                                            <option
+                                                v-for="opt in OVERLAY_KIND_OPTIONS"
+                                                :key="opt.value"
+                                                :value="opt.value"
+                                            >
+                                                {{ opt.label }}
+                                            </option>
+                                        </select>
+                                    </div>
+                                    <div>
                                         <label class="field-label mb-1 block">CTA label</label>
                                         <Input v-model="tag.cta_label" class="h-8 text-xs" />
                                     </div>
@@ -869,18 +1051,46 @@ onUnmounted(stopPolling);
                                         <label class="field-label mb-1 block">Discount %</label>
                                         <Input v-model.number="tag.discount_percent" type="number" min="0" max="100" class="h-8 text-xs" />
                                     </div>
+                                    <div v-if="tag.overlay_kind === 'coupon'">
+                                        <label class="field-label mb-1 block">Coupon code</label>
+                                        <Input v-model="tag.coupon_code" class="h-8 text-xs font-mono uppercase" placeholder="SAVE20" />
+                                    </div>
                                     <div>
                                         <label class="field-label mb-1 block">Show from (ms)</label>
-                                        <Input v-model.number="tag.starts_at_ms" type="number" min="0" class="h-8 text-xs" />
+                                        <Input v-model.number="tag.starts_at_ms" type="number" min="0" class="h-8 text-xs" :disabled="tag.is_pinned" />
                                     </div>
                                     <div>
                                         <label class="field-label mb-1 block">Show until (ms)</label>
-                                        <Input v-model.number="tag.ends_at_ms" type="number" min="0" class="h-8 text-xs" />
+                                        <Input v-model.number="tag.ends_at_ms" type="number" min="0" class="h-8 text-xs" :disabled="tag.is_pinned" />
+                                    </div>
+                                    <div v-if="!tag.is_pinned">
+                                        <label class="field-label mb-1 block">On-screen position</label>
+                                        <select
+                                            v-model="tag.position!.anchor"
+                                            class="h-8 w-full rounded-lg border border-gray-200 bg-white px-2 text-xs"
+                                            @change="onOverlayAnchorChange(tag)"
+                                        >
+                                            <option
+                                                v-for="opt in OVERLAY_ANCHOR_OPTIONS"
+                                                :key="opt.value"
+                                                :value="opt.value"
+                                            >
+                                                {{ opt.label }}
+                                            </option>
+                                        </select>
                                     </div>
                                 </div>
+                                <p v-if="!tag.is_pinned" class="mt-2 text-[11px] text-gray-500">
+                                    In the vertical feed, overlays snap to the top, center, or bottom zone (clear of the side buttons and product list).
+                                </p>
                                 <label class="mt-2 flex cursor-pointer items-center gap-2 text-xs text-gray-600">
-                                    <input v-model="tag.is_pinned" type="checkbox" class="accent-[#E8563A]">
-                                    Always pinned (visible throughout video)
+                                    <input
+                                        v-model="tag.is_pinned"
+                                        type="checkbox"
+                                        class="accent-[#E8563A]"
+                                        @change="onTagPinnedChange(tag)"
+                                    >
+                                    Always pinned in product list (not a timed overlay)
                                 </label>
                             </div>
                         </div>

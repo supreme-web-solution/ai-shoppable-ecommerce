@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers\Api\V1\Integrations;
 
+use App\Http\Controllers\Controller;
 use App\Jobs\HandleCloudinaryWebhookJob;
 use App\Jobs\SyncExternalCatalogJob;
-use App\Http\Controllers\Controller;
+use App\Models\Team;
 use App\Models\WebhookReceipt;
 use App\Services\CloudinaryService;
+use App\Support\CatalogSyncStatus;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -20,10 +22,62 @@ class ShopifyController extends Controller
 
         $this->assertTeamAccess($request, $validated['team_id']);
 
-        SyncExternalCatalogJob::dispatch($validated['team_id'], 'shopify')
-            ->onQueue(config('queue.names.integration', 'integration'));
+        $team = Team::query()->findOrFail($validated['team_id']);
+        $shopify = (array) data_get($team->settings, 'integrations.shopify', []);
+        $shopUrl = trim((string) ($shopify['shop_url'] ?? ''));
+        $clientId = trim((string) ($shopify['client_id'] ?? ''));
+        $clientSecret = trim((string) ($shopify['client_secret'] ?? ''));
+        $legacyToken = trim((string) ($shopify['access_token'] ?? ''));
 
-        return response()->json(['ok' => true, 'provider' => 'shopify', 'queued' => true]);
+        $hasClientCredentials = $clientId !== '' && $clientSecret !== '';
+        $hasLegacyToken = $legacyToken !== '';
+
+        if ($shopUrl === '' || (! $hasClientCredentials && ! $hasLegacyToken)) {
+            Log::warning('Shopify catalog sync: queue rejected — credentials missing', [
+                'team_id' => $team->id,
+            ]);
+
+            return response()->json([
+                'ok' => false,
+                'message' => 'Save your Shop URL, Client ID, and Client Secret before syncing.',
+            ], 422);
+        }
+
+        $queue = (string) config('queue.names.integration', 'integration');
+
+        Log::info('Shopify catalog sync: queued', [
+            'team_id' => $team->id,
+            'shop_url' => $shopUrl,
+            'queue' => $queue,
+        ]);
+
+        CatalogSyncStatus::markQueued($validated['team_id'], 'shopify');
+
+        SyncExternalCatalogJob::dispatch($validated['team_id'], 'shopify')
+            ->onQueue($queue);
+
+        return response()->json([
+            'ok' => true,
+            'provider' => 'shopify',
+            'queued' => true,
+            'message' => 'Sync started…',
+        ]);
+    }
+
+    public function syncStatus(Request $request)
+    {
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+        ]);
+
+        $this->assertTeamAccess($request, $validated['team_id']);
+
+        $status = CatalogSyncStatus::get($validated['team_id'], 'shopify');
+
+        return response()->json([
+            'ok' => true,
+            'status' => $status ?? ['state' => 'idle', 'message' => 'No sync in progress.'],
+        ]);
     }
 
     public function webhook(Request $request)

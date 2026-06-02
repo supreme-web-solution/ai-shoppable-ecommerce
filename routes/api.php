@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\V1\Player\CartController;
 use App\Http\Controllers\Api\V1\Player\CheckoutController;
 use App\Http\Controllers\Api\V1\Player\EngagementController;
 use App\Http\Controllers\Api\V1\Player\FeedController;
+use App\Http\Controllers\Api\V1\Player\LinkPreviewController;
 use App\Http\Controllers\Api\V1\Player\LiveShowController as PlayerLiveShowController;
 use App\Http\Controllers\Api\V1\Player\NativePaymentController;
 use App\Http\Controllers\Api\V1\Player\WebinarController as PlayerWebinarController;
@@ -39,6 +40,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('webinars/{liveShow}/messages', [PlayerWebinarController::class, 'sendMessage']);
         Route::get('broadcast-config', [EngagementController::class, 'broadcastConfig'])->middleware('throttle:player-feed');
         Route::get('comments', [EngagementController::class, 'comments'])->middleware('throttle:player-feed');
+        Route::get('link-preview', [LinkPreviewController::class, 'show'])->middleware('throttle:player-feed');
         Route::post('reactions', [EngagementController::class, 'react']);
         Route::post('comments', [EngagementController::class, 'comment']);
         Route::post('viewer-ping', [EngagementController::class, 'viewerPing']);
@@ -47,6 +49,7 @@ Route::prefix('v1')->group(function (): void {
         Route::delete('cart/items/{itemId}', [CartController::class, 'removeItem']);
         Route::post('checkout', [CheckoutController::class, 'checkout']);
         Route::post('checkout/orders/{order}/start-payment', [NativePaymentController::class, 'start']);
+        Route::post('checkout/orders/{order}/confirm-payment', [NativePaymentController::class, 'confirm']);
     });
 
     Route::prefix('analytics')->group(function (): void {
@@ -57,10 +60,14 @@ Route::prefix('v1')->group(function (): void {
     Route::prefix('integrations')->group(function (): void {
         Route::post('shopify/sync', [ShopifyController::class, 'sync'])
             ->middleware(['auth:sanctum', 'throttle:integration-sync']);
+        Route::get('shopify/sync-status', [ShopifyController::class, 'syncStatus'])
+            ->middleware(['auth:sanctum', 'throttle:admin-api']);
         Route::post('shopify/webhook', [ShopifyController::class, 'webhook'])
             ->middleware('throttle:integration-webhook');
         Route::post('woo/sync', [WooCommerceController::class, 'sync'])
             ->middleware(['auth:sanctum', 'throttle:integration-sync']);
+        Route::get('woo/sync-status', [WooCommerceController::class, 'syncStatus'])
+            ->middleware(['auth:sanctum', 'throttle:admin-api']);
         Route::post('woo/webhook', [WooCommerceController::class, 'webhook'])
             ->middleware('throttle:integration-webhook');
         Route::post('stripe/webhook', [NativePaymentWebhookController::class, 'stripe'])
@@ -75,11 +82,12 @@ Route::prefix('v1')->group(function (): void {
         Route::get('overview', [OverviewController::class, 'show']);
         Route::post('videos/upload', [VideoController::class, 'upload']);
         Route::get('ai/heygen-options', [AiContentController::class, 'heygenOptions']);
-        Route::post('ai/visuals', [AiContentController::class, 'uploadVisual']);
         Route::get('ai/generations', [AiContentController::class, 'index']);
         Route::get('ai/generations/{generation}', [AiContentController::class, 'show']);
         Route::post('ai/scripts', [AiContentController::class, 'generateScript']);
+        Route::post('ai/product-placement-image', [AiContentController::class, 'uploadProductPlacementImage']);
         Route::post('ai/avatar-videos', [AiContentController::class, 'generateAvatarVideo']);
+        Route::post('ai/multilingual-videos', [AiContentController::class, 'generateMultilingualVideos']);
         Route::apiResource('teams', TeamController::class);
         Route::apiResource('videos', VideoController::class);
         Route::get('videos/{video}/product-tags', [VideoProductTagController::class, 'index']);
@@ -98,8 +106,12 @@ Route::prefix('v1')->group(function (): void {
         Route::patch('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'updateMessage']);
         Route::delete('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'destroyMessage']);
         Route::get('live-video-chats', [LiveVideoChatController::class, 'index']);
+        Route::get('live-video-chats/{video}/threads', [LiveVideoChatController::class, 'threads']);
         Route::get('live-video-chats/{video}/messages', [LiveVideoChatController::class, 'messages']);
         Route::post('live-video-chats/{video}/messages', [LiveVideoChatController::class, 'postMessage']);
+        Route::patch('live-video-chats/{video}/comments/{comment}/hide', [LiveVideoChatController::class, 'hideComment']);
+        Route::delete('live-video-chats/{video}/comments/{comment}', [LiveVideoChatController::class, 'deleteComment']);
+        Route::post('live-video-chats/{video}/ban-session', [LiveVideoChatController::class, 'banSession']);
         Route::post('teams/{team}/tokens', [TeamController::class, 'issueToken']);
     });
 });

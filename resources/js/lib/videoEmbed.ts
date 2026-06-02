@@ -53,10 +53,28 @@ export type EmbedApiClient = {
     patchJson: <T>(path: string, body: Record<string, unknown>) => Promise<T>;
 };
 
+const EMBED_DISPLAY_TYPES: EmbedDisplayType[] = [
+    'vertical_feed',
+    'carousel',
+    'floating_widget',
+    'product_page',
+];
+
+export function normalizeEmbedDisplayType(
+    type: string | undefined | null,
+): EmbedDisplayType {
+    if (type && EMBED_DISPLAY_TYPES.includes(type as EmbedDisplayType)) {
+        return type as EmbedDisplayType;
+    }
+
+    return 'vertical_feed';
+}
+
 export function embedDisplayLabel(type: string | undefined): string {
     return (
-        EMBED_DISPLAY_OPTIONS.find((option) => option.value === type)?.label
-        ?? 'Vertical feed'
+        EMBED_DISPLAY_OPTIONS.find(
+            (option) => option.value === normalizeEmbedDisplayType(type),
+        )?.label ?? 'Vertical feed'
     );
 }
 
@@ -78,14 +96,37 @@ function normalizeEmbed(payload: EmbedCreateResponse | null | undefined): EmbedI
     return null;
 }
 
+export async function findEmbedForPlaylist(
+    api: EmbedApiClient,
+    playlistId: number,
+): Promise<EmbedItem | null> {
+    const list = await api.getList<EmbedItem>('/api/v1/admin/embeds', {
+        playlist_id: playlistId,
+        per_page: 5,
+    });
+
+    return (list.data ?? []).find((item) => item.playlist_id === playlistId) ?? null;
+}
+
+export async function findEmbedForVideo(
+    api: EmbedApiClient,
+    videoId: number,
+): Promise<EmbedItem | null> {
+    const list = await api.getList<EmbedItem>('/api/v1/admin/embeds', {
+        video_id: videoId,
+        per_page: 5,
+    });
+
+    return (list.data ?? []).find((item) => item.video_id === videoId) ?? null;
+}
+
 export async function ensureEmbedForPlaylist(
     api: EmbedApiClient,
     playlistId: number,
     playlistTitle: string,
     playlistSlug: string,
 ): Promise<EmbedItem | null> {
-    const list = await api.getList<EmbedItem>('/api/v1/admin/embeds');
-    const existing = (list.data ?? []).find((item) => item.playlist_id === playlistId);
+    const existing = await findEmbedForPlaylist(api, playlistId);
     if (existing) {
         return existing;
     }
@@ -106,8 +147,7 @@ export async function ensureEmbedForVideo(
     videoId: number,
     videoTitle: string,
 ): Promise<EmbedItem | null> {
-    const list = await api.getList<EmbedItem>('/api/v1/admin/embeds');
-    const existing = (list.data ?? []).find((item) => item.video_id === videoId);
+    const existing = await findEmbedForVideo(api, videoId);
     if (existing) {
         return existing;
     }
@@ -131,7 +171,8 @@ export function embedScriptCode(
     embed: EmbedItem,
     type?: EmbedDisplayType,
 ): string {
-    const displayType = type ?? (embed.type as EmbedDisplayType) ?? 'vertical_feed';
+    const displayType =
+        type ?? normalizeEmbedDisplayType(embed.type);
 
     return buildEmbedScriptCode(embed.slug, displayType);
 }

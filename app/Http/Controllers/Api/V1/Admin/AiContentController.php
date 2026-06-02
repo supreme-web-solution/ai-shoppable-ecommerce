@@ -10,9 +10,11 @@ use App\Models\AiGeneration;
 use App\Models\Video;
 use App\Services\Ai\AiAvatarVideoService;
 use App\Services\Ai\AiScriptGeneratorService;
+use App\Services\Ai\MultilingualVideoService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class AiContentController extends Controller
 {
@@ -57,34 +59,6 @@ class AiContentController extends Controller
         $this->resolveTeamId($request);
 
         return response()->json($avatarVideoService->options($request->boolean('refresh')));
-    }
-
-    public function uploadVisual(Request $request)
-    {
-        $validated = $request->validate([
-            'team_id' => ['required', 'integer', 'exists:teams,id'],
-            'file' => ['required', 'file', 'mimetypes:image/jpeg,image/png', 'max:32768'],
-        ]);
-
-        abort_unless($this->resolveTeamId($request) === (int) $validated['team_id'], 403);
-
-        $storedPath = $request->file('file')->store('uploads/ai-visuals', 'public');
-        $absolutePath = Storage::disk('public')->path($storedPath);
-        $url = url('/storage/'.$storedPath);
-
-        Log::info('AI product visual stored locally', [
-            'team_id' => $validated['team_id'],
-            'path' => $absolutePath,
-            'url' => $url,
-            'original_name' => $request->file('file')->getClientOriginalName(),
-            'size_bytes' => $request->file('file')->getSize(),
-        ]);
-
-        return response()->json([
-            'visual_file_path' => $absolutePath,
-            'visual_url' => $url,
-            'original_name' => $request->file('file')->getClientOriginalName(),
-        ]);
     }
 
     public function generateScript(Request $request, AiScriptGeneratorService $scriptGeneratorService)
@@ -134,12 +108,18 @@ class AiContentController extends Controller
             'language' => ['nullable', 'string', 'max:10'],
             'avatar_id' => ['nullable', 'string', 'max:100'],
             'voice_id' => ['nullable', 'string', 'max:100'],
-            'ad_style' => ['nullable', 'string', 'in:avatar_only,avatar_beside_product,product_card_overlay,full_product_background,template_ad_scene'],
-            'visual_url' => ['nullable', 'url', 'max:2000'],
-            'visual_file_path' => ['nullable', 'string', 'max:1000'],
+            'enable_embed_overlays' => ['nullable', 'boolean'],
             'product_ids' => ['nullable', 'array'],
             'product_ids.*' => ['integer', 'exists:products,id'],
             'publish_when_ready' => ['nullable', 'boolean'],
+            'product_placement_enabled' => ['nullable', 'boolean'],
+            'product_placement_image_url' => ['nullable', 'url', 'max:2000'],
+            'product_placement_position' => ['nullable', 'in:top_left,top_right,bottom_left,bottom_right'],
+            'product_placement_scale' => ['nullable', 'numeric', 'gt:0', 'max:2'],
+            'product_placement_opacity' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'product_placement_offset_x' => ['nullable', 'numeric', 'min:-1', 'max:1'],
+            'product_placement_offset_y' => ['nullable', 'numeric', 'min:-1', 'max:1'],
+            'product_placement_motion_prompt' => ['nullable', 'string', 'max:400'],
         ]);
 
         abort_unless($teamId === (int) $validated['team_id'], 403);
@@ -156,9 +136,18 @@ class AiContentController extends Controller
                 'language' => $validated['language'] ?? 'en',
                 'avatar_id' => $validated['avatar_id'] ?? null,
                 'voice_id' => $validated['voice_id'] ?? null,
-                'ad_style' => $validated['ad_style'] ?? 'avatar_only',
-                'visual_url' => $validated['visual_url'] ?? null,
+                'enable_embed_overlays' => (bool) ($validated['enable_embed_overlays'] ?? true),
                 'product_ids' => $validated['product_ids'] ?? [],
+                'product_placement' => [
+                    'enabled' => (bool) ($validated['product_placement_enabled'] ?? false),
+                    'image_url' => $validated['product_placement_image_url'] ?? null,
+                    'position' => $validated['product_placement_position'] ?? 'bottom_right',
+                    'scale' => isset($validated['product_placement_scale']) ? (float) $validated['product_placement_scale'] : 0.3,
+                    'opacity' => isset($validated['product_placement_opacity']) ? (float) $validated['product_placement_opacity'] : 1.0,
+                    'offset_x' => isset($validated['product_placement_offset_x']) ? (float) $validated['product_placement_offset_x'] : 0,
+                    'offset_y' => isset($validated['product_placement_offset_y']) ? (float) $validated['product_placement_offset_y'] : 0,
+                    'motion_prompt' => $validated['product_placement_motion_prompt'] ?? null,
+                ],
             ],
         ]);
 
@@ -184,9 +173,6 @@ class AiContentController extends Controller
             'queue' => $queue,
             'avatar_id' => $validated['avatar_id'] ?? null,
             'voice_id' => $validated['voice_id'] ?? null,
-            'ad_style' => $validated['ad_style'] ?? 'avatar_only',
-            'has_visual_file' => filled($validated['visual_file_path'] ?? null),
-            'visual_url' => $validated['visual_url'] ?? null,
             'product_ids' => $validated['product_ids'] ?? [],
         ]);
 
@@ -197,5 +183,70 @@ class AiContentController extends Controller
             'generation' => new AiGenerationResource($generation),
             'video' => new VideoResource($video),
         ], 202);
+    }
+
+    public function generateMultilingualVideos(Request $request, MultilingualVideoService $multilingualVideoService)
+    {
+        $teamId = $this->resolveTeamId($request);
+
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+            'title' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string'],
+            'script' => ['required', 'string', 'max:5000'],
+            'languages' => ['required', 'array', 'min:1', 'max:8'],
+            'languages.*' => ['string', 'max:10'],
+            'avatar_id' => ['nullable', 'string', 'max:100'],
+            'voice_id' => ['nullable', 'string', 'max:100'],
+            'enable_embed_overlays' => ['nullable', 'boolean'],
+            'product_ids' => ['nullable', 'array'],
+            'product_ids.*' => ['integer', 'exists:products,id'],
+            'publish_when_ready' => ['nullable', 'boolean'],
+            'product_placement_enabled' => ['nullable', 'boolean'],
+            'product_placement_image_url' => ['nullable', 'url', 'max:2000'],
+            'product_placement_position' => ['nullable', 'in:top_left,top_right,bottom_left,bottom_right'],
+            'product_placement_scale' => ['nullable', 'numeric', 'gt:0', 'max:2'],
+            'product_placement_opacity' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'product_placement_offset_x' => ['nullable', 'numeric', 'min:-1', 'max:1'],
+            'product_placement_offset_y' => ['nullable', 'numeric', 'min:-1', 'max:1'],
+            'product_placement_motion_prompt' => ['nullable', 'string', 'max:400'],
+        ]);
+
+        abort_unless($teamId === (int) $validated['team_id'], 403);
+
+        $result = $multilingualVideoService->queue(
+            $validated,
+            $teamId,
+            $request->user()?->id,
+        );
+
+        return response()->json([
+            'batch' => new AiGenerationResource($result['batch']),
+            'videos' => collect($result['videos'])->map(fn (array $row) => [
+                'language' => $row['language'],
+                'video' => new VideoResource($row['video']),
+                'generation' => new AiGenerationResource($row['generation']),
+            ])->values(),
+        ], 202);
+    }
+
+    public function uploadProductPlacementImage(Request $request)
+    {
+        $teamId = $this->resolveTeamId($request);
+
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+            'file' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:8192'],
+        ]);
+
+        abort_unless($teamId === (int) $validated['team_id'], 403);
+
+        $path = $request->file('file')->store('uploads/product-placement', 'public');
+
+        return response()->json([
+            'path' => $path,
+            'url' => Storage::url($path),
+            'filename' => Str::afterLast($path, '/'),
+        ]);
     }
 }

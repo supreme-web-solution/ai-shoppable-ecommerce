@@ -14,7 +14,7 @@ import { request } from '@/routes/password';
 defineOptions({
     layout: {
         title: 'Welcome back',
-        description: 'Sign in to your SupremeVid account',
+        description: 'Sign in to your account and start selling',
     },
 });
 
@@ -29,7 +29,7 @@ defineProps<{
 
     <div
         v-if="status"
-        class="mb-4 rounded-xl bg-green-50 px-4 py-3 text-center text-sm font-medium text-green-700"
+        class="mb-5 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-center text-sm font-medium text-emerald-700"
     >
         {{ status }}
     </div>
@@ -38,11 +38,11 @@ defineProps<{
         v-bind="store.form()"
         :reset-on-success="['password']"
         v-slot="{ errors, processing }"
-        class="flex flex-col gap-5"
+        class="flex flex-col gap-3"
     >
-        <div class="grid gap-4">
-            <div class="grid gap-1.5">
-                <Label for="email" class="text-sm font-semibold text-gray-700">Email address</Label>
+        <div class="grid gap-3">
+            <div class="grid gap-1">
+                <Label for="email" class="field-label">Email address</Label>
                 <Input
                     id="email"
                     type="email"
@@ -57,13 +57,13 @@ defineProps<{
                 <InputError :message="errors.email" />
             </div>
 
-            <div class="grid gap-1.5">
+            <div class="grid gap-1">
                 <div class="flex items-center justify-between">
-                    <Label for="password" class="text-sm font-semibold text-gray-700">Password</Label>
+                    <Label for="password" class="field-label">Password</Label>
                     <TextLink
                         v-if="canResetPassword"
                         :href="request()"
-                        class="text-xs font-semibold text-[#E8563A] hover:underline"
+                        class="text-xs font-semibold text-[#E8563A] hover:text-[#c9402a] transition-colors"
                         :tabindex="5"
                     >
                         Forgot password?
@@ -83,55 +83,69 @@ defineProps<{
 
             <div class="flex items-center gap-2.5">
                 <Checkbox id="remember" name="remember" :tabindex="3" class="auth-check" />
-                <Label for="remember" class="text-sm text-gray-600 cursor-pointer">Remember me for 30 days</Label>
+                <Label for="remember" class="text-sm text-gray-500 cursor-pointer select-none">Remember me for 30 days</Label>
             </div>
 
             <button
                 type="submit"
-                class="auth-submit mt-1 flex h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-bold text-white transition-all"
+                class="auth-submit flex h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-black text-white transition-all"
                 :tabindex="4"
                 :disabled="processing"
                 data-test="login-button"
             >
                 <Spinner v-if="processing" class="size-4" />
-                {{ processing ? 'Signing in…' : 'Sign in' }}
+                {{ processing ? 'Signing in…' : 'Sign in to your account' }}
             </button>
         </div>
-
-        <p class="text-center text-sm text-gray-500">
-            Don't have an account?
-            <TextLink :href="register()" :tabindex="5" class="font-semibold text-[#E8563A] hover:underline">
-                Create one free
-            </TextLink>
-        </p>
+       
     </Form>
 </template>
 
 <style scoped>
+.field-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #374151;
+}
+
 .auth-input {
-    border-color: #e5e7eb;
+    border-color: #e9e9eb;
     background: #fafafa;
     border-radius: 10px;
-    height: 42px;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    height: 40px;
+    font-size: 0.875rem;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .auth-input:focus {
     border-color: #E8563A;
-    box-shadow: 0 0 0 3px rgba(232,86,58,0.12);
+    box-shadow: 0 0 0 3px rgba(232,86,58,0.1);
     outline: none;
     background: #fff;
 }
+
 .auth-submit {
-    background: #E8563A;
-    box-shadow: 0 4px 16px rgba(232,86,58,0.35);
+    background: linear-gradient(135deg, #E8563A 0%, #c9402a 100%);
+    box-shadow: 0 4px 14px rgba(232,86,58,0.38), 0 1px 3px rgba(0,0,0,0.1);
+    letter-spacing: -0.01em;
 }
 .auth-submit:hover:not(:disabled) {
-    background: #D44A2F;
-    box-shadow: 0 6px 20px rgba(232,86,58,0.45);
+    background: linear-gradient(135deg, #f06040 0%, #d9472e 100%);
+    box-shadow: 0 6px 18px rgba(232,86,58,0.48), 0 1px 3px rgba(0,0,0,0.1);
     transform: translateY(-1px);
 }
-.auth-submit:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+.auth-submit:active:not(:disabled) { transform: translateY(0); }
+.auth-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.divider {
+    margin: 0;
+}
+.divider-line {
+    flex: 1;
+    height: 1px;
+    background: #e9e9eb;
+}
+
+.register-link {
+    text-decoration: none;
 }
 </style>

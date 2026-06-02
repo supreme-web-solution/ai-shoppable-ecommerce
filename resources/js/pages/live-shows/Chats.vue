@@ -2,11 +2,14 @@
 import { Head, Link, usePage } from '@inertiajs/vue3';
 import {
     ArrowLeft,
+    Ban,
+    EyeOff,
     Loader2,
     MessageSquare,
     RefreshCw,
     Search,
     Send,
+    Trash2,
     UserRound,
 } from 'lucide-vue-next';
 import { echo, echoIsConfigured } from '@laravel/echo-vue';
@@ -48,12 +51,25 @@ type LiveVideoConversation = {
 
 type ChatMessage = {
     id: number;
+    parent_id?: number | null;
+    session_key?: string | null;
     live_show_registration_id?: number | null;
     sender_type: 'host' | 'attendee' | 'ai' | 'system';
     sender_name?: string | null;
     message: string;
     is_pinned: boolean;
+    is_hidden?: boolean;
     created_at: string;
+    replies?: ChatMessage[];
+};
+
+type SessionThread = {
+    session_key: string;
+    sender_name: string;
+    last_message?: string | null;
+    last_message_at?: string | null;
+    messages_count: number;
+    is_banned: boolean;
 };
 
 defineOptions({
@@ -67,7 +83,7 @@ defineOptions({
 });
 
 const page = usePage();
-const { getList, apiFetch, postJson, ensureTeam } = useAdminApi();
+const { getList, apiFetch, postJson, patchJson, deleteResource, ensureTeam } = useAdminApi();
 const props = withDefaults(defineProps<{
     source?: ChatSource;
     webinarId?: number | null;
@@ -95,6 +111,9 @@ const webinars = ref<WebinarOption[]>([]);
 const webinarConversations = ref<WebinarConversation[]>([]);
 const liveVideoConversations = ref<LiveVideoConversation[]>([]);
 const messages = ref<ChatMessage[]>([]);
+const sessionThreads = ref<SessionThread[]>([]);
+const selectedSessionKey = ref<string | null>(null);
+const replyToMessageId = ref<number | null>(null);
 const conversationSearch = ref('');
 const replyDraft = ref('');
 
@@ -436,7 +455,11 @@ async function loadMessages(options: { silent?: boolean } = {}) {
                 `/api/v1/admin/live-shows/${selectedWebinarId.value}/messages?registration_id=${selectedRegistrationId.value}`,
             )
             : await apiFetch<{ data: ChatMessage[] }>(
-                `/api/v1/admin/live-video-chats/${selectedLiveVideoId.value}/messages`,
+                `/api/v1/admin/live-video-chats/${selectedLiveVideoId.value}/messages${
+                    selectedSessionKey.value
+                        ? `?session_key=${encodeURIComponent(selectedSessionKey.value)}`
+                        : ''
+                }`,
             );
         messages.value = payload.data ?? [];
     } catch (error) {
@@ -480,9 +503,75 @@ function selectSource(source: ChatSource) {
     messages.value = [];
 }
 
+async function loadSessionThreads(options: { silent?: boolean } = {}) {
+    if (!selectedLiveVideoId.value) {
+        sessionThreads.value = [];
+
+        return;
+    }
+
+    try {
+        const payload = await apiFetch<{ data: SessionThread[] }>(
+            `/api/v1/admin/live-video-chats/${selectedLiveVideoId.value}/threads`,
+        );
+        sessionThreads.value = payload.data ?? [];
+    } catch {
+        if (!options.silent) {
+            sessionThreads.value = [];
+        }
+    }
+}
+
 function selectLiveVideo(videoId: number) {
     selectedLiveVideoId.value = videoId;
+    selectedSessionKey.value = null;
+    replyToMessageId.value = null;
     messages.value = [];
+    void loadSessionThreads();
+}
+
+function selectSessionThread(sessionKey: string | null) {
+    selectedSessionKey.value = sessionKey;
+    replyToMessageId.value = null;
+    void loadMessages();
+}
+
+async function hideMessage(message: ChatMessage) {
+    if (!selectedLiveVideoId.value) {
+        return;
+    }
+
+    await patchJson(
+        `/api/v1/admin/live-video-chats/${selectedLiveVideoId.value}/comments/${message.id}/hide`,
+        {},
+    );
+    await loadMessages({ silent: true });
+    await loadSessionThreads({ silent: true });
+}
+
+async function deleteMessage(message: ChatMessage) {
+    if (!selectedLiveVideoId.value) {
+        return;
+    }
+
+    await deleteResource(
+        `/api/v1/admin/live-video-chats/${selectedLiveVideoId.value}/comments/${message.id}`,
+    );
+    await loadMessages({ silent: true });
+    await loadSessionThreads({ silent: true });
+}
+
+async function banSession(message: ChatMessage) {
+    if (!selectedLiveVideoId.value || !message.session_key) {
+        return;
+    }
+
+    await postJson(
+        `/api/v1/admin/live-video-chats/${selectedLiveVideoId.value}/ban-session`,
+        { session_key: message.session_key },
+    );
+    await loadMessages({ silent: true });
+    await loadSessionThreads({ silent: true });
 }
 
 function selectConversation(registrationId: number) {
@@ -522,18 +611,21 @@ async function sendReply() {
                 {
                     sender_name: hostName,
                     message: replyDraft.value.trim(),
+                    parent_id: replyToMessageId.value,
                 },
             );
 
-        if (payload?.data) {
-            messages.value.push(payload.data);
-        }
-
         replyDraft.value = '';
+        replyToMessageId.value = null;
         if (sourceTab.value === 'webinar') {
+            if (payload?.data) {
+                messages.value.push(payload.data);
+            }
             await loadConversations({ silent: true });
         } else if (sourceTab.value === 'live_video') {
+            await loadMessages({ silent: true });
             await loadLiveVideoConversations({ silent: true });
+            await loadSessionThreads({ silent: true });
         }
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not send reply.';
@@ -554,6 +646,7 @@ watch(selectedRegistrationId, async () => {
 
 watch(selectedLiveVideoId, async () => {
     if (sourceTab.value !== 'live_video') return;
+    await loadSessionThreads();
     await loadMessages();
 });
 
@@ -585,6 +678,7 @@ onMounted(async () => {
         await loadConversations();
     }
     if (sourceTab.value === 'live_video') {
+        await loadSessionThreads();
         await loadMessages();
     }
     if (sourceTab.value === 'webinar') {
@@ -597,6 +691,7 @@ onMounted(async () => {
         }
         if (sourceTab.value === 'live_video' && selectedLiveVideoId.value) {
             await loadMessages({ silent: true });
+            await loadSessionThreads({ silent: true });
             await loadLiveVideoConversations({ silent: true });
         }
     }, 5000);
@@ -864,6 +959,40 @@ onBeforeUnmount(() => {
                         </Button>
                     </div>
 
+                    <div
+                        v-if="sourceTab === 'live_video' && selectedLiveVideoId"
+                        class="flex flex-wrap gap-2 border-b border-[#F0EDE8] bg-white px-4 py-2"
+                    >
+                        <button
+                            type="button"
+                            :class="[
+                                'rounded-full border px-3 py-1 text-xs font-semibold',
+                                !selectedSessionKey
+                                    ? 'border-[#E8563A] bg-[#E8563A] text-white'
+                                    : 'border-gray-200 bg-white text-gray-600',
+                            ]"
+                            @click="selectSessionThread(null)"
+                        >
+                            All viewers
+                        </button>
+                        <button
+                            v-for="thread in sessionThreads"
+                            :key="thread.session_key"
+                            type="button"
+                            :class="[
+                                'rounded-full border px-3 py-1 text-xs font-semibold',
+                                selectedSessionKey === thread.session_key
+                                    ? 'border-[#E8563A] bg-[#E8563A] text-white'
+                                    : 'border-gray-200 bg-white text-gray-600',
+                                thread.is_banned ? 'opacity-50 line-through' : '',
+                            ]"
+                            @click="selectSessionThread(thread.session_key)"
+                        >
+                            {{ thread.sender_name }}
+                            <span class="ml-1 opacity-70">({{ thread.messages_count }})</span>
+                        </button>
+                    </div>
+
                     <!-- Messages -->
                     <div class="message-scroll flex-1 space-y-2 overflow-y-auto p-4">
                         <div v-if="loadingMessages && messages.length === 0" class="space-y-2">
@@ -875,48 +1004,138 @@ onBeforeUnmount(() => {
                         >
                             No messages in this chat yet.
                         </div>
-                        <div
-                            v-for="msg in messages"
-                            :key="msg.id"
-                            :class="[
-                                'flex',
-                                msg.sender_type === 'attendee' ? 'justify-start' : 'justify-end',
-                            ]"
-                        >
-                            <div
-                                :class="[
-                                    'max-w-[75%] rounded-2xl px-3 py-2 shadow-sm',
-                                    msg.sender_type === 'attendee'
-                                        ? 'rounded-tl-sm bg-white text-gray-900'
-                                        : msg.sender_type === 'ai'
-                                          ? 'rounded-tr-sm bg-[#E8563A]/10 text-gray-900'
-                                          : 'rounded-tr-sm bg-[#E8563A] text-white',
-                                ]"
-                            >
-                                <p
-                                    v-if="msg.sender_type !== 'attendee'"
+                        <template v-else>
+                            <template v-for="msg in messages" :key="msg.id">
+                                <div
                                     :class="[
-                                        'mb-0.5 text-[10px] font-medium',
-                                        msg.sender_type === 'host' ? 'text-white/70' : 'text-gray-500',
+                                        'group flex',
+                                        msg.sender_type === 'attendee' ? 'justify-start' : 'justify-end',
                                     ]"
                                 >
-                                    {{ msg.sender_name || msg.sender_type }}
-                                </p>
-                                <p class="text-sm leading-relaxed">
-                                    <ChatMessageBody
-                                        :text="msg.message"
-                                        :variant="msg.sender_type === 'host' ? 'on-primary' : 'default'"
-                                    />
-                                </p>
-                                <p :class="[
-                                    'mt-1 text-right text-[10px]',
-                                    msg.sender_type === 'host' ? 'text-white/70' : 'text-gray-500',
-                                ]">
-                                    {{ formatTime(msg.created_at) }}
-                                </p>
-                            </div>
-                        </div>
+                                    <div
+                                        :class="[
+                                            'relative max-w-[75%] rounded-2xl px-3 py-2 shadow-sm',
+                                            msg.is_hidden ? 'opacity-50' : '',
+                                            msg.sender_type === 'attendee'
+                                                ? 'rounded-tl-sm bg-white text-gray-900'
+                                                : msg.sender_type === 'ai'
+                                                  ? 'rounded-tr-sm bg-[#E8563A]/10 text-gray-900'
+                                                  : 'rounded-tr-sm bg-[#E8563A] text-white',
+                                        ]"
+                                    >
+                                        <div
+                                            v-if="msg.sender_type === 'attendee'"
+                                            class="absolute -right-1 -top-1 hidden gap-1 group-hover:flex"
+                                        >
+                                            <button
+                                                type="button"
+                                                class="mod-btn"
+                                                title="Hide"
+                                                @click="hideMessage(msg)"
+                                            >
+                                                <EyeOff class="size-3" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="mod-btn"
+                                                title="Delete"
+                                                @click="deleteMessage(msg)"
+                                            >
+                                                <Trash2 class="size-3" />
+                                            </button>
+                                            <button
+                                                v-if="msg.session_key"
+                                                type="button"
+                                                class="mod-btn mod-btn--danger"
+                                                title="Ban viewer"
+                                                @click="banSession(msg)"
+                                            >
+                                                <Ban class="size-3" />
+                                            </button>
+                                        </div>
+                                        <p
+                                            v-if="msg.sender_type !== 'attendee'"
+                                            :class="[
+                                                'mb-0.5 text-[10px] font-medium',
+                                                msg.sender_type === 'host' ? 'text-white/70' : 'text-gray-500',
+                                            ]"
+                                        >
+                                            {{ msg.sender_name || msg.sender_type }}
+                                        </p>
+                                        <p class="text-sm leading-relaxed">
+                                            <ChatMessageBody
+                                                :text="msg.message"
+                                                :variant="msg.sender_type === 'host' ? 'on-primary' : 'default'"
+                                            />
+                                        </p>
+                                        <div class="mt-1 flex items-center justify-between gap-2">
+                                            <button
+                                                v-if="msg.sender_type === 'attendee'"
+                                                type="button"
+                                                class="text-[10px] font-semibold text-[#E8563A]"
+                                                @click="replyToMessageId = msg.id"
+                                            >
+                                                Reply
+                                            </button>
+                                            <span v-else />
+                                            <p :class="[
+                                                'text-right text-[10px]',
+                                                msg.sender_type === 'host' ? 'text-white/70' : 'text-gray-500',
+                                            ]">
+                                                {{ formatTime(msg.created_at) }}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div
+                                    v-for="reply in msg.replies ?? []"
+                                    :key="reply.id"
+                                    :class="[
+                                        'group flex pl-8',
+                                        reply.sender_type === 'attendee' ? 'justify-start' : 'justify-end',
+                                    ]"
+                                >
+                                    <div
+                                        :class="[
+                                            'relative max-w-[70%] rounded-2xl px-3 py-2 shadow-sm',
+                                            reply.sender_type === 'attendee'
+                                                ? 'rounded-tl-sm bg-white text-gray-900'
+                                                : reply.sender_type === 'ai'
+                                                  ? 'rounded-tr-sm bg-[#E8563A]/10 text-gray-900'
+                                                  : 'rounded-tr-sm bg-[#E8563A] text-white',
+                                        ]"
+                                    >
+                                        <p
+                                            v-if="reply.sender_type !== 'attendee'"
+                                            class="mb-0.5 text-[10px] font-medium text-gray-500"
+                                        >
+                                            {{ reply.sender_name || reply.sender_type }}
+                                        </p>
+                                        <p class="text-sm leading-relaxed">
+                                            <ChatMessageBody
+                                                :text="reply.message"
+                                                :variant="reply.sender_type === 'host' ? 'on-primary' : 'default'"
+                                            />
+                                        </p>
+                                    </div>
+                                </div>
+                            </template>
+                        </template>
                     </div>
+
+                    <p
+                        v-if="replyToMessageId"
+                        class="border-t border-[#F0EDE8] bg-[#FFF7F4] px-4 py-2 text-xs text-gray-600"
+                    >
+                        Replying in thread
+                        <button
+                            type="button"
+                            class="ml-2 font-bold text-[#E8563A]"
+                            @click="replyToMessageId = null"
+                        >
+                            Cancel
+                        </button>
+                    </p>
 
                     <!-- Reply box -->
                     <div class="border-t border-[#F0EDE8] bg-white p-3">
@@ -1041,5 +1260,28 @@ onBeforeUnmount(() => {
 .send-btn:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+}
+
+.mod-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    color: #6b7280;
+    cursor: pointer;
+}
+
+.mod-btn:hover {
+    border-color: #e8563a;
+    color: #e8563a;
+}
+
+.mod-btn--danger:hover {
+    border-color: #dc2626;
+    color: #dc2626;
 }
 </style>

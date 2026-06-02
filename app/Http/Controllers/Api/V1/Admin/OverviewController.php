@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\AnalyticsRollup;
 use App\Models\Embed;
+use App\Services\Analytics\AnalyticsSummaryService;
 use App\Models\LiveShow;
 use App\Models\Playlist;
 use App\Models\Product;
@@ -14,7 +14,7 @@ use Illuminate\Http\Request;
 
 class OverviewController extends Controller
 {
-    public function show(Request $request): JsonResponse
+    public function show(Request $request, AnalyticsSummaryService $summaryService): JsonResponse
     {
         $validated = $request->validate([
             'team_id' => ['required', 'integer', 'exists:teams,id'],
@@ -26,15 +26,15 @@ class OverviewController extends Controller
             403,
         );
 
-        $teamId = $validated['team_id'];
+        $teamId = (int) $validated['team_id'];
         $from = now()->subDays(7)->toDateString();
+        $to = now()->toDateString();
 
-        $metrics = AnalyticsRollup::query()
-            ->where('team_id', $teamId)
-            ->where('metric_date', '>=', $from)
-            ->get()
-            ->groupBy('metric_name')
-            ->map(fn ($rollups) => (int) $rollups->sum('value_unsigned'))
+        $summary = $summaryService->build($teamId, $from, $to);
+        $metrics = collect($summary['metrics'] ?? [])
+            ->mapWithKeys(fn (array $metric, string $name): array => [
+                $name => (int) ($metric['count'] ?? 0),
+            ])
             ->all();
 
         return response()->json([
@@ -48,6 +48,8 @@ class OverviewController extends Controller
                 'live_shows' => LiveShow::query()->where('team_id', $teamId)->count(),
             ],
             'metrics_7d' => $metrics,
+            'daily_series' => $summary['daily_series'] ?? [],
+            'top_videos' => array_slice($summary['top_videos'] ?? [], 0, 4),
         ]);
     }
 }
