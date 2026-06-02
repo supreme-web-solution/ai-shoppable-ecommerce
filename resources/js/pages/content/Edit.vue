@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Head, Link, router } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import {
     AlertCircle,
     ArrowLeft,
@@ -35,22 +35,29 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import ScrollableDialogContent from '@/components/ui/dialog/ScrollableDialogContent.vue';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
 import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
+import SocialPublishPanel from '@/components/social/SocialPublishPanel.vue';
 import {
     type EmbedDisplayType,
     type EmbedItem,
     embedPreviewUrl,
     embedScriptCode,
+    canShareOrEmbedVideo,
     ensureEmbedForVideo,
+    SHARE_EMBED_REQUIRES_PUBLISH_TITLE,
     socialShareLinks,
     updateEmbedDisplayType,
 } from '@/lib/videoEmbed';
 
 const props = defineProps<{ videoId: number }>();
+
+const page = usePage();
+const zernioEnabled = computed(() => Boolean(page.props.zernioEnabled));
 
 defineOptions({
     layout: {
@@ -165,12 +172,15 @@ const shareModalOpen = ref(false);
 const shareLoading = ref(false);
 const shareTypeSaving = ref(false);
 const shareUrl = ref('');
+const shopUrl = ref('');
 const embedCode = ref('');
 const shareEmbed = ref<EmbedItem | null>(null);
 const shareEmbedType = ref<EmbedDisplayType>('vertical_feed');
 const copiedToken = ref('');
 
 const shareApi = { getList, postJson, patchJson };
+
+const canShareOrEmbed = computed(() => canShareOrEmbedVideo(form.value.status));
 
 const showPreviewPlayButton = computed(
     () => Boolean(playbackUrl.value) && !previewVideoError.value && (!previewHasStarted.value || userPausedPreview.value),
@@ -581,7 +591,7 @@ async function replaceVideoFile(event: Event) {
 
     replacingVideo.value = true;
     errorText.value = '';
-    infoText.value = 'Uploading video and sending to Cloudinary…';
+    infoText.value = 'Uploading video and sending to Server…';
     try {
         await ensureTeam();
         const upload = await uploadFile('/api/v1/admin/videos/upload', file);
@@ -591,7 +601,7 @@ async function replaceVideoFile(event: Event) {
         form.value.status = 'processing';
         setPlaybackUrl(null);
         cloudinaryPublicId.value = null;
-        infoText.value = 'Video queued for Cloudinary. Keep queue:work running.';
+        infoText.value = 'Video processing. This page will update automatically.';
         startPollingIfNeeded();
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not replace video.';
@@ -611,6 +621,10 @@ async function copyText(text: string, token: string) {
 }
 
 async function openShareModal() {
+    if (!canShareOrEmbed.value) {
+        return;
+    }
+
     shareModalOpen.value = true;
     shareLoading.value = true;
     errorText.value = '';
@@ -624,7 +638,20 @@ async function openShareModal() {
         shareEmbed.value = embed;
         shareEmbedType.value = (embed.type as EmbedDisplayType) || 'vertical_feed';
         shareUrl.value = embedPreviewUrl(embed);
+        shopUrl.value = embed.shop_url ?? '';
         embedCode.value = embedScriptCode(embed, shareEmbedType.value);
+
+        if (zernioEnabled.value) {
+            try {
+                const id = await ensureTeam();
+                const shop = await apiFetch<{ shop_url: string }>(
+                    `/api/v1/admin/zernio/shop-link?team_id=${id}&video_id=${props.videoId}`,
+                );
+                shopUrl.value = shop.shop_url;
+            } catch {
+                shopUrl.value = embed.shop_url ?? shareUrl.value.replace('/embed/', '/shop/');
+            }
+        }
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not prepare share links.';
         shareUrl.value = '';
@@ -670,7 +697,7 @@ onMounted(async () => {
         infoText.value = 'Video is processing. This page will update automatically.';
         startPollingIfNeeded();
     } else if (!hasPlayback.value && form.value.status !== 'failed') {
-        infoText.value = 'No playback URL yet. Re-upload the video or ensure queue:work is running.';
+        infoText.value = 'No playback URL yet. Re-upload the video.';
     }
 });
 
@@ -707,8 +734,9 @@ onUnmounted(stopPolling);
                 </span>
                 <button
                     type="button"
-                    class="ghost-btn flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-gray-600"
-                    :disabled="saving"
+                    class="ghost-btn flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-gray-600 disabled:cursor-not-allowed disabled:opacity-45"
+                    :disabled="saving || !canShareOrEmbed"
+                    :title="canShareOrEmbed ? undefined : SHARE_EMBED_REQUIRES_PUBLISH_TITLE"
                     @click="openShareModal"
                 >
                     <Link2 class="size-3.5" />
@@ -716,8 +744,9 @@ onUnmounted(stopPolling);
                 </button>
                 <button
                     type="button"
-                    class="ghost-btn flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-gray-600"
-                    :disabled="saving"
+                    class="ghost-btn flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-gray-600 disabled:cursor-not-allowed disabled:opacity-45"
+                    :disabled="saving || !canShareOrEmbed"
+                    :title="canShareOrEmbed ? undefined : SHARE_EMBED_REQUIRES_PUBLISH_TITLE"
                     @click="openShareModal"
                 >
                     <Share2 class="size-3.5" />
@@ -770,7 +799,7 @@ onUnmounted(stopPolling);
                 <p v-if="infoText">{{ infoText }}</p>
                 <p v-else-if="isProcessing">Processing on Cloudinary…</p>
                 <p v-else-if="isFailed">Upload failed. Try replacing the video file below.</p>
-                <p v-if="cloudinaryPublicId" class="mt-0.5 text-xs opacity-70">Cloudinary: {{ cloudinaryPublicId }}</p>
+                <!-- <p v-if="cloudinaryPublicId" class="mt-0.5 text-xs opacity-70">Cloudinary: {{ cloudinaryPublicId }}</p> -->
             </div>
         </div>
 
@@ -836,7 +865,7 @@ onUnmounted(stopPolling);
                         <!-- Replace video file -->
                         <div class="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 space-y-2">
                             <label class="field-label">Video file</label>
-                            <p class="text-xs text-gray-500">Uploaded to local storage, then sent to Cloudinary by the queue worker.</p>
+                            <!-- <p class="text-xs text-gray-500">Uploaded to local storage, then sent to Cloudinary.</p> -->
                             <label class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 shadow-sm transition-colors hover:border-[#E8563A]/40 hover:text-[#E8563A]">
                                 <Upload class="size-4" />
                                 {{ replacingVideo ? 'Uploading…' : hasPlayback ? 'Replace video' : 'Upload video' }}
@@ -1233,18 +1262,20 @@ onUnmounted(stopPolling);
 
     <!-- ═══════ Share & Embed modal ═══════ -->
     <Dialog v-model:open="shareModalOpen">
-        <DialogContent class="sm:max-w-[560px]">
-            <DialogHeader>
-                <DialogTitle class="flex items-center gap-2">
-                    <Share2 class="size-4 text-[#E8563A]" />
-                    Share & Embed
-                </DialogTitle>
-                <DialogDescription>
-                    {{ form.title || `Video #${props.videoId}` }} — CDN embed and social share links.
-                </DialogDescription>
-            </DialogHeader>
+        <ScrollableDialogContent class="sm:max-w-[560px]" body-class="py-3">
+            <template #header>
+                <DialogHeader class="space-y-0 p-0">
+                    <DialogTitle class="flex items-center gap-2">
+                        <Share2 class="size-4 text-[#E8563A]" />
+                        Share & Embed
+                    </DialogTitle>
+                    <DialogDescription>
+                        {{ form.title || `Video #${props.videoId}` }} — CDN embed and social share links.
+                    </DialogDescription>
+                </DialogHeader>
+            </template>
 
-            <div v-if="shareLoading" class="space-y-2 py-3">
+            <div v-if="shareLoading" class="space-y-2">
                 <Skeleton class="h-9 w-full rounded-xl" />
                 <Skeleton class="h-20 w-full rounded-xl" />
                 <Skeleton class="h-20 w-full rounded-xl" />
@@ -1289,11 +1320,36 @@ onUnmounted(stopPolling);
                     </Button>
                 </div>
 
+                <div v-if="zernioEnabled && shopUrl" class="space-y-1.5">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Mobile shop link (social)</p>
+                    <div class="flex items-center gap-2 rounded-xl border bg-gray-50 p-2">
+                        <Input :model-value="shopUrl" readonly class="h-8 text-xs" />
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            @click="copyText(shopUrl, 'shop-link')"
+                        >
+                            <Copy class="mr-1 size-3.5" />
+                            {{ copiedToken === 'shop-link' ? 'Copied' : 'Copy' }}
+                        </Button>
+                    </div>
+                    <p class="text-[11px] text-gray-500">
+                        Use this in Instagram/Facebook captions — opens full-screen vertical player with products and checkout.
+                    </p>
+                </div>
+
+                <SocialPublishPanel
+                    v-if="zernioEnabled"
+                    :video-id="videoId"
+                    :title="form.title"
+                    :shop-url="shopUrl"
+                />
+
                 <div class="space-y-1.5">
-                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Share to social media</p>
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Share to social media (manual)</p>
                     <div class="grid gap-2 sm:grid-cols-2">
                         <a
-                            v-for="link in socialShareLinks(shareUrl, form.title)"
+                            v-for="link in socialShareLinks(zernioEnabled && shopUrl ? shopUrl : shareUrl, form.title)"
                             :key="link.key"
                             :href="link.url"
                             target="_blank"
@@ -1305,12 +1361,12 @@ onUnmounted(stopPolling);
                     </div>
                 </div>
             </div>
-        </DialogContent>
+        </ScrollableDialogContent>
     </Dialog>
 
     <!-- ═══════ Product modal ═══════ -->
     <Dialog v-model:open="productModalOpen">
-        <DialogContent class="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-[480px]">
+        <DialogContent class="flex max-h-[min(90dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[480px]">
             <DialogHeader class="shrink-0 border-b px-6 py-4">
                 <DialogTitle class="flex items-center gap-2">
                     <Package class="size-4 text-[#E8563A]" />
@@ -1324,7 +1380,7 @@ onUnmounted(stopPolling);
                     <Input v-model="productSearch" placeholder="Search products…" class="pl-9" />
                 </div>
             </div>
-            <div class="flex-1 overflow-y-auto px-4 py-3">
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 <div v-if="filteredProducts.length === 0" class="py-8 text-center text-sm text-gray-500">
                     No products found.
                     <Link href="/products" class="mt-1 block font-semibold text-[#E8563A]">Add products →</Link>

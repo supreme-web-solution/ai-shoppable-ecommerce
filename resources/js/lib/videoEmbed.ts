@@ -14,6 +14,7 @@ export type EmbedItem = {
     video_id?: number | null;
     playlist_id?: number | null;
     embed_url?: string;
+    shop_url?: string;
     embed_code?: string;
     iframe_code?: string;
 };
@@ -205,6 +206,23 @@ export function replaceEmbedInList(
 
     return next;
 }
+
+export function canShareOrEmbedVideo(status: string | undefined | null): boolean {
+    return status === 'published';
+}
+
+export const SHARE_EMBED_REQUIRES_PUBLISH_TITLE =
+    'Publish this video first to enable embed and social sharing.';
+
+export function canShareOrEmbedPlaylist(playlist: {
+    is_active?: boolean;
+    is_public?: boolean;
+}): boolean {
+    return Boolean(playlist.is_active && playlist.is_public);
+}
+
+export const PLAYLIST_SHARE_EMBED_REQUIRES_PUBLIC_TITLE =
+    'Make this playlist public before copying embed links.';
 
 export function socialShareLinks(url: string, title: string): Array<{ key: string; label: string; url: string }> {
     const encodedUrl = encodeURIComponent(url);

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\CheckoutPageController;
 use App\Http\Controllers\EmbedPageController;
+use App\Http\Controllers\ShopPageController;
 use App\Http\Controllers\TutorialController;
 use App\Http\Controllers\WebinarPageController;
 use Illuminate\Support\Facades\Route;
@@ -36,9 +37,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::inertia('products', 'products/Index')->name('products.index');
     Route::redirect('embeds', '/playlists')->name('embeds.index');
     Route::inertia('analytics', 'analytics/Index')->name('analytics.index');
+    Route::inertia('teams', 'teams/Index')->name('teams.index');
 });
 
 Route::get('embed/{slug}', [EmbedPageController::class, 'show'])->name('embed.show');
+Route::get('shop/{slug}', [ShopPageController::class, 'show'])->name('shop.show');
 Route::get('checkout/{order}/{token}', [CheckoutPageController::class, 'show'])->name('checkout.show');
 Route::get('webinars/{liveShow}/register', [WebinarPageController::class, 'register'])->name('webinars.register');
 Route::get('webinars/{liveShow}/room', [WebinarPageController::class, 'room'])->name('webinars.room');

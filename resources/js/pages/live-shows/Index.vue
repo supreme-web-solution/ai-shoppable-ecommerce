@@ -929,7 +929,7 @@ onBeforeUnmount(() => {
 
     <!-- ═══════════════════════════════════════ Create Dialog ══════════════════════════════════════ -->
     <Dialog v-model:open="createModalOpen">
-        <DialogContent class="flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+        <DialogContent class="flex max-h-[min(92dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
             <!-- Header -->
             <DialogHeader class="shrink-0 border-b px-6 py-4">
                 <DialogTitle>Create Webinar</DialogTitle>
@@ -1353,7 +1353,7 @@ onBeforeUnmount(() => {
 
     <!-- ═══════════════════════════════════════ Edit Dialog ══════════════════════════════════════ -->
     <Dialog v-model:open="editModalOpen">
-        <DialogContent class="flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+        <DialogContent class="flex max-h-[min(92dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
 
             <!-- Header -->
             <div class="shrink-0 border-b px-6 py-4">

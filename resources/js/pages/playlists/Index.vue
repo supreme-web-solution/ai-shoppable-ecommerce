@@ -42,6 +42,8 @@ import {
     findEmbedForPlaylist,
     normalizeEmbedDisplayType,
     replaceEmbedInList,
+    canShareOrEmbedPlaylist,
+    PLAYLIST_SHARE_EMBED_REQUIRES_PUBLIC_TITLE,
     updateEmbedDisplayType,
 } from '@/lib/videoEmbed';
 
@@ -203,6 +205,10 @@ async function changePlaylistEmbedType(
     playlist: PlaylistItem,
     type: EmbedDisplayType,
 ) {
+    if (!canShareOrEmbedPlaylist(playlist)) {
+        return;
+    }
+
     embedTypeSavingId.value = playlist.id;
     errorText.value = '';
 
@@ -425,6 +431,10 @@ async function copyText(value: string, token: string) {
 }
 
 async function copyEmbedLink(playlist: PlaylistItem) {
+    if (!canShareOrEmbedPlaylist(playlist)) {
+        return;
+    }
+
     errorText.value = '';
     try {
         const embed = await resolvePlaylistEmbed(playlist);
@@ -437,6 +447,10 @@ async function copyEmbedLink(playlist: PlaylistItem) {
 }
 
 async function copyEmbedCode(playlist: PlaylistItem) {
+    if (!canShareOrEmbedPlaylist(playlist)) {
+        return;
+    }
+
     errorText.value = '';
     try {
         const embed = await resolvePlaylistEmbed(playlist);
@@ -665,7 +679,8 @@ onMounted(loadData);
                             :model-value="playlistEmbedType(playlist.id)"
                             compact
                             label="Embed display"
-                            :disabled="embedTypeSavingId === playlist.id"
+                            :disabled="embedTypeSavingId === playlist.id || !canShareOrEmbedPlaylist(playlist)"
+                            :title="canShareOrEmbedPlaylist(playlist) ? undefined : PLAYLIST_SHARE_EMBED_REQUIRES_PUBLIC_TITLE"
                             @update:model-value="(type) => changePlaylistEmbedType(playlist, type)"
                         />
 
@@ -673,11 +688,13 @@ onMounted(loadData);
                         <button
                             type="button"
                             :class="[
-                                'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors',
+                                'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45',
                                 embedForPlaylist(playlist.id) && copiedToken === `link-${embedForPlaylist(playlist.id)?.id}`
                                     ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
                                     : 'bg-white text-gray-600 hover:border-[#E8563A]/40 hover:text-[#E8563A]',
                             ]"
+                            :disabled="!canShareOrEmbedPlaylist(playlist)"
+                            :title="canShareOrEmbedPlaylist(playlist) ? undefined : PLAYLIST_SHARE_EMBED_REQUIRES_PUBLIC_TITLE"
                             @click="copyEmbedLink(playlist)"
                         >
                             <template v-if="embedForPlaylist(playlist.id) && copiedToken === `link-${embedForPlaylist(playlist.id)?.id}`">
@@ -694,11 +711,13 @@ onMounted(loadData);
                         <button
                             type="button"
                             :class="[
-                                'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors',
+                                'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45',
                                 embedForPlaylist(playlist.id) && copiedToken === `code-${embedForPlaylist(playlist.id)?.id}`
                                     ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
                                     : 'bg-white text-gray-600 hover:border-[#E8563A]/40 hover:text-[#E8563A]',
                             ]"
+                            :disabled="!canShareOrEmbedPlaylist(playlist)"
+                            :title="canShareOrEmbedPlaylist(playlist) ? undefined : PLAYLIST_SHARE_EMBED_REQUIRES_PUBLIC_TITLE"
                             @click="copyEmbedCode(playlist)"
                         >
                             <template v-if="embedForPlaylist(playlist.id) && copiedToken === `code-${embedForPlaylist(playlist.id)?.id}`">
@@ -768,7 +787,7 @@ onMounted(loadData);
 
     <!-- ═══════ Create playlist modal ═══════ -->
     <Dialog v-model:open="createModalOpen">
-        <DialogContent class="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-[560px]">
+        <DialogContent class="flex max-h-[min(90dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[560px]">
             <DialogHeader class="shrink-0 border-b px-6 py-5">
                 <DialogTitle class="flex items-center gap-2.5">
                     <div class="stat-icon flex size-8 items-center justify-center rounded-lg">
@@ -781,7 +800,7 @@ onMounted(loadData);
                 </DialogDescription>
             </DialogHeader>
 
-            <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            <div class="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-6 py-5">
                 <div class="space-y-1.5">
                     <Label for="pl-title">Playlist name <span class="text-destructive">*</span></Label>
                     <Input
@@ -880,7 +899,7 @@ onMounted(loadData);
 
     <!-- ═══════ Manage videos modal ═══════ -->
     <Dialog v-model:open="contentModalOpen">
-        <DialogContent class="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-[560px]">
+        <DialogContent class="flex max-h-[min(90dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[560px]">
             <DialogHeader class="shrink-0 border-b px-6 py-5">
                 <DialogTitle class="flex items-center gap-2.5">
                     <div class="stat-icon flex size-8 items-center justify-center rounded-lg">
@@ -900,7 +919,7 @@ onMounted(loadData);
                 </div>
             </div>
 
-            <div class="flex-1 overflow-y-auto px-4 py-3">
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 <div class="mb-4 space-y-3 rounded-xl border border-[#F0EDE8] bg-[#FAF8F5] p-4">
                     <div class="flex items-start justify-between gap-3">
                         <div class="space-y-1">

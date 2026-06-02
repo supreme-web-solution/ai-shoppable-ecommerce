@@ -36,6 +36,7 @@ class EmbedResource extends JsonResource
             'allowed_domains' => $this->allowed_domains,
             'settings' => $this->settings,
             'embed_url' => url('/embed/'.$this->slug),
+            'shop_url' => url('/shop/'.$this->slug),
             'script_url' => url('/embed/embed.js'),
             'embed_code' => $this->scriptEmbedCode(),
             'iframe_code' => $this->scriptEmbedCode(),

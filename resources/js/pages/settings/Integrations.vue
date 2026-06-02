@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Head } from '@inertiajs/vue3';
+import { Head, usePage } from '@inertiajs/vue3';
 import { CircleHelp, Loader2 } from 'lucide-vue-next';
 import { computed, onMounted, ref } from 'vue';
 import ShopifySetupGuideDialog from '@/components/integrations/ShopifySetupGuideDialog.vue';
+import ZernioConnectPanel from '@/components/integrations/ZernioConnectPanel.vue';
 import WooSetupGuideDialog from '@/components/integrations/WooSetupGuideDialog.vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +33,9 @@ defineOptions({
         ],
     },
 });
+
+const page = usePage();
+const zernioEnabled = computed(() => Boolean(page.props.zernioEnabled));
 
 const { teamId, apiFetch, patchJson, postJson, ensureTeam } = useAdminApi();
 
@@ -808,6 +812,8 @@ onMounted(loadTeam);
                     </div>
                 </div>
             </Transition>
+
+            <ZernioConnectPanel v-if="zernioEnabled" />
 
             <!-- Save -->
             <div v-if="activeSection" class="section-card flex items-center gap-4 rounded-2xl p-4">

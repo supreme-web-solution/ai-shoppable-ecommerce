@@ -14,11 +14,64 @@ class TeamController extends Controller
     {
         $user = request()->user();
 
-        return Team::query()
+        $teams = Team::query()
             ->where('owner_user_id', $user->id)
             ->orWhereHas('users', fn ($query) => $query->whereKey($user->id))
+            ->with([
+                'owner:id,name,email',
+                'users' => fn ($query) => $query->whereKey($user->id)->select('users.id', 'users.name', 'users.email'),
+            ])
+            ->withCount(['videos', 'products', 'playlists', 'embeds', 'liveShows'])
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->map(function (Team $team) use ($user) {
+                $membership = $team->users->first();
+                $role = $team->owner_user_id === $user->id
+                    ? 'owner'
+                    : ($membership?->pivot?->role ?? 'member');
+
+                return [
+                    'id' => $team->id,
+                    'name' => $team->name,
+                    'slug' => $team->slug,
+                    'checkout_mode' => $team->checkout_mode,
+                    'external_provider' => $team->external_provider,
+                    'is_active' => (bool) $team->is_active,
+                    'is_current' => (int) $user->team_id === (int) $team->id,
+                    'role' => $role,
+                    'owner' => $team->owner ? [
+                        'id' => $team->owner->id,
+                        'name' => $team->owner->name,
+                        'email' => $team->owner->email,
+                    ] : null,
+                    'counts' => [
+                        'videos' => (int) $team->videos_count,
+                        'products' => (int) $team->products_count,
+                        'playlists' => (int) $team->playlists_count,
+                        'embeds' => (int) $team->embeds_count,
+                        'live_shows' => (int) $team->live_shows_count,
+                    ],
+                    'created_at' => $team->created_at,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'data' => $teams,
+            'current_team_id' => $user->team_id,
+        ]);
+    }
+
+    public function activate(Request $request, Team $team)
+    {
+        $this->authorize('view', $team);
+
+        $request->user()->update(['team_id' => $team->id]);
+
+        return response()->json([
+            'team_id' => $team->id,
+            'message' => 'Active workspace updated.',
+        ]);
     }
 
     public function store(Request $request)

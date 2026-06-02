@@ -2152,7 +2152,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
 
     <!-- Product selection modal (upload tab) -->
     <Dialog v-model:open="productModalOpen">
-        <DialogContent class="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-[560px]">
+        <DialogContent class="flex max-h-[min(90dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[560px]">
             <DialogHeader class="shrink-0 border-b px-6 py-4">
                 <DialogTitle class="flex items-center gap-2">
                     <Package class="size-4 text-orange-500" />
@@ -2170,7 +2170,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                 </div>
             </div>
 
-            <div class="flex-1 overflow-y-auto px-4 py-3">
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 <div v-if="filteredProducts.length === 0" class="py-8 text-center text-sm text-muted-foreground">
                     No products found.
                     <Link href="/products" class="mt-1 block text-[#E8563A] underline">Add products first →</Link>

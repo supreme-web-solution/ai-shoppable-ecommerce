@@ -72,6 +72,12 @@ return [
         'watermark_enabled' => filter_var(env('HEYGEN_WATERMARK_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
     ],
 
+    'zernio' => [
+        'enabled' => filter_var(env('ZERNIO_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'api_key' => env('ZERNIO_API_KEY'),
+        'base_url' => env('ZERNIO_BASE_URL', 'https://zernio.com/api/v1'),
+    ],
+
     'ai' => [
         'default_avatar_duration' => (int) env('AI_DEFAULT_AVATAR_DURATION', 45),
         'avatar_poll_attempts' => (int) env('AI_AVATAR_POLL_ATTEMPTS', 60),

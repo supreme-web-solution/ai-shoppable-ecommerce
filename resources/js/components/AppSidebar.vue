@@ -12,6 +12,7 @@ import {
     Package,
     Settings,
     Sparkles,
+    Users,
 } from 'lucide-vue-next';
 import NavUser from '@/components/NavUser.vue';
 import {
@@ -62,6 +63,7 @@ const navSections: NavSection[] = [
     {
         label: 'Account',
         items: [
+            { title: 'Teams', href: '/teams', icon: Users },
             { title: 'Integrations', href: '/settings/integrations', icon: Settings },
         ],
     },

@@ -399,7 +399,7 @@ onMounted(loadProducts);
 
     <!-- ═══════ Create product modal ═══════ -->
     <Dialog v-model:open="createModalOpen">
-        <DialogContent class="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-[600px]">
+        <DialogContent class="flex max-h-[min(90dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[600px]">
             <DialogHeader class="shrink-0 border-b px-6 py-4">
                 <DialogTitle class="flex items-center gap-2">
                     <ShoppingBag class="size-4 text-orange-500" />
@@ -414,7 +414,7 @@ onMounted(loadProducts);
                 </DialogDescription>
             </DialogHeader>
 
-            <div class="flex-1 space-y-5 overflow-y-auto px-6 py-4">
+            <div class="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-6 py-4">
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div class="space-y-1.5">
                         <Label for="p-title">Product name <span class="text-destructive">*</span></Label>

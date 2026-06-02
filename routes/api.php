@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Admin\ProductController;
 use App\Http\Controllers\Api\V1\Admin\TeamController;
 use App\Http\Controllers\Api\V1\Admin\VideoController;
 use App\Http\Controllers\Api\V1\Admin\VideoProductTagController;
+use App\Http\Controllers\Api\V1\Admin\ZernioController;
 use App\Http\Controllers\Api\V1\Analytics\DashboardController;
 use App\Http\Controllers\Api\V1\Analytics\EventIngestionController;
 use App\Http\Controllers\Api\V1\Integrations\NativePaymentWebhookController;
@@ -88,6 +89,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('ai/product-placement-image', [AiContentController::class, 'uploadProductPlacementImage']);
         Route::post('ai/avatar-videos', [AiContentController::class, 'generateAvatarVideo']);
         Route::post('ai/multilingual-videos', [AiContentController::class, 'generateMultilingualVideos']);
+        Route::post('teams/{team}/activate', [TeamController::class, 'activate']);
         Route::apiResource('teams', TeamController::class);
         Route::apiResource('videos', VideoController::class);
         Route::get('videos/{video}/product-tags', [VideoProductTagController::class, 'index']);
@@ -113,5 +115,15 @@ Route::prefix('v1')->group(function (): void {
         Route::delete('live-video-chats/{video}/comments/{comment}', [LiveVideoChatController::class, 'deleteComment']);
         Route::post('live-video-chats/{video}/ban-session', [LiveVideoChatController::class, 'banSession']);
         Route::post('teams/{team}/tokens', [TeamController::class, 'issueToken']);
+
+        Route::prefix('zernio')->group(function (): void {
+            Route::get('status', [ZernioController::class, 'status']);
+            Route::post('profile', [ZernioController::class, 'ensureProfile']);
+            Route::get('connect', [ZernioController::class, 'connectUrl']);
+            Route::get('accounts', [ZernioController::class, 'accounts']);
+            Route::get('shop-link', [ZernioController::class, 'shopLink']);
+            Route::post('publish', [ZernioController::class, 'publish']);
+            Route::get('history', [ZernioController::class, 'history']);
+        });
     });
 });

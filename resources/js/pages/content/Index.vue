@@ -22,12 +22,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
-    DialogContent,
     DialogDescription,
     DialogFooter,
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import ScrollableDialogContent from '@/components/ui/dialog/ScrollableDialogContent.vue';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
@@ -37,7 +37,9 @@ import {
     type EmbedItem,
     embedPreviewUrl,
     embedScriptCode,
+    canShareOrEmbedVideo,
     ensureEmbedForVideo,
+    SHARE_EMBED_REQUIRES_PUBLISH_TITLE,
     socialShareLinks,
     updateEmbedDisplayType,
 } from '@/lib/videoEmbed';
@@ -257,6 +259,10 @@ async function copyText(text: string, token: string) {
 }
 
 async function openShareModal(video: VideoItem) {
+    if (!canShareOrEmbedVideo(video.status)) {
+        return;
+    }
+
     shareLoading.value = true;
     errorText.value = '';
     activeShareVideo.value = video;
@@ -440,11 +446,23 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
                             <Package class="size-3.5" />
                             Products
                         </Link>
-                        <button type="button" class="action-btn" @click="openShareModal(video)">
+                        <button
+                            type="button"
+                            class="action-btn disabled:cursor-not-allowed disabled:opacity-45"
+                            :disabled="!canShareOrEmbedVideo(video.status)"
+                            :title="canShareOrEmbedVideo(video.status) ? undefined : SHARE_EMBED_REQUIRES_PUBLISH_TITLE"
+                            @click="openShareModal(video)"
+                        >
                             <Link2 class="size-3.5" />
                             Embed
                         </button>
-                        <button type="button" class="action-btn" @click="openShareModal(video)">
+                        <button
+                            type="button"
+                            class="action-btn disabled:cursor-not-allowed disabled:opacity-45"
+                            :disabled="!canShareOrEmbedVideo(video.status)"
+                            :title="canShareOrEmbedVideo(video.status) ? undefined : SHARE_EMBED_REQUIRES_PUBLISH_TITLE"
+                            @click="openShareModal(video)"
+                        >
                             <Share2 class="size-3.5" />
                             Share
                         </button>
@@ -496,16 +514,18 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
 
     <!-- ═══════ Add-to-Playlist modal ═══════ -->
     <Dialog v-model:open="playlistModalOpen">
-        <DialogContent class="sm:max-w-[480px]">
-            <DialogHeader>
-                <DialogTitle class="flex items-center gap-2">
-                    <Layers3 class="size-4 text-blue-500" />
-                    Add to Playlist
-                </DialogTitle>
-                <DialogDescription>
-                    Choose which playlists should include "{{ playlistModalVideoTitle }}".
-                </DialogDescription>
-            </DialogHeader>
+        <ScrollableDialogContent class="sm:max-w-[480px]" body-class="py-3">
+            <template #header>
+                <DialogHeader class="space-y-0 p-0">
+                    <DialogTitle class="flex items-center gap-2">
+                        <Layers3 class="size-4 text-blue-500" />
+                        Add to Playlist
+                    </DialogTitle>
+                    <DialogDescription>
+                        Choose which playlists should include "{{ playlistModalVideoTitle }}".
+                    </DialogDescription>
+                </DialogHeader>
+            </template>
 
             <div v-if="playlists.length === 0" class="py-6 text-center text-sm text-muted-foreground">
                 No playlists yet.
@@ -548,30 +568,34 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
                 </button>
             </div>
 
-            <DialogFooter class="gap-2">
-                <Button variant="ghost" @click="playlistModalOpen = false">Cancel</Button>
-                <Button :disabled="savingPlaylists || playlists.length === 0" @click="saveVideoPlaylists">
-                    <Loader2 v-if="savingPlaylists" class="mr-2 size-4 animate-spin" />
-                    {{ savingPlaylists ? 'Saving…' : 'Save' }}
-                </Button>
-            </DialogFooter>
-        </DialogContent>
+            <template #footer>
+                <DialogFooter class="gap-2 p-0 sm:justify-end">
+                    <Button variant="ghost" @click="playlistModalOpen = false">Cancel</Button>
+                    <Button :disabled="savingPlaylists || playlists.length === 0" @click="saveVideoPlaylists">
+                        <Loader2 v-if="savingPlaylists" class="mr-2 size-4 animate-spin" />
+                        {{ savingPlaylists ? 'Saving…' : 'Save' }}
+                    </Button>
+                </DialogFooter>
+            </template>
+        </ScrollableDialogContent>
     </Dialog>
 
     <!-- ═══════ Share & Embed modal ═══════ -->
     <Dialog v-model:open="shareModalOpen">
-        <DialogContent class="sm:max-w-[560px]">
-            <DialogHeader>
-                <DialogTitle class="flex items-center gap-2">
-                    <Share2 class="size-4 text-[#E8563A]" />
-                    Share & Embed
-                </DialogTitle>
-                <DialogDescription>
-                    {{ activeShareVideo?.title || 'Video' }} — CDN embed + social share links.
-                </DialogDescription>
-            </DialogHeader>
+        <ScrollableDialogContent class="sm:max-w-[560px]" body-class="py-3">
+            <template #header>
+                <DialogHeader class="space-y-0 p-0">
+                    <DialogTitle class="flex items-center gap-2">
+                        <Share2 class="size-4 text-[#E8563A]" />
+                        Share & Embed
+                    </DialogTitle>
+                    <DialogDescription>
+                        {{ activeShareVideo?.title || 'Video' }} — CDN embed + social share links.
+                    </DialogDescription>
+                </DialogHeader>
+            </template>
 
-            <div v-if="shareLoading" class="space-y-2 py-4">
+            <div v-if="shareLoading" class="space-y-2">
                 <Skeleton class="h-9 w-full rounded-xl" />
                 <Skeleton class="h-20 w-full rounded-xl" />
                 <Skeleton class="h-20 w-full rounded-xl" />
@@ -632,7 +656,7 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
                     </div>
                 </div>
             </div>
-        </DialogContent>
+        </ScrollableDialogContent>
     </Dialog>
 </template>
 
