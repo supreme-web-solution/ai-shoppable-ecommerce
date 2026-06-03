@@ -41,9 +41,39 @@ Copy `.env.example` to `.env` and configure:
 
 Pushes to `main` / `master` run [`.github/workflows/build-assets.yml`](../.github/workflows/build-assets.yml). That workflow runs `npm run build`, then commits `public/build` and `public/embed` back to the branch. Forge should **not** run `npm` on deploy—pull the repo and use the committed assets.
 
-### Laravel Forge deploy script
+### Laravel Forge deploy script (zero-downtime)
 
-Use something like this (no `npm ci` / `npm run build`):
+**Do not use** `$FORGE_PHP artisan optimize` in Forge. It runs `route:cache` internally and will fail with duplicate route names if the server is on an old release. Use explicit cache commands instead (see [`deploy/forge-deploy.sh`](../deploy/forge-deploy.sh)).
+
+Replace the body of your Forge deploy script (between `$CREATE_RELEASE()` and `$ACTIVATE_RELEASE()`) with:
+
+```bash
+cd $FORGE_RELEASE_DIRECTORY
+
+$FORGE_COMPOSER install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+$FORGE_PHP artisan route:clear
+$FORGE_PHP artisan config:cache
+$FORGE_PHP artisan event:cache
+$FORGE_PHP artisan view:cache
+$FORGE_PHP artisan route:cache
+
+$FORGE_PHP artisan storage:link || true
+$FORGE_PHP artisan migrate --force
+```
+
+Keep Forge’s `$CREATE_RELEASE()`, `$ACTIVATE_RELEASE()`, and `$RESTART_QUEUES()` lines as-is.
+
+**Verify the route-name fix is on the server** (SSH into the site):
+
+```bash
+grep "live-shows.page" $FORGE_RELEASE_DIRECTORY/routes/web.php
+grep "name('admin." $FORGE_RELEASE_DIRECTORY/routes/api.php
+```
+
+Both commands should print a match. If you still see `live-shows.index` in `routes/web.php`, Forge is deploying an old commit — deploy branch `main` after commit `ded360b` or newer.
+
+### Laravel Forge deploy script (simple / non-zero-downtime)
 
 ```bash
 cd $FORGE_SITE_PATH
@@ -51,11 +81,12 @@ git pull origin $FORGE_SITE_BRANCH
 
 $FORGE_COMPOSER install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
-$FORGE_PHP artisan migrate --force
 $FORGE_PHP artisan route:clear
 $FORGE_PHP artisan config:cache
-$FORGE_PHP artisan route:cache
+$FORGE_PHP artisan event:cache
 $FORGE_PHP artisan view:cache
+$FORGE_PHP artisan route:cache
+$FORGE_PHP artisan migrate --force
 $FORGE_PHP artisan storage:link || true
 $FORGE_PHP artisan horizon:terminate
 
