@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Head, Link, router, usePage } from '@inertiajs/vue3';
+import { Head, Link, router } from '@inertiajs/vue3';
 import {
     ArrowLeft,
     Check,
@@ -100,17 +100,13 @@ type HeyGenVoiceOption = {
 
 type HeyGenOptions = {
     enabled: boolean;
-    watermark_enabled?: boolean;
     avatars: HeyGenAvatarOption[];
     voices: HeyGenVoiceOption[];
     cached_at?: string | null;
     message?: string | null;
 };
 
-type ProductPlacementPosition = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
-
 const { teamId, apiFetch, getList, postJson, uploadFile, ensureTeam } = useAdminApi();
-const page = usePage();
 
 /* ── top-level tabs ── */
 const activeTab = ref<'upload' | 'ai'>('upload');
@@ -139,16 +135,9 @@ const manualScriptPanelOpen = ref(false);
 const uploading = ref(false);
 const products = ref<ProductOption[]>([]);
 const heygenOptions = ref<HeyGenOptions>({ enabled: false, avatars: [], voices: [], cached_at: null, message: null });
-/** When true, placement settings are sent to HeyGen as watermark + motion prompt. */
-const heygenPlacementApiEnabled = computed(
-    () =>
-        Boolean((page.props as { heygenWatermarkEnabled?: boolean }).heygenWatermarkEnabled)
-        || Boolean(heygenOptions.value.watermark_enabled),
-);
 const heygenLoading = ref(false);
 const heygenError = ref('');
 const aiGenerating = ref(false);
-const productPlacementUploading = ref(false);
 
 /* ── video file + preview ── */
 const selectedFile = ref<File | null>(null);
@@ -258,17 +247,6 @@ const avatarForm = ref({
 });
 
 const enableEmbedOverlays = ref(true);
-const productPlacement = ref({
-    enabled: false,
-    image_url: '',
-    position: 'bottom_right' as ProductPlacementPosition,
-    scale: 0.3,
-    opacity: 1,
-    offset_x: 0,
-    offset_y: 0,
-    motion_prompt: '',
-});
-const productPlacementPreviewUrl = ref<string | null>(null);
 
 const SUPPORTED_LANGUAGES = [
     { code: 'en', label: 'English' },
@@ -456,64 +434,9 @@ function onThumbnailFileSelected(event: Event) {
     thumbnailPreviewUrl.value = URL.createObjectURL(file);
 }
 
-async function onProductPlacementImageSelected(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) {
-        return;
-    }
-
-    productPlacementUploading.value = true;
-    errorText.value = '';
-
-    try {
-        await ensureTeam();
-
-        const formData = new FormData();
-        formData.append('team_id', String(teamId.value));
-        formData.append('file', file);
-
-        const upload = await apiFetch<{ url?: string; path?: string }>(
-            '/api/v1/admin/ai/product-placement-image',
-            {
-                method: 'POST',
-                body: formData,
-            },
-        );
-
-        const uploadedUrl = String(upload.url ?? '');
-        if (uploadedUrl === '') {
-            throw new Error('Upload succeeded but no image URL was returned.');
-        }
-
-        if (productPlacementPreviewUrl.value?.startsWith('blob:')) {
-            URL.revokeObjectURL(productPlacementPreviewUrl.value);
-        }
-
-        productPlacementPreviewUrl.value = URL.createObjectURL(file);
-        productPlacement.value.image_url = uploadedUrl;
-        productPlacement.value.enabled = true;
-    } catch (err) {
-        errorText.value = err instanceof Error ? err.message : 'Could not upload product image.';
-    } finally {
-        productPlacementUploading.value = false;
-        input.value = '';
-    }
-}
-
-function clearProductPlacementImage() {
-    if (productPlacementPreviewUrl.value?.startsWith('blob:')) {
-        URL.revokeObjectURL(productPlacementPreviewUrl.value);
-    }
-
-    productPlacementPreviewUrl.value = null;
-    productPlacement.value.image_url = '';
-}
-
 onUnmounted(() => {
     if (previewVideoUrl.value) URL.revokeObjectURL(previewVideoUrl.value);
     if (thumbnailPreviewUrl.value?.startsWith('blob:')) URL.revokeObjectURL(thumbnailPreviewUrl.value);
-    if (productPlacementPreviewUrl.value?.startsWith('blob:')) URL.revokeObjectURL(productPlacementPreviewUrl.value);
     audioInstance?.pause();
 });
 
@@ -605,54 +528,8 @@ const showScriptEditor = computed(
 );
 
 const canGenerateAvatar = computed(() =>
-    Boolean(avatarForm.value.title && avatarForm.value.script)
-    && (
-        !heygenPlacementApiEnabled.value
-        || !productPlacement.value.enabled
-        || productPlacement.value.image_url.trim() !== ''
-    ),
+    Boolean(avatarForm.value.title && avatarForm.value.script),
 );
-
-function resolvePlacementImageSrc(url: string | null | undefined): string {
-    const value = String(url ?? '').trim();
-    if (value === '') {
-        return '';
-    }
-
-    if (/^(https?:|blob:)/i.test(value)) {
-        return value;
-    }
-
-    if (value.startsWith('/')) {
-        return `${window.location.origin}${value}`;
-    }
-
-    return value;
-}
-
-const productPlacementImageSrc = computed(() =>
-    resolvePlacementImageSrc(productPlacementPreviewUrl.value || productPlacement.value.image_url),
-);
-
-const productPlacementWillSendToHeyGen = computed(
-    () =>
-        heygenPlacementApiEnabled.value
-        && productPlacement.value.enabled
-        && productPlacement.value.image_url.trim() !== '',
-);
-
-function productPlacementRequestFields(): Record<string, unknown> {
-    return {
-        product_placement_enabled: productPlacement.value.enabled,
-        product_placement_image_url: productPlacement.value.image_url || null,
-        product_placement_position: productPlacement.value.position,
-        product_placement_scale: productPlacement.value.scale,
-        product_placement_opacity: productPlacement.value.opacity,
-        product_placement_offset_x: productPlacement.value.offset_x,
-        product_placement_offset_y: productPlacement.value.offset_y,
-        product_placement_motion_prompt: productPlacement.value.motion_prompt || null,
-    };
-}
 
 async function generateScript() {
     scriptEntryMode.value = 'ai';
@@ -702,7 +579,6 @@ async function generateAvatarVideo() {
             }>('/api/v1/admin/ai/multilingual-videos', {
                 ...avatarForm.value,
                 enable_embed_overlays: enableEmbedOverlays.value,
-                ...productPlacementRequestFields(),
                 languages: selectedLanguages.value,
             });
 
@@ -722,7 +598,6 @@ async function generateAvatarVideo() {
                 {
                     ...avatarForm.value,
                     enable_embed_overlays: enableEmbedOverlays.value,
-                    ...productPlacementRequestFields(),
                     language,
                 },
             );
@@ -772,7 +647,6 @@ async function loadHeyGenOptions(refresh = false) {
         const payload = await apiFetch<HeyGenOptions>(`/api/v1/admin/ai/heygen-options?${params.toString()}`);
         heygenOptions.value = {
             enabled: Boolean(payload.enabled),
-            watermark_enabled: payload.watermark_enabled ?? false,
             avatars: payload.avatars ?? [],
             voices: payload.voices ?? [],
             cached_at: payload.cached_at ?? null,
@@ -1697,33 +1571,6 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             </div>
                         </div>
 
-                        <div
-                            v-if="productPlacement.enabled"
-                            class="flex items-center gap-3 rounded-2xl border bg-muted/30 p-3"
-                        >
-                            <div class="h-16 w-16 shrink-0 overflow-hidden rounded-xl border bg-muted">
-                                <img
-                                    v-if="productPlacementImageSrc"
-                                    :src="productPlacementImageSrc"
-                                    alt="Placement preview"
-                                    class="h-full w-full object-cover"
-                                >
-                                <div v-else class="flex h-full items-center justify-center text-[10px] text-muted-foreground">
-                                    No image
-                                </div>
-                            </div>
-                            <div class="min-w-0 flex-1 text-xs">
-                                <p class="font-semibold">Product placement</p>
-                                <p v-if="productPlacementWillSendToHeyGen" class="mt-1 text-emerald-700">
-                                    Will be sent to HeyGen as a video overlay.
-                                </p>
-                                <p v-else class="mt-1 text-amber-800">
-                                    Saved in settings but <strong>not</strong> burned into the HeyGen video until
-                                    <code class="rounded bg-amber-100 px-1">HEYGEN_WATERMARK_ENABLED=true</code>.
-                                </p>
-                            </div>
-                        </div>
-
                         <!-- <div class="flex gap-2 rounded-xl border border-[#E8563A]/20 bg-[#E8563A]/5 px-3 py-2.5 text-xs text-foreground">
                             <Info class="mt-0.5 size-4 shrink-0 text-[#E8563A]" />
                             <p>
@@ -1751,113 +1598,6 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     {{ avatarSelectedProducts.length }} product{{ avatarSelectedProducts.length > 1 ? 's' : '' }} will appear as buy cards in the embed.
                                     Plan timed coupon or CTA overlays in Edit after publish.
                                 </p>
-                            </CardContent>
-                        </Card>
-
-                        <Card>
-                            <CardContent class="space-y-4 pt-5">
-                               
-                                <div class="flex items-start justify-between gap-3">
-                                    <div class="space-y-1">
-                                        <Label>Product placement</Label>
-                                        <p class="text-xs text-muted-foreground">
-                                            Product image overlay on the video + motion prompt so the avatar can gesture toward it.
-                                        </p>
-                                    </div>
-                                    <label class="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
-                                        <input v-model="productPlacement.enabled" type="checkbox" class="peer sr-only">
-                                        <div class="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-[#E8563A] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
-                                    </label>
-                                </div>
-
-                                <div v-if="productPlacement.enabled" class="space-y-3">
-                                    <div class="grid gap-3 sm:grid-cols-[120px_1fr]">
-                                        <div class="relative h-24 w-24 overflow-hidden rounded-xl border bg-muted">
-                                            <img
-                                                v-if="productPlacementImageSrc"
-                                                :src="productPlacementImageSrc"
-                                                alt="Product placement image"
-                                                class="h-full w-full object-cover"
-                                                @error="errorText = 'Could not load placement image preview. Check the image URL is public.'"
-                                            >
-                                            <div v-else class="flex h-full items-center justify-center text-[10px] text-muted-foreground">
-                                                No image
-                                            </div>
-                                        </div>
-                                        <div class="space-y-2">
-                                            <label class="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed py-2.5 text-xs text-muted-foreground transition-colors hover:border-[#E8563A]/40 hover:bg-[#E8563A]/5 hover:text-[#E8563A]">
-                                                <Upload class="size-3.5" />
-                                                {{ productPlacementUploading ? 'Uploading…' : 'Upload product image' }}
-                                                <input
-                                                    type="file"
-                                                    accept="image/png,image/jpeg,image/webp"
-                                                    class="hidden"
-                                                    :disabled="productPlacementUploading"
-                                                    @change="onProductPlacementImageSelected"
-                                                >
-                                            </label>
-                                            <Input
-                                                v-model="productPlacement.image_url"
-                                                type="url"
-                                                placeholder="Or paste a public product image URL"
-                                                class="h-9 text-xs"
-                                            />
-                                            <div class="flex gap-2">
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="sm"
-                                                    :disabled="!productPlacement.image_url && !productPlacementPreviewUrl"
-                                                    @click="clearProductPlacementImage"
-                                                >
-                                                    Clear image
-                                                </Button>
-                                                <span class="text-[11px] text-muted-foreground">
-                                                    PNG/JPG/WebP recommended
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="grid gap-3 sm:grid-cols-2">
-                                        <div class="space-y-1">
-                                            <Label class="text-xs">Placement</Label>
-                                            <select
-                                                v-model="productPlacement.position"
-                                                class="h-9 w-full rounded-lg border bg-background px-2 text-xs"
-                                            >
-                                                <option value="top_left">Top left</option>
-                                                <option value="top_right">Top right</option>
-                                                <option value="bottom_left">Bottom left</option>
-                                                <option value="bottom_right">Bottom right</option>
-                                            </select>
-                                        </div>
-                                        <div class="space-y-1">
-                                            <Label class="text-xs">Scale (0.1 - 2.0)</Label>
-                                            <Input v-model.number="productPlacement.scale" type="number" min="0.1" max="2" step="0.05" class="h-9 text-xs" />
-                                        </div>
-                                        <div class="space-y-1">
-                                            <Label class="text-xs">Opacity (0 - 1)</Label>
-                                            <Input v-model.number="productPlacement.opacity" type="number" min="0" max="1" step="0.05" class="h-9 text-xs" />
-                                        </div>
-                                        <div class="space-y-1">
-                                            <Label class="text-xs">Offset X / Y (-1 to 1)</Label>
-                                            <div class="grid grid-cols-2 gap-2">
-                                                <Input v-model.number="productPlacement.offset_x" type="number" min="-1" max="1" step="0.01" class="h-9 text-xs" placeholder="X" />
-                                                <Input v-model.number="productPlacement.offset_y" type="number" min="-1" max="1" step="0.01" class="h-9 text-xs" placeholder="Y" />
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="space-y-1">
-                                        <Label class="text-xs">Motion prompt (optional)</Label>
-                                        <Input
-                                            v-model="productPlacement.motion_prompt"
-                                            placeholder="e.g. Hold the product near chest level and gesture to it naturally."
-                                            class="h-9 text-xs"
-                                        />
-                                    </div>
-                                </div>
                             </CardContent>
                         </Card>
 
@@ -1971,12 +1711,6 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                         <!-- <p class="text-center text-xs text-muted-foreground">
                             Powered by HeyGen · renders in 1–5 min · you'll see them on the Videos page
                         </p> -->
-                        <p
-                            v-if="productPlacement.enabled && !productPlacement.image_url.trim()"
-                            class="text-center text-xs text-amber-700"
-                        >
-                            Upload or paste a product image URL to use product placement.
-                        </p>
 
                         <div class="flex justify-start pt-1">
                             <Button variant="ghost" @click="goStep(3)">

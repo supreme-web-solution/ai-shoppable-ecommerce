@@ -42,7 +42,6 @@ class HandleInertiaRequests extends Middleware
                 'user' => $request->user(),
             ],
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
-            'heygenWatermarkEnabled' => (bool) config('services.heygen.watermark_enabled', false),
             'zernioEnabled' => (bool) config('services.zernio.enabled', false)
                 && trim((string) config('services.zernio.api_key')) !== '',
         ];

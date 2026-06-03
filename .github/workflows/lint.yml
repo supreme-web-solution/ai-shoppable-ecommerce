@@ -7,6 +7,9 @@ on:
       - main
       - master
       - workos
+    paths-ignore:
+      - 'public/build/**'
+      - 'public/embed/**'
   pull_request:
     branches:
       - develop

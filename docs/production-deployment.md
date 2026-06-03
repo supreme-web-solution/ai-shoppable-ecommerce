@@ -7,7 +7,7 @@ This guide covers deploying the AI Social Video Commerce platform with **Laravel
 ## Prerequisites
 
 - PHP 8.3+ with extensions: `bcmath`, `ctype`, `curl`, `dom`, `fileinfo`, `json`, `mbstring`, `openssl`, `pdo_mysql`, `redis`, `tokenizer`, `xml`
-- Node.js 20+ (build assets in CI or on deploy host)
+- Node.js 20+ (local dev only; production assets are built in GitHub Actions)
 - MySQL 8+
 - Redis 7+
 - Nginx (or Apache) + PHP-FPM
@@ -37,7 +37,36 @@ Copy `.env.example` to `.env` and configure:
 | `OPENAI_API_KEY` | Optional — AI script generation |
 | `HEYGEN_API_KEY` | Optional — AI avatar videos |
 
-Build frontend assets:
+### Frontend assets (GitHub Actions)
+
+Pushes to `main` / `master` run [`.github/workflows/build-assets.yml`](../.github/workflows/build-assets.yml). That workflow runs `npm run build`, then commits `public/build` and `public/embed` back to the branch. Forge should **not** run `npm` on deploy—pull the repo and use the committed assets.
+
+### Laravel Forge deploy script
+
+Use something like this (no `npm ci` / `npm run build`):
+
+```bash
+cd $FORGE_SITE_PATH
+git pull origin $FORGE_SITE_BRANCH
+
+$FORGE_COMPOSER install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+$FORGE_PHP artisan migrate --force
+$FORGE_PHP artisan config:cache
+$FORGE_PHP artisan route:cache
+$FORGE_PHP artisan view:cache
+$FORGE_PHP artisan storage:link || true
+$FORGE_PHP artisan horizon:terminate
+
+( flock -w 10 9 || exit 1
+  echo 'Restarting FPM...'; sudo -S service $FORGE_PHP_FPM reload ) 9>/tmp/fpmlock
+```
+
+Ensure the site deploys from `main` / `master` **after** the `build-assets` workflow finishes (two commits per deploy: your code push, then the bot asset commit). Enable **Quick Deploy** only if you are fine waiting for CI; otherwise deploy manually or trigger Forge after Actions completes.
+
+If branch protection blocks `github-actions[bot]` from pushing, allow the bot in repository rules or use a deploy key / PAT with write access.
+
+Local-only asset rebuild:
 
 ```bash
 npm ci
