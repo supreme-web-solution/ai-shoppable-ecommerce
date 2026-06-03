@@ -86,7 +86,11 @@ const dailyMax    = computed(() => Math.max(...dailySeries.value.map((d) => d.to
 /* ── SVG area chart ── */
 const areaPath = computed(() => {
     const pts = dailySeries.value;
-    if (pts.length < 2) return '';
+
+    if (pts.length < 2) {
+return '';
+}
+
     const cw = W - PAD.l - PAD.r;
     const ch = H - PAD.t - PAD.b;
     const xs = (i: number) => PAD.l + (i / (pts.length - 1)) * cw;
@@ -94,21 +98,28 @@ const areaPath = computed(() => {
     const tension = 0.35;
 
     let d = `M ${xs(0)} ${ys(pts[0].total)}`;
+
     for (let i = 0; i < pts.length - 1; i++) {
         const x0 = xs(i), y0 = ys(pts[i].total);
         const x1 = xs(i + 1), y1 = ys(pts[i + 1].total);
         const dx = (x1 - x0) * tension;
         d += ` C ${x0 + dx} ${y0}, ${x1 - dx} ${y1}, ${x1} ${y1}`;
     }
+
     const lastX = xs(pts.length - 1);
     const bottom = PAD.t + ch;
     d += ` L ${lastX} ${bottom} L ${PAD.l} ${bottom} Z`;
+
     return d;
 });
 
 const linePath = computed(() => {
     const pts = dailySeries.value;
-    if (pts.length < 2) return '';
+
+    if (pts.length < 2) {
+return '';
+}
+
     const cw = W - PAD.l - PAD.r;
     const ch = H - PAD.t - PAD.b;
     const xs = (i: number) => PAD.l + (i / (pts.length - 1)) * cw;
@@ -116,20 +127,27 @@ const linePath = computed(() => {
     const tension = 0.35;
 
     let d = `M ${xs(0)} ${ys(pts[0].total)}`;
+
     for (let i = 0; i < pts.length - 1; i++) {
         const x0 = xs(i), y0 = ys(pts[i].total);
         const x1 = xs(i + 1), y1 = ys(pts[i + 1].total);
         const dx = (x1 - x0) * tension;
         d += ` C ${x0 + dx} ${y0}, ${x1 - dx} ${y1}, ${x1} ${y1}`;
     }
+
     return d;
 });
 
 const dotPoints = computed(() => {
     const pts = dailySeries.value;
-    if (!pts.length) return [];
+
+    if (!pts.length) {
+return [];
+}
+
     const cw = W - PAD.l - PAD.r;
     const ch = H - PAD.t - PAD.b;
+
     return pts.map((p, i) => ({
         x: PAD.l + (i / Math.max(pts.length - 1, 1)) * cw,
         y: PAD.t + ch - (p.total / dailyMax.value) * ch,
@@ -143,6 +161,7 @@ const dotPoints = computed(() => {
 const eventBars = computed(() => {
     const entries = Object.entries(summary.value?.top_events ?? summary.value?.metrics ?? {});
     const max = Math.max(...entries.map(([, m]) => m.count), 1);
+
     return entries
         .sort(([, a], [, b]) => b.count - a.count)
         .slice(0, 7)
@@ -168,11 +187,13 @@ const donutSlices = computed(() => {
     const total = Math.max(parts.reduce((s, p) => s + p.value, 0), 1);
     const r = 44, circ = 2 * Math.PI * r;
     let offset = 0;
+
     return parts.map((p) => {
         const pct = p.value / total;
         const dash = pct * circ;
         const slice = { ...p, dash, gap: circ - dash, offset: offset * circ / total, total };
         offset += p.value;
+
         return slice;
     });
 });
@@ -189,6 +210,7 @@ const catalog = computed(() => summary.value?.catalog ?? null);
 /* ── Helpers ── */
 const today = computed(() => {
     const d = new Date();
+
     return {
         day: d.getDate(),
         weekday: d.toLocaleDateString('en-US', { weekday: 'short' }),
@@ -205,17 +227,25 @@ function metricLabel(key: string): string {
 }
 function shortDay(iso: string): string {
     const d = new Date(iso + 'T12:00:00');
+
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 function fmtN(n: number): string {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    if (n >= 1_000_000) {
+return (n / 1_000_000).toFixed(1) + 'M';
+}
+
+    if (n >= 1_000) {
+return (n / 1_000).toFixed(1) + 'K';
+}
+
     return String(n);
 }
 
 async function loadSummary() {
     loading.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const to = new Date();
@@ -571,7 +601,7 @@ onMounted(loadSummary);
             <!-- ── Metric groups ── -->
             <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div
-                    v-for="(card, ci) in [
+                    v-for="card in [
                         { label: 'Video', icon: Film, keys: ['video_view','video_complete','watch_time'], color: '#E8563A', bg: '#fff5f3' },
                         { label: 'Engagement', icon: Heart, keys: ['reaction','comment_submitted','share','save'], color: '#F43F5E', bg: '#fff1f2' },
                         { label: 'Commerce', icon: ShoppingBag, keys: ['add_to_cart','checkout_started','checkout_completed','checkout_external_redirect'], color: '#10B981', bg: '#f0fdf4' },

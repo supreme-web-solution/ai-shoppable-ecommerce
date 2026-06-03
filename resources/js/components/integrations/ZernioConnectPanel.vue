@@ -83,6 +83,7 @@ async function connectPlatform(platform: string) {
 
     try {
         const id = await ensureTeam();
+
         if (!profileId.value) {
             await ensureProfile();
         }

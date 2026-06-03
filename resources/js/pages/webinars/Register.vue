@@ -45,10 +45,12 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
     });
 
     const payload = await response.json().catch(() => null);
+
     if (!response.ok) {
         const message = payload && typeof payload === 'object' && 'message' in payload
             ? String((payload as { message: string }).message)
             : `Request failed (${response.status})`;
+
         throw new Error(message);
     }
 
@@ -58,6 +60,7 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
 async function loadWebinar() {
     loading.value = true;
     errorText.value = '';
+
     try {
         const payload = await apiFetch<{ data: WebinarData }>(`/api/v1/player/webinars/${webinarId}`);
         webinar.value = payload.data;
@@ -71,11 +74,13 @@ async function loadWebinar() {
 async function register() {
     if (!form.value.full_name.trim() || !form.value.email.trim()) {
         errorText.value = 'Full name and email are required.';
+
         return;
     }
 
     registering.value = true;
     errorText.value = '';
+
     try {
         const response = await apiFetch<{ data: { room_url: string } }>(
             `/api/v1/player/webinars/${webinarId}/register`,

@@ -26,7 +26,11 @@ const embedTargetId = computed(() => `tutorial-embed-${props.lessonId}`);
 
 function togglePlay() {
     const el = videoEl.value;
-    if (!el) return;
+
+    if (!el) {
+return;
+}
+
     if (el.paused) {
         void el.play();
     } else {
@@ -44,20 +48,31 @@ function onPause() {
 
 function toggleMute() {
     const el = videoEl.value;
-    if (!el) return;
+
+    if (!el) {
+return;
+}
+
     el.muted = !el.muted;
     muted.value = el.muted;
 }
 
 function mountEmbed() {
-    if (!hasEmbed.value || embedMounted.value) return;
+    if (!hasEmbed.value || embedMounted.value) {
+return;
+}
 
     const target = document.getElementById(embedTargetId.value);
-    if (!target) return;
+
+    if (!target) {
+return;
+}
 
     const existing = target.querySelector('script[data-supreme-mounted]');
+
     if (existing) {
         embedMounted.value = true;
+
         return;
     }
 

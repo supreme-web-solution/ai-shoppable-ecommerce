@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { Link, usePage } from '@inertiajs/vue3';
-import { computed } from 'vue';
 import {
     BarChart3,
     Clapperboard,
@@ -14,6 +13,7 @@ import {
     Sparkles,
     Users,
 } from 'lucide-vue-next';
+import { computed } from 'vue';
 import NavUser from '@/components/NavUser.vue';
 import {
     Sidebar,
@@ -80,8 +80,15 @@ const currentPath = computed(() => {
 
 function isActive(href: string) {
     const path = currentPath.value;
-    if (href === '/tutorial' || href === '/dashboard') return path === href;
-    if (href === '/content') return path === '/content' || (path.startsWith('/content/') && !path.startsWith('/content/create'));
+
+    if (href === '/tutorial' || href === '/dashboard') {
+return path === href;
+}
+
+    if (href === '/content') {
+return path === '/content' || (path.startsWith('/content/') && !path.startsWith('/content/create'));
+}
+
     return path === href || path.startsWith(href + '/');
 }
 </script>

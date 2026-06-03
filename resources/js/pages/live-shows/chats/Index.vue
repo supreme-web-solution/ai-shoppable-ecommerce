@@ -39,6 +39,7 @@ const liveVideos = ref<LiveVideoConversation[]>([]);
 async function loadIndexData() {
     loading.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const [webinarPayload, liveVideoPayload] = await Promise.all([

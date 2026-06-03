@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type Echo from 'laravel-echo';
 import {
     computed,
     nextTick,
@@ -8,18 +9,17 @@ import {
     watch,
 } from 'vue';
 import ChatMessageBody from '@/components/chat/ChatMessageBody.vue';
+import EmbedActionRail from '@/embed/components/EmbedActionRail.vue';
 import { embedApiUrl } from '@/embed/config';
 import { createEmbedEcho } from '@/embed/reverb';
-import EmbedActionRail from '@/embed/components/EmbedActionRail.vue';
-import EmbedProductCarousel from '@/embed/components/EmbedProductCarousel.vue';
 import TimedTagOverlay from '@/embed/TimedTagOverlay.vue';
 import {
     isTagActiveAt,
     overlaySlotForAnchor,
-    tagPosition,
-    type OverlaySlot,
+    tagPosition
+    
 } from '@/lib/tagOverlay';
-import type Echo from 'laravel-echo';
+import type {OverlaySlot} from '@/lib/tagOverlay';
 
 type ProductVariant = {
     id: number;
@@ -470,6 +470,7 @@ async function loadFeed(page = 1, append = false) {
         if (!append && payload.playlist_playback) {
             playlistPlayback.value = payload.playlist_playback;
         }
+
         feedPage.value = payload.meta?.current_page ?? page;
         hasMoreFeed.value =
             (payload.meta?.current_page ?? page) <
@@ -697,6 +698,7 @@ async function loadComments(videoId: number, teamId: number) {
 
 async function sendComment() {
     const body = commentText.value.trim();
+
     if (!currentVideo.value || !body || commentSending.value) {
         return;
     }
@@ -746,6 +748,7 @@ async function sendComment() {
         if (!commentText.value) {
             commentText.value = body;
         }
+
         errorText.value = 'Could not post comment.';
     } finally {
         commentSending.value = false;
@@ -869,9 +872,11 @@ async function addTagToCart(tag: ProductTag, options?: { openCart?: boolean }) {
             },
         );
         cart.value = asData<CartPayload>(p);
+
         if (options?.openCart !== false) {
             cartOpen.value = true;
         }
+
         void postAnalytics('add_to_cart', { product_id: tag.product.id });
     } catch {
         errorText.value = 'Could not add to cart.';
@@ -884,12 +889,14 @@ async function buyTagNow(tag: ProductTag) {
     }
 
     const idx = pinnedTags.value.findIndex((t) => t.id === tag.id);
+
     if (idx >= 0) {
         activeProductIndex.value = idx;
         selectedVariantId.value = tagVariantId(tag);
     }
 
     await addTagToCart(tag, { openCart: false });
+
     if (cart.value) {
         await checkoutCart();
     }
@@ -1246,7 +1253,6 @@ function scrollCarouselToIndex(index: number): void {
 }
 
 /* no-op kept so the @scroll template binding resolves without warnings */
-function onProductCarouselScroll(): void {}
 
 function onCarouselTouchStart(e: TouchEvent): void {
     e.stopPropagation();
@@ -1305,9 +1311,11 @@ watch(currentVideo, async (video) => {
     activeProductIndex.value = 0;
     dismissedOverlayIds.value = new Set();
     await nextTick();
+
     if (productCarouselRef.value) {
         productCarouselRef.value.scrollLeft = 0;
     }
+
     const pinned = (video.product_tags ?? []).filter((t) => t.is_pinned);
     const productList =
         pinned.length > 0 ? pinned : (video.product_tags ?? []);

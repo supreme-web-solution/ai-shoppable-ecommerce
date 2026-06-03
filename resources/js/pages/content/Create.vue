@@ -23,7 +23,6 @@ import {
     Search,
     Share2,
     ShoppingBag,
-    Info,
     Sparkles,
     Tag,
     Upload,
@@ -153,6 +152,7 @@ const modalProductPage = ref(1);
 
 function filterProductsByQuery(list: ProductOption[], query: string): ProductOption[] {
     const q = query.trim().toLowerCase();
+
     if (!q) {
         return list;
     }
@@ -320,11 +320,14 @@ const filteredHeyGenAvatars = computed(() => {
 });
 
 function toggleVoicePreview(voice: HeyGenVoiceOption) {
-    if (!voice.preview_audio_url) return;
+    if (!voice.preview_audio_url) {
+return;
+}
 
     if (playingVoiceId.value === voice.voice_id) {
         audioInstance?.pause();
         playingVoiceId.value = '';
+
         return;
     }
 
@@ -356,6 +359,7 @@ const activeProductIds = computed(() =>
 function toggleProductInModal(productId: number) {
     const ids = modalTarget.value === 'upload' ? uploadForm.value.product_ids : avatarForm.value.product_ids;
     const idx = ids.indexOf(productId);
+
     if (idx === -1) {
         ids.push(productId);
     } else {
@@ -371,11 +375,13 @@ function toggleProductInModal(productId: number) {
 function toggleAiProduct(productId: number) {
     const ids = avatarForm.value.product_ids;
     const idx = ids.indexOf(productId);
+
     if (idx === -1) {
         ids.push(productId);
     } else {
         ids.splice(idx, 1);
     }
+
     scriptForm.value.product_ids = [...ids];
 }
 
@@ -394,13 +400,17 @@ const selectedHeyGenVoice = computed(
 
 /* ── helpers ── */
 function formatPrice(currency: string, price: string | null | undefined): string {
-    if (!price) return '';
+    if (!price) {
+return '';
+}
+
     return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(Number(price));
 }
 
 function syncVoiceForAvatar(avatar: HeyGenAvatarOption | null) {
     if (avatar?.default_voice_id && heygenOptions.value.voices.some((v) => v.voice_id === avatar.default_voice_id)) {
         avatarForm.value.voice_id = avatar.default_voice_id;
+
         return;
     }
 
@@ -417,10 +427,19 @@ function selectHeyGenAvatar(avatar: HeyGenAvatarOption) {
 function onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (!file) return;
+
+    if (!file) {
+return;
+}
+
     selectedFile.value = file;
-    if (previewVideoUrl.value) URL.revokeObjectURL(previewVideoUrl.value);
+
+    if (previewVideoUrl.value) {
+URL.revokeObjectURL(previewVideoUrl.value);
+}
+
     previewVideoUrl.value = URL.createObjectURL(file);
+
     if (!uploadForm.value.title) {
         uploadForm.value.title = file.name.replace(/\.[^.]+$/, '');
     }
@@ -429,24 +448,47 @@ function onFileSelected(event: Event) {
 function onThumbnailFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (!file) return;
-    if (thumbnailPreviewUrl.value?.startsWith('blob:')) URL.revokeObjectURL(thumbnailPreviewUrl.value);
+
+    if (!file) {
+return;
+}
+
+    if (thumbnailPreviewUrl.value?.startsWith('blob:')) {
+URL.revokeObjectURL(thumbnailPreviewUrl.value);
+}
+
     thumbnailPreviewUrl.value = URL.createObjectURL(file);
 }
 
 onUnmounted(() => {
-    if (previewVideoUrl.value) URL.revokeObjectURL(previewVideoUrl.value);
-    if (thumbnailPreviewUrl.value?.startsWith('blob:')) URL.revokeObjectURL(thumbnailPreviewUrl.value);
+    if (previewVideoUrl.value) {
+URL.revokeObjectURL(previewVideoUrl.value);
+}
+
+    if (thumbnailPreviewUrl.value?.startsWith('blob:')) {
+URL.revokeObjectURL(thumbnailPreviewUrl.value);
+}
+
     audioInstance?.pause();
 });
 
 function unwrapVideo(payload: unknown): VideoItem | null {
-    if (!payload || typeof payload !== 'object') return null;
+    if (!payload || typeof payload !== 'object') {
+return null;
+}
+
     if ('data' in payload) {
         const d = (payload as { data?: unknown }).data;
-        if (d && typeof d === 'object' && 'id' in d) return d as VideoItem;
+
+        if (d && typeof d === 'object' && 'id' in d) {
+return d as VideoItem;
+}
     }
-    if ('id' in payload) return payload as VideoItem;
+
+    if ('id' in payload) {
+return payload as VideoItem;
+}
+
     return null;
 }
 
@@ -463,7 +505,10 @@ function buildProductTags(productIds: number[]) {
 }
 
 async function attachProducts(videoId: number, productIds: number[]) {
-    if (!productIds.length) return;
+    if (!productIds.length) {
+return;
+}
+
     await postJson(`/api/v1/admin/videos/${videoId}/product-tags/sync`, {
         tags: buildProductTags(productIds),
     });
@@ -472,10 +517,13 @@ async function attachProducts(videoId: number, productIds: number[]) {
 async function submitUpload() {
     if (!selectedFile.value) {
         errorText.value = 'Please choose a video file first.';
+
         return;
     }
+
     uploading.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const upload = await uploadFile('/api/v1/admin/videos/upload', selectedFile.value);
@@ -495,7 +543,10 @@ async function submitUpload() {
         });
 
         const created = unwrapVideo(payload);
-        if (created?.id) await attachProducts(created.id, uploadForm.value.product_ids);
+
+        if (created?.id) {
+await attachProducts(created.id, uploadForm.value.product_ids);
+}
 
         if (created?.id) {
             router.visit(`/content/${created.id}/edit`);
@@ -513,7 +564,11 @@ const scriptTargetWords = computed(() => Math.max(30, Math.round(scriptForm.valu
 
 const scriptWordCount = computed(() => {
     const text = avatarForm.value.script.trim();
-    if (!text) return 0;
+
+    if (!text) {
+return 0;
+}
+
     return text.split(/\s+/).filter(Boolean).length;
 });
 
@@ -537,6 +592,7 @@ async function generateScript() {
     aiGenerating.value = true;
     errorText.value = '';
     scriptGenerationNotice.value = '';
+
     try {
         await ensureTeam();
         const payload = await postJson<{ data?: AiGenerationItem }>('/api/v1/admin/ai/scripts', {
@@ -544,8 +600,15 @@ async function generateScript() {
             product_ids: avatarForm.value.product_ids,
         });
         const gen = payload.data ?? (payload as unknown as AiGenerationItem);
-        if (gen.output?.full_script) avatarForm.value.script = gen.output.full_script;
-        if (!avatarForm.value.title) avatarForm.value.title = `AI Video — ${scriptForm.value.topic}`;
+
+        if (gen.output?.full_script) {
+avatarForm.value.script = gen.output.full_script;
+}
+
+        if (!avatarForm.value.title) {
+avatarForm.value.title = `AI Video — ${scriptForm.value.topic}`;
+}
+
         if (gen.provider && gen.provider !== 'openai') {
             scriptGenerationNotice.value = `Template script (~${scriptTargetWords.value} words for ${scriptForm.value.duration_seconds}s). Set OPENAI_API_KEY for AI-written scripts.`;
         } else {
@@ -567,6 +630,7 @@ function useManualScript() {
 async function generateAvatarVideo() {
     aiGenerating.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
 
@@ -584,6 +648,7 @@ async function generateAvatarVideo() {
 
             for (const item of payload.videos ?? []) {
                 const video = unwrapVideo(item.video);
+
                 if (video?.id) {
                     await attachProducts(video.id, avatarForm.value.product_ids);
                 }

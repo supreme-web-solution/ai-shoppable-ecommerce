@@ -1,7 +1,6 @@
 import '../../css/app.css';
 import { createApp } from 'vue';
 import EmbedShell from '@/embed/EmbedShell.vue';
-import { getEmbedOrigin } from '@/embed/config';
 import { normalizeEmbedDisplayType } from '@/lib/videoEmbed';
 
 function injectStylesheet(origin: string): void {
@@ -35,6 +34,7 @@ function bootstrap(): void {
         console.error(
             '[Supreme] Embed loader must be loaded via <script src=".../embed/embed.js" data-embed="your-slug">',
         );
+
         return;
     }
 
@@ -43,6 +43,7 @@ function bootstrap(): void {
 
     if (!slug) {
         console.error('[Supreme] Missing data-embed attribute on embed script.');
+
         return;
     }
 

@@ -56,7 +56,7 @@ defineOptions({
     },
 });
 
-const { apiFetch, postJson, patchJson, deleteResource } = useAdminApi();
+const { apiFetch, postJson, deleteResource } = useAdminApi();
 
 const loading = ref(false);
 const saving = ref(false);

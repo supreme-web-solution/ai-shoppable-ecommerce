@@ -24,9 +24,9 @@ import {
     XCircle,
 } from 'lucide-vue-next';
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { Badge } from '@/components/ui/badge';
+import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
+import SocialPublishPanel from '@/components/social/SocialPublishPanel.vue';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
     Dialog,
     DialogContent,
@@ -37,22 +37,20 @@ import {
 } from '@/components/ui/dialog';
 import ScrollableDialogContent from '@/components/ui/dialog/ScrollableDialogContent.vue';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
-import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
-import SocialPublishPanel from '@/components/social/SocialPublishPanel.vue';
 import {
-    type EmbedDisplayType,
-    type EmbedItem,
+    
+    
     embedPreviewUrl,
     embedScriptCode,
     canShareOrEmbedVideo,
     ensureEmbedForVideo,
     SHARE_EMBED_REQUIRES_PUBLISH_TITLE,
     socialShareLinks,
-    updateEmbedDisplayType,
+    updateEmbedDisplayType
 } from '@/lib/videoEmbed';
+import type {EmbedDisplayType, EmbedItem} from '@/lib/videoEmbed';
 
 const props = defineProps<{ videoId: number }>();
 
@@ -120,6 +118,7 @@ function defaultPositionForKind(kind: TagDraft['overlay_kind']): TagPositionDraf
     if (kind === 'flash') {
         return { x: 4, y: 10, anchor: 'top-right' };
     }
+
     if (kind === 'coupon') {
         return { x: 50, y: 42, anchor: 'center' };
     }
@@ -129,6 +128,7 @@ function defaultPositionForKind(kind: TagDraft['overlay_kind']): TagPositionDraf
 
 function onOverlayAnchorChange(tag: TagDraft) {
     const anchor = tag.position?.anchor ?? 'bottom-left';
+
     if (anchor === 'top-right' || anchor === 'top-left') {
         tag.position = { x: 4, y: 10, anchor };
     } else if (anchor === 'center') {
@@ -142,6 +142,7 @@ function onOverlayKindChange(tag: TagDraft) {
     if (tag.overlay_kind === 'flash' || tag.overlay_kind === 'coupon') {
         tag.is_pinned = false;
     }
+
     tag.position = defaultPositionForKind(tag.overlay_kind);
 }
 
@@ -191,6 +192,7 @@ function optimizePlaybackUrl(url: string | null): string | null {
     if (!url || !url.includes('res.cloudinary.com') || !url.includes('/video/upload/')) {
         return url;
     }
+
     if (url.includes('/video/upload/f_auto')) {
         return url;
     }
@@ -200,6 +202,7 @@ function optimizePlaybackUrl(url: string | null): string | null {
 
 function setPlaybackUrl(url: string | null) {
     const next = url ? optimizePlaybackUrl(url) : null;
+
     if (next === playbackUrl.value) {
         return;
     }
@@ -218,11 +221,13 @@ async function playPreviewVideo() {
     previewVideoError.value = false;
     await nextTick();
     const el = previewVideoRef.value;
+
     if (!el || !playbackUrl.value) {
         return;
     }
 
     el.muted = true;
+
     try {
         await el.play();
         previewHasStarted.value = true;
@@ -298,7 +303,6 @@ const hasPlayback = computed(() => Boolean(playbackUrl.value));
 /* ── products ── */
 const products = ref<ProductOption[]>([]);
 const tagDrafts = ref<TagDraft[]>([]);
-const tagSaving = ref(false);
 
 /* ── product modal ── */
 const productModalOpen = ref(false);
@@ -306,19 +310,27 @@ const productSearch = ref('');
 
 const filteredProducts = computed(() => {
     const q = productSearch.value.trim().toLowerCase();
-    if (!q) return products.value;
+
+    if (!q) {
+return products.value;
+}
+
     return products.value.filter((p) => p.title.toLowerCase().includes(q));
 });
 
 const attachedProductIds = computed(() => tagDrafts.value.map((t) => t.product_id));
 
 function formatPrice(currency: string, price: string | null | undefined): string {
-    if (!price) return '';
+    if (!price) {
+return '';
+}
+
     return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(Number(price));
 }
 
 function toggleProductInModal(productId: number) {
     const existing = tagDrafts.value.findIndex((t) => t.product_id === productId);
+
     if (existing !== -1) {
         tagDrafts.value.splice(existing, 1);
     } else {
@@ -360,6 +372,7 @@ function removeTag(index: number) {
 async function loadVideo() {
     videoLoading.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const payload = await apiFetch<{ data?: Record<string, unknown> } | Record<string, unknown>>(
@@ -378,11 +391,13 @@ async function loadVideo() {
         // load viewer simulation from metadata
         const meta = v.metadata as Record<string, unknown> | null | undefined;
         videoMetadata.value = { ...(meta ?? {}) };
+
         if (meta?.viewer_sim_enabled) {
             viewerSim.value.enabled = Boolean(meta.viewer_sim_enabled);
             viewerSim.value.min = Number(meta.viewer_sim_min ?? 50);
             viewerSim.value.max = Number(meta.viewer_sim_max ?? 500);
         }
+
         aiAssistant.value.enabled = Boolean(meta?.ai_assistant_enabled);
         aiAssistant.value.knowledgeBaseText = String(meta?.knowledge_base_text ?? '');
         const rawKnowledgeSources = Array.isArray(meta?.knowledge_sources) ? meta.knowledge_sources : [];
@@ -394,6 +409,7 @@ async function loadVideo() {
                 content: String(source.content ?? '').trim(),
             }))
             .filter((source) => source.title !== '' && source.content !== '');
+
         if (aiAssistant.value.knowledgeSources.length === 0 && aiAssistant.value.knowledgeBaseText.trim() !== '') {
             aiAssistant.value.knowledgeSources = [{
                 title: 'Knowledge Hub',
@@ -456,6 +472,7 @@ async function loadProducts() {
 async function saveVideo() {
     saving.value = true;
     errorText.value = '';
+
     try {
         const nextMetadata: Record<string, unknown> = { ...videoMetadata.value };
         delete nextMetadata.viewer_sim_enabled;
@@ -509,6 +526,7 @@ async function saveVideo() {
 
 async function publishVideo() {
     saving.value = true;
+
     try {
         await patchJson(`/api/v1/admin/videos/${props.videoId}`, {
             status: 'published',
@@ -524,6 +542,7 @@ async function publishVideo() {
 
 async function unpublishVideo() {
     saving.value = true;
+
     try {
         await patchJson(`/api/v1/admin/videos/${props.videoId}`, {
             status: 'ready',
@@ -546,7 +565,10 @@ const attachedProducts = computed(() =>
 
 function startPollingIfNeeded() {
     stopPolling();
-    if (form.value.status !== 'processing') return;
+
+    if (form.value.status !== 'processing') {
+return;
+}
 
     pollTimer = setInterval(async () => {
         try {
@@ -555,13 +577,19 @@ function startPollingIfNeeded() {
             );
             const v = (payload as { data?: Record<string, unknown> }).data ?? payload as Record<string, unknown>;
             form.value.status = String(v.status ?? form.value.status);
+
             if (v.playback_url) {
                 setPlaybackUrl(String(v.playback_url));
             }
+
             if (v.thumbnail_url && !form.value.thumbnail_url) {
                 form.value.thumbnail_url = String(v.thumbnail_url);
             }
-            if (v.cloudinary_public_id) cloudinaryPublicId.value = String(v.cloudinary_public_id);
+
+            if (v.cloudinary_public_id) {
+cloudinaryPublicId.value = String(v.cloudinary_public_id);
+}
+
             thumbnailBroken.value = false;
 
             if (form.value.status === 'ready' || form.value.status === 'published') {
@@ -587,11 +615,15 @@ function stopPolling() {
 async function replaceVideoFile(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (!file) return;
+
+    if (!file) {
+return;
+}
 
     replacingVideo.value = true;
     errorText.value = '';
     infoText.value = 'Uploading video and sending to Server…';
+
     try {
         await ensureTeam();
         const upload = await uploadFile('/api/v1/admin/videos/upload', file);
@@ -616,7 +648,9 @@ async function copyText(text: string, token: string) {
     await navigator.clipboard.writeText(text);
     copiedToken.value = token;
     window.setTimeout(() => {
-        if (copiedToken.value === token) copiedToken.value = '';
+        if (copiedToken.value === token) {
+copiedToken.value = '';
+}
     }, 1800);
 }
 
@@ -628,13 +662,18 @@ async function openShareModal() {
     shareModalOpen.value = true;
     shareLoading.value = true;
     errorText.value = '';
+
     try {
         const embed = await ensureEmbedForVideo(
             shareApi,
             props.videoId,
             form.value.title || `video-${props.videoId}`,
         );
-        if (!embed) throw new Error('Could not generate embed.');
+
+        if (!embed) {
+throw new Error('Could not generate embed.');
+}
+
         shareEmbed.value = embed;
         shareEmbedType.value = (embed.type as EmbedDisplayType) || 'vertical_feed';
         shareUrl.value = embedPreviewUrl(embed);
@@ -693,6 +732,7 @@ async function onShareEmbedTypeChange(type: EmbedDisplayType) {
 
 onMounted(async () => {
     await Promise.all([loadVideo(), loadProducts()]);
+
     if (isProcessing.value) {
         infoText.value = 'Video is processing. This page will update automatically.';
         startPollingIfNeeded();

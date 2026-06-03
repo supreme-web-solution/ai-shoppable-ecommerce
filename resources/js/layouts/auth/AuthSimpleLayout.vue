@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link, usePage } from '@inertiajs/vue3';
-import { BarChart3, Film, Radio, ShoppingBag, Sparkles, TrendingUp, Users } from 'lucide-vue-next';
+import { Film, TrendingUp, Users } from 'lucide-vue-next';
 import { home } from '@/routes';
 
 const page = usePage();
@@ -10,13 +10,6 @@ defineProps<{
     title?: string;
     description?: string;
 }>();
-
-const features = [
-    { icon: Sparkles, label: 'AI Avatar Ads', desc: 'Generate video ads in minutes' },
-    { icon: ShoppingBag, label: 'Shoppable Video', desc: 'Tag products inside any video' },
-    { icon: Radio, label: 'Live Commerce', desc: 'Sell live to thousands at once' },
-    { icon: BarChart3, label: 'Deep Analytics', desc: 'Track every click and conversion' },
-];
 
 const stats = [
     { value: '10k+', label: 'Brands' },

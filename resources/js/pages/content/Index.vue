@@ -18,7 +18,7 @@ import {
     XCircle,
 } from 'lucide-vue-next';
 import { computed, onMounted, ref } from 'vue';
-import { Badge } from '@/components/ui/badge';
+import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -31,18 +31,18 @@ import ScrollableDialogContent from '@/components/ui/dialog/ScrollableDialogCont
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
-import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
 import {
-    type EmbedDisplayType,
-    type EmbedItem,
+    
+    
     embedPreviewUrl,
     embedScriptCode,
     canShareOrEmbedVideo,
     ensureEmbedForVideo,
     SHARE_EMBED_REQUIRES_PUBLISH_TITLE,
     socialShareLinks,
-    updateEmbedDisplayType,
+    updateEmbedDisplayType
 } from '@/lib/videoEmbed';
+import type {EmbedDisplayType, EmbedItem} from '@/lib/videoEmbed';
 
 type VideoItem = {
     id: number;
@@ -104,40 +104,56 @@ const savingPlaylists = ref(false);
 
 const filteredVideos = computed(() => {
     const q = search.value.trim().toLowerCase();
-    if (!q) return videos.value;
+
+    if (!q) {
+return videos.value;
+}
+
     return videos.value.filter(
         (v) => v.title.toLowerCase().includes(q) || v.source.toLowerCase().includes(q),
     );
 });
 
-function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-    if (status === 'published') return 'default';
-    if (status === 'processing') return 'secondary';
-    if (status === 'failed') return 'destructive';
-    return 'outline';
+function statusIcon(status: string) {
+    if (status === 'published') {
+return CheckCircle2;
 }
 
-function statusIcon(status: string) {
-    if (status === 'published') return CheckCircle2;
-    if (status === 'processing') return Loader2;
-    if (status === 'failed') return XCircle;
+    if (status === 'processing') {
+return Loader2;
+}
+
+    if (status === 'failed') {
+return XCircle;
+}
+
     return Clock;
 }
 
 function sourceLabel(source: string) {
-    if (source === 'ai_generated') return 'AI';
-    if (source === 'live_replay') return 'Replay';
+    if (source === 'ai_generated') {
+return 'AI';
+}
+
+    if (source === 'live_replay') {
+return 'Replay';
+}
+
     return 'Upload';
 }
 
 function formatDate(iso: string | null | undefined) {
-    if (!iso) return null;
+    if (!iso) {
+return null;
+}
+
     return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
 async function loadVideos() {
     loading.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const payload = await getList<VideoItem>('/api/v1/admin/videos');
@@ -161,6 +177,7 @@ async function loadPlaylists() {
 
 async function publishVideo(video: VideoItem) {
     saving.value = true;
+
     try {
         await patchJson(`/api/v1/admin/videos/${video.id}`, {
             status: 'published',
@@ -176,6 +193,7 @@ async function publishVideo(video: VideoItem) {
 
 async function unpublishVideo(video: VideoItem) {
     saving.value = true;
+
     try {
         await patchJson(`/api/v1/admin/videos/${video.id}`, {
             status: 'ready',
@@ -190,7 +208,10 @@ async function unpublishVideo(video: VideoItem) {
 }
 
 async function removeVideo(video: VideoItem) {
-    if (!window.confirm(`Delete "${video.title}"?`)) return;
+    if (!window.confirm(`Delete "${video.title}"?`)) {
+return;
+}
+
     try {
         await deleteResource(`/api/v1/admin/videos/${video.id}`);
         await loadVideos();
@@ -212,14 +233,22 @@ function openPlaylistModal(video: VideoItem) {
 
 function togglePlaylistPending(playlistId: number) {
     const idx = pendingPlaylistIds.value.indexOf(playlistId);
-    if (idx === -1) pendingPlaylistIds.value.push(playlistId);
-    else pendingPlaylistIds.value.splice(idx, 1);
+
+    if (idx === -1) {
+pendingPlaylistIds.value.push(playlistId);
+} else {
+pendingPlaylistIds.value.splice(idx, 1);
+}
 }
 
 async function saveVideoPlaylists() {
-    if (!playlistModalVideoId.value) return;
+    if (!playlistModalVideoId.value) {
+return;
+}
+
     savingPlaylists.value = true;
     errorText.value = '';
+
     try {
         const videoId = playlistModalVideoId.value;
 
@@ -230,7 +259,9 @@ async function saveVideoPlaylists() {
                 const shouldBeIn = pendingPlaylistIds.value.includes(pl.id);
                 const isIn = currentIds.includes(videoId);
 
-                if (shouldBeIn === isIn) return; // no change
+                if (shouldBeIn === isIn) {
+return;
+} // no change
 
                 const newIds = shouldBeIn
                     ? [...currentIds, videoId]
@@ -254,7 +285,9 @@ async function copyText(text: string, token: string) {
     await navigator.clipboard.writeText(text);
     copiedToken.value = token;
     window.setTimeout(() => {
-        if (copiedToken.value === token) copiedToken.value = '';
+        if (copiedToken.value === token) {
+copiedToken.value = '';
+}
     }, 1800);
 }
 
@@ -267,9 +300,14 @@ async function openShareModal(video: VideoItem) {
     errorText.value = '';
     activeShareVideo.value = video;
     shareModalOpen.value = true;
+
     try {
         const embed = await ensureEmbedForVideo(shareApi, video.id, video.title);
-        if (!embed) throw new Error('Could not generate embed.');
+
+        if (!embed) {
+throw new Error('Could not generate embed.');
+}
+
         shareEmbed.value = embed;
         shareEmbedType.value = (embed.type as EmbedDisplayType) || 'vertical_feed';
         activeShareUrl.value = embedPreviewUrl(embed);

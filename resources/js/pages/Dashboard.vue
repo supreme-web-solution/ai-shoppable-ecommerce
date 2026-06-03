@@ -50,15 +50,15 @@ const CHART_W = 520;
 const CHART_H = 120;
 const CHART_PAD = { t: 8, r: 6, b: 22, l: 6 };
 
-const BAR_COLORS = ['#E8563A', '#F59E0B', '#10B981', '#6366F1', '#EC4899', '#8B5CF6'];
-
 const userName = computed(() => {
     const u = page.props.auth?.user as { name?: string } | null;
+
     return u?.name?.split(' ')[0] ?? 'there';
 });
 
 const today = computed(() => {
     const d = new Date();
+
     return {
         day: d.getDate(),
         weekday: d.toLocaleDateString('en-US', { weekday: 'short' }),
@@ -67,14 +67,19 @@ const today = computed(() => {
 });
 
 const publishedPct = computed(() => {
-    if (!overview.value) return 0;
+    if (!overview.value) {
+return 0;
+}
+
     const c = overview.value.counts;
+
     return c.videos > 0 ? Math.round((c.published_videos / c.videos) * 100) : 0;
 });
 
 const donutDash = computed(() => {
     const r = 46;
     const circ = 2 * Math.PI * r;
+
     return `${(publishedPct.value / 100) * circ} ${circ}`;
 });
 
@@ -90,7 +95,11 @@ const dailyMax = computed(() => Math.max(...dailySeries.value.map((d) => d.total
 
 const areaPath = computed(() => {
     const pts = dailySeries.value;
-    if (pts.length < 2) return '';
+
+    if (pts.length < 2) {
+return '';
+}
+
     const cw = CHART_W - CHART_PAD.l - CHART_PAD.r;
     const ch = CHART_H - CHART_PAD.t - CHART_PAD.b;
     const xs = (i: number) => CHART_PAD.l + (i / (pts.length - 1)) * cw;
@@ -98,6 +107,7 @@ const areaPath = computed(() => {
     const tension = 0.35;
 
     let d = `M ${xs(0)} ${ys(pts[0].total)}`;
+
     for (let i = 0; i < pts.length - 1; i++) {
         const x0 = xs(i);
         const y0 = ys(pts[i].total);
@@ -106,15 +116,21 @@ const areaPath = computed(() => {
         const dx = (x1 - x0) * tension;
         d += ` C ${x0 + dx} ${y0}, ${x1 - dx} ${y1}, ${x1} ${y1}`;
     }
+
     const lastX = xs(pts.length - 1);
     const bottom = CHART_PAD.t + ch;
     d += ` L ${lastX} ${bottom} L ${CHART_PAD.l} ${bottom} Z`;
+
     return d;
 });
 
 const linePath = computed(() => {
     const pts = dailySeries.value;
-    if (pts.length < 2) return '';
+
+    if (pts.length < 2) {
+return '';
+}
+
     const cw = CHART_W - CHART_PAD.l - CHART_PAD.r;
     const ch = CHART_H - CHART_PAD.t - CHART_PAD.b;
     const xs = (i: number) => CHART_PAD.l + (i / (pts.length - 1)) * cw;
@@ -122,6 +138,7 @@ const linePath = computed(() => {
     const tension = 0.35;
 
     let d = `M ${xs(0)} ${ys(pts[0].total)}`;
+
     for (let i = 0; i < pts.length - 1; i++) {
         const x0 = xs(i);
         const y0 = ys(pts[i].total);
@@ -130,14 +147,20 @@ const linePath = computed(() => {
         const dx = (x1 - x0) * tension;
         d += ` C ${x0 + dx} ${y0}, ${x1 - dx} ${y1}, ${x1} ${y1}`;
     }
+
     return d;
 });
 
 const dotPoints = computed(() => {
     const pts = dailySeries.value;
-    if (!pts.length) return [];
+
+    if (!pts.length) {
+return [];
+}
+
     const cw = CHART_W - CHART_PAD.l - CHART_PAD.r;
     const ch = CHART_H - CHART_PAD.t - CHART_PAD.b;
+
     return pts.map((p, i) => ({
         x: CHART_PAD.l + (i / Math.max(pts.length - 1, 1)) * cw,
         y: CHART_PAD.t + ch - (p.total / dailyMax.value) * ch,
@@ -145,22 +168,6 @@ const dotPoints = computed(() => {
         label: shortDay(p.date),
     }));
 });
-
-const metricMax = computed(() =>
-    Math.max(...Object.values(overview.value?.metrics_7d ?? {}), 1),
-);
-
-const eventBars = computed(() =>
-    Object.entries(overview.value?.metrics_7d ?? {})
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 6)
-        .map(([name, count], i) => ({
-            name,
-            count,
-            pct: Math.round((count / metricMax.value) * 100),
-            color: BAR_COLORS[i % BAR_COLORS.length],
-        })),
-);
 
 const topVideos = computed(() => overview.value?.top_videos ?? []);
 
@@ -175,22 +182,23 @@ const quickActions = [
     { href: '/analytics', icon: BarChart3, label: 'Analytics' },
 ];
 
-function metricLabel(key: string) {
-    return String(key).replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 function shortDay(iso: string) {
     const d = new Date(iso + 'T12:00:00');
+
     return d.toLocaleDateString('en-US', { weekday: 'short' });
 }
 
 function fmtN(n: number) {
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    if (n >= 1_000) {
+return `${(n / 1_000).toFixed(1)}K`;
+}
+
     return String(n);
 }
 
 async function loadOverview() {
     loading.value = true;
+
     try {
         await ensureTeam();
         overview.value = await apiFetch<OverviewResponse>(`/api/v1/admin/overview?team_id=${teamId.value}`);

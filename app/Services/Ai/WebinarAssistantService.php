@@ -126,16 +126,14 @@ PROMPT);
 
     protected function replyFromKnowledgeBase(string $question, string $knowledge): string
     {
-        $normalizedQuestion = mb_strtolower($question);
-        $words = collect(preg_split('/\s+/', $normalizedQuestion) ?: [])
-            ->filter(fn (string $w): bool => mb_strlen($w) >= 4)
-            ->all();
+        $words = $this->questionKeywords($question);
 
         if (empty($words)) {
             return 'Thanks for your question. A host will respond shortly.';
         }
 
         $lines = preg_split('/\R+/', $knowledge) ?: [];
+        $contentLines = [];
         $bestLine = null;
         $bestScore = 0;
 
@@ -145,10 +143,12 @@ PROMPT);
                 continue;
             }
 
+            $contentLines[] = $trimmed;
             $lineLower = mb_strtolower($trimmed);
             $score = 0;
+
             foreach ($words as $word) {
-                if (str_contains($lineLower, $word)) {
+                if ($this->lineContainsKeyword($lineLower, $word)) {
                     $score++;
                 }
             }
@@ -163,7 +163,38 @@ PROMPT);
             return $bestLine;
         }
 
+        if (count($contentLines) === 1) {
+            return $contentLines[0];
+        }
+
         return 'Thanks for your question. I could not find that in the knowledge base yet, but the host can answer it live.';
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function questionKeywords(string $question): array
+    {
+        $normalizedQuestion = mb_strtolower(trim($question));
+
+        return collect(preg_split('/\s+/', $normalizedQuestion) ?: [])
+            ->map(static fn (string $word): string => preg_replace('/[^\p{L}\p{N}]+/u', '', $word) ?? '')
+            ->filter(static fn (string $word): bool => mb_strlen($word) >= 4)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    protected function lineContainsKeyword(string $lineLower, string $word): bool
+    {
+        if ($word === '') {
+            return false;
+        }
+
+        $quoted = preg_quote($word, '/');
+        $pattern = '/\b'.$quoted.'s?\b/u';
+
+        return preg_match($pattern, $lineLower) === 1;
     }
 
     protected function sanitizeAssistantReply(string $reply, string $assistantContext): string

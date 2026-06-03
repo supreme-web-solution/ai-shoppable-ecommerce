@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Head, Link, usePage } from '@inertiajs/vue3';
+import { echo, echoIsConfigured } from '@laravel/echo-vue';
 import {
     ArrowLeft,
     Ban,
@@ -12,12 +13,11 @@ import {
     Trash2,
     UserRound,
 } from 'lucide-vue-next';
-import { echo, echoIsConfigured } from '@laravel/echo-vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import ChatMessageBody from '@/components/chat/ChatMessageBody.vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import ChatMessageBody from '@/components/chat/ChatMessageBody.vue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
 
@@ -349,6 +349,7 @@ async function loadWebinars() {
 async function loadConversations(options: { silent?: boolean } = {}) {
     if (sourceTab.value !== 'webinar') {
         webinarConversations.value = [];
+
         return;
     }
 
@@ -396,6 +397,7 @@ async function loadConversations(options: { silent?: boolean } = {}) {
 async function loadLiveVideoConversations(options: { silent?: boolean } = {}) {
     if (sourceTab.value === 'other') {
         liveVideoConversations.value = [];
+
         return;
     }
 
@@ -428,6 +430,7 @@ async function loadLiveVideoConversations(options: { silent?: boolean } = {}) {
         if (!silent) {
             loadingConversations.value = false;
         }
+
         endBackgroundSync();
     }
 }
@@ -478,12 +481,15 @@ async function loadMessages(options: { silent?: boolean } = {}) {
 async function refreshAll() {
     await loadWebinars();
     await loadLiveVideoConversations();
+
     if (sourceTab.value === 'webinar') {
         await loadConversations();
     }
+
     if (sourceTab.value === 'live_video') {
         await loadLiveVideoConversations();
     }
+
     if (sourceTab.value !== 'other') {
         await loadMessages();
     }
@@ -497,7 +503,10 @@ function selectWebinar(id: number) {
 }
 
 function selectSource(source: ChatSource) {
-    if (props.lockContext) return;
+    if (props.lockContext) {
+return;
+}
+
     sourceTab.value = source;
     conversationSearch.value = '';
     messages.value = [];
@@ -617,10 +626,12 @@ async function sendReply() {
 
         replyDraft.value = '';
         replyToMessageId.value = null;
+
         if (sourceTab.value === 'webinar') {
             if (payload?.data) {
                 messages.value.push(payload.data);
             }
+
             await loadConversations({ silent: true });
         } else if (sourceTab.value === 'live_video') {
             await loadMessages({ silent: true });
@@ -635,35 +646,48 @@ async function sendReply() {
 }
 
 watch(selectedWebinarId, async () => {
-    if (sourceTab.value !== 'webinar') return;
+    if (sourceTab.value !== 'webinar') {
+return;
+}
+
     await loadConversations();
 });
 
 watch(selectedRegistrationId, async () => {
-    if (sourceTab.value !== 'webinar') return;
+    if (sourceTab.value !== 'webinar') {
+return;
+}
+
     await loadMessages();
 });
 
 watch(selectedLiveVideoId, async () => {
-    if (sourceTab.value !== 'live_video') return;
+    if (sourceTab.value !== 'live_video') {
+return;
+}
+
     await loadSessionThreads();
     await loadMessages();
 });
 
 watch(sourceTab, async (nextSource) => {
     messages.value = [];
+
     if (nextSource === 'webinar') {
         if (!selectedWebinarId.value && webinars.value.length > 0) {
             selectedWebinarId.value = webinars.value[0].id;
         }
+
         await loadConversations();
         await loadMessages();
+
         return;
     }
 
     if (nextSource === 'live_video') {
         await loadLiveVideoConversations();
         await loadMessages();
+
         return;
     }
 });
@@ -674,21 +698,26 @@ onMounted(async () => {
     selectedLiveVideoId.value = props.videoId && props.videoId > 0 ? props.videoId : null;
     await loadWebinars();
     await loadLiveVideoConversations();
+
     if (sourceTab.value === 'webinar') {
         await loadConversations();
     }
+
     if (sourceTab.value === 'live_video') {
         await loadSessionThreads();
         await loadMessages();
     }
+
     if (sourceTab.value === 'webinar') {
         await loadMessages();
     }
+
     pollTimer = window.setInterval(async () => {
         if (sourceTab.value === 'webinar' && selectedWebinarId.value && selectedRegistrationId.value) {
             await loadMessages({ silent: true });
             await loadConversations({ silent: true });
         }
+
         if (sourceTab.value === 'live_video' && selectedLiveVideoId.value) {
             await loadMessages({ silent: true });
             await loadSessionThreads({ silent: true });
@@ -849,9 +878,9 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div v-else class="flex-1 overflow-y-auto">
+                    <template v-if="sourceTab === 'webinar'">
                     <button
                         v-for="conv in filteredWebinarConversations"
-                        v-if="sourceTab === 'webinar'"
                         :key="conv.registration_id"
                         type="button"
                         :class="[
@@ -883,9 +912,10 @@ onBeforeUnmount(() => {
                             {{ conv.messages_count }}
                         </Badge>
                     </button>
+                    </template>
+                    <template v-if="sourceTab === 'live_video'">
                     <button
                         v-for="conv in filteredLiveVideoConversations"
-                        v-if="sourceTab === 'live_video'"
                         :key="conv.video_id"
                         type="button"
                         :class="[
@@ -919,6 +949,7 @@ onBeforeUnmount(() => {
                             {{ conv.messages_count }}
                         </Badge>
                     </button>
+                    </template>
                 </div>
             </aside>
 

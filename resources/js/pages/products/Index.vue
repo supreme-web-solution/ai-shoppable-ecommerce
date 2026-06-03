@@ -85,7 +85,10 @@ function slugify(value: string): string {
 }
 
 function formatPrice(currency: string, price: string | null | undefined): string {
-    if (!price) return '—';
+    if (!price) {
+return '—';
+}
+
     return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(Number(price));
 }
 
@@ -93,6 +96,7 @@ function formatPrice(currency: string, price: string | null | undefined): string
 async function loadProducts() {
     loading.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const payload = await getList<ProductItem>('/api/v1/admin/products');
@@ -107,6 +111,7 @@ async function loadProducts() {
 async function createProduct() {
     saving.value = true;
     errorText.value = '';
+
     try {
         await postJson('/api/v1/admin/products', {
             title: form.value.title,
@@ -149,9 +154,13 @@ async function createProduct() {
 }
 
 async function updateProduct() {
-    if (!editingProductId.value) return;
+    if (!editingProductId.value) {
+return;
+}
+
     saving.value = true;
     errorText.value = '';
+
     try {
         await patchJson(`/api/v1/admin/products/${editingProductId.value}`, {
             title: form.value.title,
@@ -190,7 +199,10 @@ async function toggleActive(product: ProductItem) {
 }
 
 async function removeProduct(product: ProductItem) {
-    if (!window.confirm(`Delete "${product.title}"?`)) return;
+    if (!window.confirm(`Delete "${product.title}"?`)) {
+return;
+}
+
     try {
         await deleteResource(`/api/v1/admin/products/${product.id}`);
         await loadProducts();

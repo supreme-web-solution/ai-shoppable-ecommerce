@@ -38,9 +38,6 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -49,6 +46,9 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -253,7 +253,11 @@ function newForm(): WebinarForm {
 
 const filteredWebinars = computed(() => {
     const q = search.value.trim().toLowerCase();
-    if (!q) return webinars.value;
+
+    if (!q) {
+return webinars.value;
+}
+
     return webinars.value.filter(
         (item) =>
             item.title.toLowerCase().includes(q) ||
@@ -264,7 +268,11 @@ const filteredWebinars = computed(() => {
 
 const filteredProducts = computed(() => {
     const q = productSearch.value.trim().toLowerCase();
-    if (!q) return products.value;
+
+    if (!q) {
+return products.value;
+}
+
     return products.value.filter((item) => item.title.toLowerCase().includes(q));
 });
 
@@ -288,9 +296,18 @@ const canAddSource = computed(() => form.value.settings.knowledge_sources.length
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-    if (status === 'live') return 'destructive';
-    if (status === 'scheduled') return 'default';
-    if (status === 'ended') return 'secondary';
+    if (status === 'live') {
+return 'destructive';
+}
+
+    if (status === 'scheduled') {
+return 'default';
+}
+
+    if (status === 'ended') {
+return 'secondary';
+}
+
     return 'outline';
 }
 
@@ -301,22 +318,35 @@ function statusLabel(status: string): string {
         ended: 'Ended',
         cancelled: 'Cancelled',
     };
+
     return map[status] ?? status;
 }
 
 function formatDate(value?: string | null): string {
-    if (!value) return '—';
+    if (!value) {
+return '—';
+}
+
     const d = new Date(value);
+
     return Number.isNaN(d.getTime())
         ? value
         : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function normalizeDateTimeLocal(value?: string | null): string {
-    if (!value) return '';
+    if (!value) {
+return '';
+}
+
     const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return '';
+
+    if (Number.isNaN(d.getTime())) {
+return '';
+}
+
     const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+
     return local.toISOString().slice(0, 16);
 }
 
@@ -325,18 +355,30 @@ function webinarThumbnail(item: WebinarItem): string | null {
 }
 
 function selectedThumbnailUrl(): string {
-    if (form.value.settings.thumbnail_url.trim()) return form.value.settings.thumbnail_url.trim();
+    if (form.value.settings.thumbnail_url.trim()) {
+return form.value.settings.thumbnail_url.trim();
+}
+
     return videos.value.find((v) => v.id === form.value.video_id)?.thumbnail_url ?? '';
 }
 
 function selectedVideoUrl(): string {
-    if (previewVideoUrl.value) return previewVideoUrl.value;
-    if (form.value.settings.video_url.trim()) return form.value.settings.video_url.trim();
+    if (previewVideoUrl.value) {
+return previewVideoUrl.value;
+}
+
+    if (form.value.settings.video_url.trim()) {
+return form.value.settings.video_url.trim();
+}
+
     return videos.value.find((v) => v.id === form.value.video_id)?.playback_url ?? '';
 }
 
 function chatsPageUrl(webinarId?: number | null): string {
-    if (!webinarId) return '/live-shows/chats';
+    if (!webinarId) {
+return '/live-shows/chats';
+}
+
     return `/live-shows/chats?webinar=${webinarId}`;
 }
 
@@ -354,9 +396,11 @@ let copiedLinkTimeout: number | null = null;
 async function copyWebinarLink(label: string, url: string) {
     await copyToClipboard(url);
     copiedLinkHint.value = label;
+
     if (copiedLinkTimeout !== null) {
         window.clearTimeout(copiedLinkTimeout);
     }
+
     copiedLinkTimeout = window.setTimeout(() => {
         copiedLinkHint.value = null;
         copiedLinkTimeout = null;
@@ -366,44 +410,63 @@ async function copyWebinarLink(label: string, url: string) {
 function onVideoFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (!file) return;
+
+    if (!file) {
+return;
+}
+
     selectedVideoFile.value = file;
     form.value.settings.source_type = 'upload';
+
     if (previewVideoUrl.value?.startsWith('blob:')) {
         URL.revokeObjectURL(previewVideoUrl.value);
     }
+
     previewVideoUrl.value = URL.createObjectURL(file);
     videoUploadError.value = '';
 }
 
 function clearSelectedVideoFile() {
     selectedVideoFile.value = null;
+
     if (previewVideoUrl.value?.startsWith('blob:')) {
         URL.revokeObjectURL(previewVideoUrl.value);
     }
+
     previewVideoUrl.value = null;
     videoUploadError.value = '';
 }
 
 function unwrapVideo(payload: unknown): VideoOption | null {
-    if (!payload || typeof payload !== 'object') return null;
+    if (!payload || typeof payload !== 'object') {
+return null;
+}
+
     if ('data' in payload) {
         const data = (payload as { data?: unknown }).data;
+
         if (data && typeof data === 'object' && 'id' in data) {
             return data as VideoOption;
         }
     }
-    if ('id' in payload) return payload as VideoOption;
+
+    if ('id' in payload) {
+return payload as VideoOption;
+}
+
     return null;
 }
 
 async function uploadWebinarVideo() {
     if (!selectedVideoFile.value) {
         videoUploadError.value = 'Choose a video file first.';
+
         return;
     }
+
     uploadingVideo.value = true;
     videoUploadError.value = '';
+
     try {
         await ensureTeam();
         const upload = await uploadFile('/api/v1/admin/videos/upload', selectedVideoFile.value);
@@ -418,16 +481,20 @@ async function uploadWebinarVideo() {
             local_file_path: upload.local_file_path,
         });
         const created = unwrapVideo(payload);
+
         if (!created?.id) {
             throw new Error('Video was uploaded but could not be linked.');
         }
+
         const videoPayload = await getList<VideoOption>('/api/v1/admin/videos');
         videos.value = videoPayload.data ?? [];
         form.value.video_id = created.id;
         form.value.settings.source_type = 'upload';
+
         if (created.playback_url) {
             form.value.settings.video_url = created.playback_url;
         }
+
         selectedVideoFile.value = null;
     } catch (error) {
         videoUploadError.value = error instanceof Error ? error.message : 'Video upload failed.';
@@ -438,19 +505,32 @@ async function uploadWebinarVideo() {
 
 function toggleProduct(productId: number) {
     const idx = form.value.featured_product_ids.indexOf(productId);
-    if (idx === -1) form.value.featured_product_ids.push(productId);
-    else form.value.featured_product_ids.splice(idx, 1);
+
+    if (idx === -1) {
+form.value.featured_product_ids.push(productId);
+} else {
+form.value.featured_product_ids.splice(idx, 1);
+}
 }
 
 function validateForm(): string | null {
-    if (!form.value.title.trim()) return 'Webinar title is required.';
-    if (!form.value.starts_at) return 'Start date is required.';
+    if (!form.value.title.trim()) {
+return 'Webinar title is required.';
+}
+
+    if (!form.value.starts_at) {
+return 'Start date is required.';
+}
+
     if (form.value.ends_at && form.value.starts_at) {
         const s = new Date(form.value.starts_at);
         const e = new Date(form.value.ends_at);
-        if (!Number.isNaN(s.getTime()) && !Number.isNaN(e.getTime()) && e < s)
-            return 'End date must be after start date.';
+
+        if (!Number.isNaN(s.getTime()) && !Number.isNaN(e.getTime()) && e < s) {
+return 'End date must be after start date.';
+}
     }
+
     return null;
 }
 
@@ -488,18 +568,28 @@ function goToTab(tabId: string) {
 }
 
 function nextTab() {
-    if (canGoNext.value) goToTab(currentTabs.value[activeTabIndex.value + 1].id);
+    if (canGoNext.value) {
+goToTab(currentTabs.value[activeTabIndex.value + 1].id);
+}
 }
 
 function prevTab() {
-    if (canGoPrev.value) goToTab(currentTabs.value[activeTabIndex.value - 1].id);
+    if (canGoPrev.value) {
+goToTab(currentTabs.value[activeTabIndex.value - 1].id);
+}
 }
 
 // ── Knowledge base sources ─────────────────────────────────────────────────
 
 function addKnowledgeSource() {
-    if (!canAddSource.value) return;
-    if (!sourceForm.value.title.trim() || !sourceForm.value.content.trim()) return;
+    if (!canAddSource.value) {
+return;
+}
+
+    if (!sourceForm.value.title.trim() || !sourceForm.value.content.trim()) {
+return;
+}
+
     form.value.settings.knowledge_sources.push({
         title: sourceForm.value.title.trim(),
         content: sourceForm.value.content.trim(),
@@ -510,7 +600,10 @@ function addKnowledgeSource() {
 
 function removeKnowledgeSource(index: number) {
     form.value.settings.knowledge_sources.splice(index, 1);
-    if (expandedSourceIndex.value === index) expandedSourceIndex.value = null;
+
+    if (expandedSourceIndex.value === index) {
+expandedSourceIndex.value = null;
+}
 }
 
 function toggleSourceExpanded(index: number) {
@@ -527,6 +620,7 @@ function cancelAddingSource() {
 async function loadData() {
     loading.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const [wPayload, vPayload, pPayload] = await Promise.all([
@@ -547,6 +641,7 @@ async function loadData() {
 async function loadAttendees(webinarId: number) {
     loadingAttendees.value = true;
     attendees.value = [];
+
     try {
         const payload = await apiFetch<{ data: WebinarAttendee[] }>(
             `/api/v1/admin/live-shows/${webinarId}/attendees`,
@@ -576,11 +671,15 @@ function openCreateModal() {
 async function createWebinar() {
     modalError.value = '';
     const err = validateForm();
+
     if (err) {
         modalError.value = err;
+
         return;
     }
+
     saving.value = true;
+
     try {
         await postJson('/api/v1/admin/live-shows', buildPayload());
         createModalOpen.value = false;
@@ -631,14 +730,21 @@ async function openEditModal(item: WebinarItem) {
 }
 
 async function saveWebinar() {
-    if (!editingWebinar.value) return;
+    if (!editingWebinar.value) {
+return;
+}
+
     modalError.value = '';
     const err = validateForm();
+
     if (err) {
         modalError.value = err;
+
         return;
     }
+
     saving.value = true;
+
     try {
         await putJson(`/api/v1/admin/live-shows/${editingWebinar.value.id}`, buildPayload());
         editModalOpen.value = false;
@@ -651,8 +757,12 @@ async function saveWebinar() {
 }
 
 async function removeWebinar(item: WebinarItem) {
-    if (!window.confirm(`Delete webinar "${item.title}"?`)) return;
+    if (!window.confirm(`Delete webinar "${item.title}"?`)) {
+return;
+}
+
     deleting.value = item.id;
+
     try {
         await deleteResource(`/api/v1/admin/live-shows/${item.id}`);
         await loadData();
@@ -666,7 +776,10 @@ async function removeWebinar(item: WebinarItem) {
 // ── Clipboard ──────────────────────────────────────────────────────────────
 
 async function copyToClipboard(text?: string | null) {
-    if (!text) return;
+    if (!text) {
+return;
+}
+
     try {
         await navigator.clipboard.writeText(text);
     } catch {
@@ -685,6 +798,7 @@ onBeforeUnmount(() => {
     if (previewVideoUrl.value?.startsWith('blob:')) {
         URL.revokeObjectURL(previewVideoUrl.value);
     }
+
     if (copiedLinkTimeout !== null) {
         window.clearTimeout(copiedLinkTimeout);
     }
@@ -942,7 +1056,7 @@ onBeforeUnmount(() => {
             <div class="shrink-0 overflow-x-auto border-b border-[#F0EDE8] bg-[#FAF8F5]">
                 <div class="flex min-w-max">
                     <button
-                        v-for="(tab, idx) in CREATE_TABS"
+                        v-for="tab in CREATE_TABS"
                         :key="tab.id"
                         type="button"
                         :class="[
@@ -1233,8 +1347,8 @@ onBeforeUnmount(() => {
                         <!-- Existing sources -->
                         <div class="space-y-2">
                             <div
-                                v-for="(source, idx) in form.settings.knowledge_sources"
-                                :key="idx"
+                                v-for="(source, sourceIndex) in form.settings.knowledge_sources"
+                                :key="sourceIndex"
                                 class="overflow-hidden rounded-lg border"
                             >
                                 <div class="flex items-center justify-between gap-2 bg-muted/20 px-4 py-3">
@@ -1743,8 +1857,8 @@ onBeforeUnmount(() => {
                         <!-- Existing sources -->
                         <div class="space-y-2">
                             <div
-                                v-for="(source, idx) in form.settings.knowledge_sources"
-                                :key="idx"
+                                v-for="(source, sourceIndex) in form.settings.knowledge_sources"
+                                :key="sourceIndex"
                                 class="overflow-hidden rounded-lg border"
                             >
                                 <div class="flex items-center justify-between gap-2 bg-muted/20 px-4 py-3">

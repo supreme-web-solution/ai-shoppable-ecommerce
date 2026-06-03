@@ -40,6 +40,7 @@ export function overlaySlotForAnchor(anchor?: string | null): OverlaySlot {
 
 export function resolveOverlayKind(tag: TimedTagLike): OverlayKind {
     const kind = tag.overlay_kind;
+
     if (kind === 'flash' || kind === 'coupon' || kind === 'product') {
         return kind;
     }
@@ -49,6 +50,7 @@ export function resolveOverlayKind(tag: TimedTagLike): OverlayKind {
     }
 
     const discount = Number(tag.discount_percent ?? 0);
+
     if (discount >= 15) {
         return 'flash';
     }
@@ -105,6 +107,7 @@ export function tagOverlayStyle(
         style.transform = 'translate(-50%, -50%)';
     } else if (anchor === 'top-right' || anchor === 'bottom-right') {
         style.right = `${insetX}%`;
+
         if (anchor === 'bottom-right') {
             style.bottom = `${insetY}%`;
         } else {

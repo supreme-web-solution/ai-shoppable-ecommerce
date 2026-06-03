@@ -27,6 +27,7 @@ function buildHeaders(extra?: HeadersInit): Headers {
     headers.set('X-Requested-With', 'XMLHttpRequest');
 
     const csrfToken = readCookie('XSRF-TOKEN');
+
     if (csrfToken) {
         headers.set('X-XSRF-TOKEN', csrfToken);
     }
@@ -40,6 +41,7 @@ function handleUnauthenticated(status: number): void {
     if (unauthenticatedHandled) {
         return;
     }
+
     unauthenticatedHandled = true;
 
     const message = status === 419
@@ -75,6 +77,7 @@ export function useAdminApi() {
 
         if (response.status === 401 || response.status === 419) {
             handleUnauthenticated(response.status);
+
             throw new Error('Session expired.');
         }
 

@@ -123,11 +123,13 @@ class KnowledgeEmbeddingPipelineService
             ? $this->searchByPgVector($ownerType, $ownerId, $queryVector, $limit)
             : $this->searchByCosine($ownerType, $ownerId, $queryVector, $limit);
 
+        $fallbackContext = $this->knowledgeSourceService->toKnowledgeText($fallbackSources);
+
         if ($matches->isEmpty()) {
-            return $this->knowledgeSourceService->toKnowledgeText($fallbackSources);
+            return $fallbackContext;
         }
 
-        return $matches
+        $matchedContext = $matches
             ->map(function (KnowledgeEmbedding $match): string {
                 $title = trim((string) ($match->source_title ?? 'Knowledge'));
                 $content = trim((string) $match->chunk_content);
@@ -135,6 +137,32 @@ class KnowledgeEmbeddingPipelineService
                 return sprintf("## %s\n%s", $title, $content);
             })
             ->implode("\n\n---\n\n");
+
+        if ($fallbackContext !== '' && ! $this->likelyContainsAnswer($matchedContext, $question)) {
+            return trim($fallbackContext."\n\n---\n\n".$matchedContext);
+        }
+
+        return $matchedContext;
+    }
+
+    protected function likelyContainsAnswer(string $context, string $question): bool
+    {
+        $contextLower = mb_strtolower($context);
+        $words = collect(preg_split('/\s+/', mb_strtolower(trim($question)) ?: []) ?: [])
+            ->map(static fn (string $word): string => preg_replace('/[^\p{L}\p{N}]+/u', '', $word) ?? '')
+            ->filter(static fn (string $word): bool => mb_strlen($word) >= 4)
+            ->unique()
+            ->values();
+
+        if ($words->isEmpty()) {
+            return true;
+        }
+
+        return $words->contains(function (string $word) use ($contextLower): bool {
+            $pattern = '/\b'.preg_quote($word, '/').'s?\b/u';
+
+            return preg_match($pattern, $contextLower) === 1;
+        });
     }
 
     /**

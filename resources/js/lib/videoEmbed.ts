@@ -84,7 +84,9 @@ function slugify(value: string): string {
 }
 
 function normalizeEmbed(payload: EmbedCreateResponse | null | undefined): EmbedItem | null {
-    if (!payload) return null;
+    if (!payload) {
+return null;
+}
 
     if (payload.data && typeof payload.data === 'object') {
         return payload.data;
@@ -128,6 +130,7 @@ export async function ensureEmbedForPlaylist(
     playlistSlug: string,
 ): Promise<EmbedItem | null> {
     const existing = await findEmbedForPlaylist(api, playlistId);
+
     if (existing) {
         return existing;
     }
@@ -149,6 +152,7 @@ export async function ensureEmbedForVideo(
     videoTitle: string,
 ): Promise<EmbedItem | null> {
     const existing = await findEmbedForVideo(api, videoId);
+
     if (existing) {
         return existing;
     }

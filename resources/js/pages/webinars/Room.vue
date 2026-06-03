@@ -73,10 +73,12 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
     }
 
     const payload = await response.json().catch(() => null);
+
     if (!response.ok) {
         const message = payload && typeof payload === 'object' && 'message' in payload
             ? String((payload as { message: string }).message)
             : `Request failed (${response.status})`;
+
         throw new Error(message);
     }
 
@@ -85,7 +87,11 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
 
 function formatMoney(product: WebinarProduct): string {
     const value = product.sale_price || product.price;
-    if (!value) return '';
+
+    if (!value) {
+return '';
+}
+
     return new Intl.NumberFormat(undefined, {
         style: 'currency',
         currency: product.currency || 'USD',
@@ -95,6 +101,7 @@ function formatMoney(product: WebinarProduct): string {
 async function loadRoom() {
     loading.value = true;
     errorText.value = '';
+
     try {
         const [webinarPayload, messagesPayload] = await Promise.all([
             apiFetch<{ data: WebinarData }>(`/api/v1/player/webinars/${webinarId}`),
@@ -111,10 +118,12 @@ async function loadRoom() {
 
 async function pollMessages() {
     const lastId = messages.value.length > 0 ? messages.value[messages.value.length - 1].id : 0;
+
     try {
         const payload = await apiFetch<{ data: RoomMessage[] }>(
             `/api/v1/player/webinars/${webinarId}/messages?after_id=${lastId}`,
         );
+
         if (payload.data?.length) {
             messages.value = [...messages.value, ...payload.data];
         }
@@ -127,7 +136,9 @@ async function sendMessage() {
     if (!messageDraft.value.trim() || posting.value || !webinar.value?.chat_enabled) {
         return;
     }
+
     posting.value = true;
+
     try {
         const payload = await apiFetch<{ data: RoomMessage[] }>(
             `/api/v1/player/webinars/${webinarId}/messages`,
@@ -140,9 +151,11 @@ async function sendMessage() {
                 }),
             },
         );
+
         if (payload.data?.length) {
             messages.value = [...messages.value, ...payload.data];
         }
+
         messageDraft.value = '';
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not send message.';

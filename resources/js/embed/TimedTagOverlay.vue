@@ -5,10 +5,11 @@ import {
     msRemaining,
     resolveOverlayKind,
     tagOverlayStyle,
-    tagPosition,
-    type OverlayKind,
-    type TimedTagLike,
+    tagPosition
+    
+    
 } from '@/lib/tagOverlay';
+import type {OverlayKind, TimedTagLike} from '@/lib/tagOverlay';
 
 type ProductTag = TimedTagLike & {
     cta_label?: string | null;
@@ -50,6 +51,7 @@ const remainingMs = computed(() =>
 const countdown = computed(() => formatCountdown(remainingMs.value));
 const discountLabel = computed(() => {
     const n = Number(props.tag.discount_percent ?? 0);
+
     if (!n) {
         return null;
     }
@@ -59,6 +61,7 @@ const discountLabel = computed(() => {
 
 const displayPrice = computed(() => {
     const p = props.tag.product;
+
     if (!p) {
         return null;
     }
@@ -78,6 +81,7 @@ const kindClass = computed(() => {
 
 async function copyCode() {
     const code = props.tag.coupon_code?.trim();
+
     if (!code) {
         return;
     }

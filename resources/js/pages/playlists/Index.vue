@@ -14,11 +14,10 @@ import {
     PlusCircle,
     Search,
     Trash2,
-    Video,
     XCircle,
 } from 'lucide-vue-next';
 import { computed, onMounted, ref, watch } from 'vue';
-import { Badge } from '@/components/ui/badge';
+import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -31,11 +30,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import EmbedDisplaySelect from '@/components/embed/EmbedDisplaySelect.vue';
 import { useAdminApi } from '@/composables/useAdminApi';
 import {
-    type EmbedDisplayType,
-    type EmbedItem,
+    
+    
     embedDisplayLabel,
     embedScriptCode,
     ensureEmbedForPlaylist,
@@ -44,8 +42,9 @@ import {
     replaceEmbedInList,
     canShareOrEmbedPlaylist,
     PLAYLIST_SHARE_EMBED_REQUIRES_PUBLIC_TITLE,
-    updateEmbedDisplayType,
+    updateEmbedDisplayType
 } from '@/lib/videoEmbed';
+import type {EmbedDisplayType, EmbedItem} from '@/lib/videoEmbed';
 
 type VideoOption = {
     id: number;
@@ -138,13 +137,21 @@ const playlistRangeEnd = computed(() =>
 
 const filteredVideosForCreate = computed(() => {
     const q = createVideoSearch.value.trim().toLowerCase();
-    if (!q) return videos.value;
+
+    if (!q) {
+return videos.value;
+}
+
     return videos.value.filter((v) => v.title.toLowerCase().includes(q));
 });
 
 const filteredVideosForContent = computed(() => {
     const q = contentVideoSearch.value.trim().toLowerCase();
-    if (!q) return videos.value;
+
+    if (!q) {
+return videos.value;
+}
+
     return videos.value.filter((v) => v.title.toLowerCase().includes(q));
 });
 
@@ -160,9 +167,16 @@ function slugify(value: string): string {
 function unwrapResource<T extends { id: number }>(payload: unknown): T | null {
     if (payload && typeof payload === 'object' && 'data' in payload) {
         const data = (payload as { data?: unknown }).data;
-        if (data && typeof data === 'object' && 'id' in data) return data as T;
+
+        if (data && typeof data === 'object' && 'id' in data) {
+return data as T;
+}
     }
-    if (payload && typeof payload === 'object' && 'id' in payload) return payload as T;
+
+    if (payload && typeof payload === 'object' && 'id' in payload) {
+return payload as T;
+}
+
     return null;
 }
 
@@ -172,11 +186,13 @@ function embedForPlaylist(playlistId: number): EmbedItem | undefined {
 
 async function resolvePlaylistEmbed(playlist: PlaylistItem): Promise<EmbedItem | null> {
     const cached = embedForPlaylist(playlist.id);
+
     if (cached) {
         return cached;
     }
 
     const fromApi = await findEmbedForPlaylist(embedApi, playlist.id);
+
     if (fromApi) {
         embeds.value = replaceEmbedInList(embeds.value, fromApi);
 
@@ -216,6 +232,7 @@ async function changePlaylistEmbedType(
 
     try {
         const embed = await resolvePlaylistEmbed(playlist);
+
         if (!embed) {
             throw new Error('Could not load embed.');
         }
@@ -227,6 +244,7 @@ async function changePlaylistEmbedType(
         });
 
         const updated = await updateEmbedDisplayType(embedApi, embed.id, type);
+
         if (updated) {
             embeds.value = replaceEmbedInList(embeds.value, updated);
         }
@@ -234,6 +252,7 @@ async function changePlaylistEmbedType(
         if (previous) {
             embeds.value = replaceEmbedInList(embeds.value, previous);
         }
+
         errorText.value = err instanceof Error ? err.message : 'Could not update embed display.';
     } finally {
         embedTypeSavingId.value = null;
@@ -259,6 +278,7 @@ async function loadPlaylists(page = playlistPage.value) {
 async function loadData() {
     loading.value = true;
     errorText.value = '';
+
     try {
         await ensureTeam();
         const [videoPayload, embedPayload] = await Promise.all([
@@ -277,6 +297,7 @@ async function loadData() {
 
 function goToPlaylistPage(page: number) {
     const next = Math.max(1, Math.min(page, playlistTotalPages.value));
+
     if (next === playlistPage.value) {
         return;
     }
@@ -319,15 +340,22 @@ function openCreateModal() {
 
 function toggleCreateVideo(videoId: number) {
     const idx = createForm.value.video_ids.indexOf(videoId);
-    if (idx === -1) createForm.value.video_ids.push(videoId);
-    else createForm.value.video_ids.splice(idx, 1);
+
+    if (idx === -1) {
+createForm.value.video_ids.push(videoId);
+} else {
+createForm.value.video_ids.splice(idx, 1);
+}
 }
 
 async function createPlaylist() {
-    if (!createForm.value.title.trim()) return;
+    if (!createForm.value.title.trim()) {
+return;
+}
 
     saving.value = true;
     errorText.value = '';
+
     try {
         const payload = await postJson('/api/v1/admin/playlists', {
             title: createForm.value.title.trim(),
@@ -339,7 +367,10 @@ async function createPlaylist() {
         });
 
         const created = unwrapResource<PlaylistItem>(payload);
-        if (created) await resolvePlaylistEmbed(created);
+
+        if (created) {
+await resolvePlaylistEmbed(created);
+}
 
         createModalOpen.value = false;
         playlistPage.value = 1;
@@ -369,15 +400,22 @@ function playlistAutoAdvanceEnabled(playlist: PlaylistItem): boolean {
 
 function toggleContentVideo(videoId: number) {
     const idx = contentVideoIds.value.indexOf(videoId);
-    if (idx === -1) contentVideoIds.value.push(videoId);
-    else contentVideoIds.value.splice(idx, 1);
+
+    if (idx === -1) {
+contentVideoIds.value.push(videoId);
+} else {
+contentVideoIds.value.splice(idx, 1);
+}
 }
 
 async function savePlaylistContent() {
-    if (!contentModalPlaylist.value) return;
+    if (!contentModalPlaylist.value) {
+return;
+}
 
     saving.value = true;
     errorText.value = '';
+
     try {
         const existingSettings = contentModalPlaylist.value.settings ?? {};
 
@@ -402,7 +440,10 @@ async function savePlaylistContent() {
 }
 
 async function removePlaylist(playlist: PlaylistItem) {
-    if (!window.confirm(`Delete playlist "${playlist.title}"?`)) return;
+    if (!window.confirm(`Delete playlist "${playlist.title}"?`)) {
+return;
+}
+
     try {
         await deleteResource(`/api/v1/admin/playlists/${playlist.id}`);
         await loadData();
@@ -426,7 +467,9 @@ async function copyText(value: string, token: string) {
     await navigator.clipboard.writeText(value);
     copiedToken.value = token;
     window.setTimeout(() => {
-        if (copiedToken.value === token) copiedToken.value = '';
+        if (copiedToken.value === token) {
+copiedToken.value = '';
+}
     }, 2000);
 }
 
@@ -436,9 +479,14 @@ async function copyEmbedLink(playlist: PlaylistItem) {
     }
 
     errorText.value = '';
+
     try {
         const embed = await resolvePlaylistEmbed(playlist);
-        if (!embed) throw new Error('Could not generate embed.');
+
+        if (!embed) {
+throw new Error('Could not generate embed.');
+}
+
         const url = embed.embed_url || `${window.location.origin}/embed/${embed.slug}`;
         await copyText(url, `link-${embed.id}`);
     } catch (err) {
@@ -452,9 +500,14 @@ async function copyEmbedCode(playlist: PlaylistItem) {
     }
 
     errorText.value = '';
+
     try {
         const embed = await resolvePlaylistEmbed(playlist);
-        if (!embed) throw new Error('Could not generate embed.');
+
+        if (!embed) {
+throw new Error('Could not generate embed.');
+}
+
         await copyText(embedScriptCode(embed), `code-${embed.id}`);
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not copy embed code.';

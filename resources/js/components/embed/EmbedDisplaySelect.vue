@@ -2,13 +2,14 @@
 import { computed } from 'vue';
 import { Label } from '@/components/ui/label';
 import {
-    EMBED_DISPLAY_OPTIONS,
-    type EmbedDisplayType,
+    EMBED_DISPLAY_OPTIONS
+    
 } from '@/lib/videoEmbed';
+import type {EmbedDisplayType} from '@/lib/videoEmbed';
 
 const model = defineModel<EmbedDisplayType>({ required: true });
 
-const props = withDefaults(
+withDefaults(
     defineProps<{
         disabled?: boolean;
         compact?: boolean;

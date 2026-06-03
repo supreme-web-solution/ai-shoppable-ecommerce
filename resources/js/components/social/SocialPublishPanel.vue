@@ -25,7 +25,7 @@ const emit = defineEmits<{
     published: [];
 }>();
 
-const { teamId, apiFetch, ensureTeam, postJson } = useAdminApi();
+const { apiFetch, ensureTeam, postJson } = useAdminApi();
 
 const loading = ref(false);
 const publishing = ref(false);
@@ -79,9 +79,11 @@ async function loadAccountsAndShop() {
         caption.value = props.title?.trim() ? `${props.title.trim()}\n\nShop now: ${shop.shop_url}` : `Shop now: ${shop.shop_url}`;
 
         const nextSelected: Record<string, boolean> = {};
+
         for (const account of accounts.value) {
             nextSelected[accountKey(account)] = false;
         }
+
         selected.value = nextSelected;
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not load social accounts.';
