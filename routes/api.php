@@ -79,7 +79,10 @@ Route::prefix('v1')->group(function (): void {
             ->middleware('throttle:integration-webhook');
     });
 
-    Route::middleware(['auth:sanctum', 'throttle:admin-api'])->prefix('admin')->group(function (): void {
+    Route::middleware(['auth:sanctum', 'throttle:admin-api'])
+        ->prefix('admin')
+        ->name('admin.')
+        ->group(function (): void {
         Route::get('overview', [OverviewController::class, 'show']);
         Route::post('videos/upload', [VideoController::class, 'upload']);
         Route::get('ai/heygen-options', [AiContentController::class, 'heygenOptions']);
