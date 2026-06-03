@@ -17,8 +17,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('content/{videoId}/edit', function ($videoId) {
         return inertia('content/Edit', ['videoId' => (int) $videoId]);
     })->name('content.edit');
-    Route::inertia('live-shows', 'live-shows/Index')->name('live-shows.index');
-    Route::inertia('live-shows/chats', 'live-shows/chats/Index')->name('live-shows.chats');
+    Route::inertia('live-shows', 'live-shows/Index')->name('live-shows.page');
+    Route::inertia('live-shows/chats', 'live-shows/chats/Index')->name('live-shows.chats.page');
     Route::get('live-shows/chats/webinars/{liveShow}', function ($liveShow) {
         return inertia('live-shows/Chats', [
             'source' => 'webinar',
@@ -33,11 +33,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
             'lockContext' => true,
         ]);
     })->name('live-shows.chats.live-video');
-    Route::inertia('playlists', 'playlists/Index')->name('playlists.index');
-    Route::inertia('products', 'products/Index')->name('products.index');
-    Route::redirect('embeds', '/playlists')->name('embeds.index');
-    Route::inertia('analytics', 'analytics/Index')->name('analytics.index');
-    Route::inertia('teams', 'teams/Index')->name('teams.index');
+    Route::inertia('playlists', 'playlists/Index')->name('playlists.page');
+    Route::inertia('products', 'products/Index')->name('products.page');
+    Route::redirect('embeds', '/playlists')->name('embeds.page');
+    Route::inertia('analytics', 'analytics/Index')->name('analytics.page');
+    Route::inertia('teams', 'teams/Index')->name('teams.page');
 });
 
 Route::get('embed/{slug}', [EmbedPageController::class, 'show'])->name('embed.show');

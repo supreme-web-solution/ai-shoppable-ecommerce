@@ -52,6 +52,7 @@ git pull origin $FORGE_SITE_BRANCH
 $FORGE_COMPOSER install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
 $FORGE_PHP artisan migrate --force
+$FORGE_PHP artisan route:clear
 $FORGE_PHP artisan config:cache
 $FORGE_PHP artisan route:cache
 $FORGE_PHP artisan view:cache
