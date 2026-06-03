@@ -1,1 +1,0 @@
-import{E as e,S as t,V as n,d as r,nt as i,wt as a,y as o}from"./pusher-CPeDM_SR.js";var s={class:`text-sm text-red-600 dark:text-red-500`},c=e({__name:`InputError`,props:{message:{}},setup(e){return(c,l)=>i((n(),t(`div`,null,[o(`p`,s,a(e.message),1)],512)),[[r,e.message]])}});export{c as t};

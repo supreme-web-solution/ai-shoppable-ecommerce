@@ -1,1 +1,0 @@
-import{E as e,S as t,V as n,xt as r,yt as i}from"./pusher-CPeDM_SR.js";import{mt as a}from"./app-Br1e0e-3.js";var o=e({__name:`Skeleton`,props:{class:{type:[Boolean,null,String,Object,Array]}},setup(e){let o=e;return(e,s)=>(n(),t(`div`,{"data-slot":`skeleton`,class:r(i(a)(`animate-pulse rounded-md bg-primary/10`,o.class))},null,2))}});export{o as t};
