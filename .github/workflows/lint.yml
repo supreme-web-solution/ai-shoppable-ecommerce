@@ -43,7 +43,9 @@ jobs:
         run: npm run format
 
       - name: Lint Frontend
-        run: npm run lint:check
+        run: |
+          npm run lint
+          npm run lint:check
 
       # - name: Commit Changes
       #   uses: stefanzweifel/git-auto-commit-action@v7
