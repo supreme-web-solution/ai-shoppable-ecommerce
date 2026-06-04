@@ -13,6 +13,8 @@ Route::middleware(['auth'])->group(function () {
 });
 
 Route::middleware(['auth', 'verified'])->group(function () {
+    Route::redirect('settings/appearance', '/settings/profile');
+
     Route::delete('settings/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
     Route::get('settings/security', [SecurityController::class, 'edit'])
@@ -23,6 +25,5 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->middleware('throttle:6,1')
         ->name('user-password.update');
 
-    Route::inertia('settings/appearance', 'settings/Appearance')->name('appearance.edit');
     Route::inertia('settings/integrations', 'settings/Integrations')->name('integrations.edit');
 });
