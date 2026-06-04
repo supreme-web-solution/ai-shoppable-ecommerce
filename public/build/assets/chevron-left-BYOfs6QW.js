@@ -1,1 +1,0 @@
-import{P as e}from"./app-Dd77S7r8.js";var t=e(`ChevronLeftIcon`,[[`path`,{d:`m15 18-6-6 6-6`,key:`1wnfg3`}]]);export{t};
