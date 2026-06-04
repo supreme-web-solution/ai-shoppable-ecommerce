@@ -4,6 +4,7 @@ use App\Http\Controllers\CheckoutPageController;
 use App\Http\Controllers\EmbedPageController;
 use App\Http\Controllers\ShopPageController;
 use App\Http\Controllers\TeamInvitePageController;
+use App\Http\Controllers\TutorialController;
 use App\Http\Controllers\WebinarPageController;
 use Illuminate\Support\Facades\Route;
 
