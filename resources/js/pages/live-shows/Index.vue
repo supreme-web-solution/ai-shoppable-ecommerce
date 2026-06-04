@@ -16,6 +16,7 @@ import {
     Layers,
     Link2,
     Loader2,
+    Mail,
     MessageSquare,
     Package,
     Plus,
@@ -27,7 +28,8 @@ import {
     Users,
     XCircle,
 } from 'lucide-vue-next';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { toast } from 'vue-sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -60,6 +62,8 @@ type VideoOption = {
     playback_url?: string | null;
 };
 
+type OfferAppearance = 'pin' | 'in_chat' | 'popup';
+
 type ProductOption = {
     id: number;
     title: string;
@@ -68,6 +72,32 @@ type ProductOption = {
     sale_price?: string | null;
     currency?: string;
 };
+
+type WebinarFeaturedProduct = ProductOption & {
+    starts_at_ms?: number;
+    ends_at_ms?: number | null;
+    appearance?: OfferAppearance | string;
+    cta_url?: string | null;
+    default_checkout_url?: string | null;
+    checkout_url?: string | null;
+    pin_order?: number;
+};
+
+type FeaturedOffer = {
+    product_id: number;
+    starts_at_sec: number;
+    ends_at_sec: number | null;
+    appearance: OfferAppearance;
+    cta_url: string;
+    pin_order: number;
+    default_checkout_url?: string;
+};
+
+const OFFER_APPEARANCE_OPTIONS: { value: OfferAppearance; label: string; hint: string }[] = [
+    { value: 'pin', label: 'Pin on chat', hint: 'Pinned above the chat while active' },
+    { value: 'in_chat', label: 'In chat', hint: 'Appears as a shoppable message in the chat feed' },
+    { value: 'popup', label: 'Popup modal', hint: 'Modal overlay on the video for checkout' },
+];
 
 type KnowledgeSource = {
     title: string;
@@ -86,6 +116,7 @@ type WebinarSettings = {
     ai_assistant_enabled?: boolean;
     knowledge_base_text?: string | null;
     knowledge_sources?: KnowledgeSource[];
+    video_duration_seconds?: number | null;
 };
 
 type WebinarItem = {
@@ -110,8 +141,11 @@ type WebinarItem = {
     room_url?: string;
     registrants_count?: number;
     messages_count?: number;
+    watched_half_count?: number;
+    watched_end_count?: number;
     views_count?: number;
-    featured_products?: ProductOption[];
+    featured_products?: WebinarFeaturedProduct[];
+    video_duration_seconds?: number | null;
     video?: VideoOption | null;
 };
 
@@ -122,6 +156,9 @@ type WebinarAttendee = {
     registered_at?: string | null;
     last_joined_at?: string | null;
     join_count?: number;
+    max_watch_ms?: number;
+    reached_half_at?: string | null;
+    watched_to_end_at?: string | null;
 };
 
 type WebinarFormSettings = {
@@ -135,6 +172,7 @@ type WebinarFormSettings = {
     chat_enabled: boolean;
     ai_assistant_enabled: boolean;
     knowledge_sources: KnowledgeSource[];
+    video_duration_seconds: number | null;
 };
 
 type WebinarForm = {
@@ -144,7 +182,7 @@ type WebinarForm = {
     starts_at: string;
     ends_at: string;
     status: 'scheduled' | 'live' | 'ended' | 'cancelled';
-    featured_product_ids: number[];
+    featured_offers: FeaturedOffer[];
     settings: WebinarFormSettings;
 };
 
@@ -161,7 +199,13 @@ const CREATE_TABS: TabItem[] = [
     { id: 'video', label: 'Video', icon: Film },
     { id: 'registration', label: 'Registration', icon: UserRound },
     { id: 'offers', label: 'Offers', icon: Package },
-    { id: 'ai', label: 'AI Assistant', icon: Bot },
+];
+
+const WEBINAR_STATUS_OPTIONS: { value: WebinarForm['status']; label: string }[] = [
+    { value: 'live', label: 'Live' },
+    { value: 'scheduled', label: 'Scheduled' },
+    { value: 'ended', label: 'Ended' },
+    { value: 'cancelled', label: 'Cancelled' },
 ];
 
 const EDIT_TABS: TabItem[] = [
@@ -187,7 +231,7 @@ defineOptions({
 
 // ── Composables ────────────────────────────────────────────────────────────
 
-const { getList, postJson, putJson, apiFetch, uploadFile, deleteResource, ensureTeam } = useAdminApi();
+const { teamId, getList, postJson, putJson, apiFetch, uploadFile, deleteResource, ensureTeam } = useAdminApi();
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -202,8 +246,33 @@ const productSearch = ref('');
 const webinars = ref<WebinarItem[]>([]);
 const videos = ref<VideoOption[]>([]);
 const products = ref<ProductOption[]>([]);
+const ATTENDEES_PER_PAGE = 50;
+
 const attendees = ref<WebinarAttendee[]>([]);
+const attendeePage = ref(1);
+const attendeeLastPage = ref(1);
+const attendeeTotal = ref(0);
 const loadingAttendees = ref(false);
+const notifyingAttendees = ref(false);
+const importingAttendees = ref(false);
+const importAttendeesInputRef = ref<HTMLInputElement | null>(null);
+
+const attendeePageRangeLabel = computed(() => {
+    if (attendeeTotal.value === 0) {
+        return '0 attendees';
+    }
+
+    const start = (attendeePage.value - 1) * ATTENDEES_PER_PAGE + 1;
+    const end = Math.min(attendeePage.value * ATTENDEES_PER_PAGE, attendeeTotal.value);
+
+    return `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${attendeeTotal.value.toLocaleString()}`;
+});
+
+const hasAttendeeRegistrations = computed(
+    () =>
+        attendeeTotal.value > 0
+        || (editingWebinar.value?.registrants_count ?? 0) > 0,
+);
 
 const createModalOpen = ref(false);
 const editModalOpen = ref(false);
@@ -233,7 +302,7 @@ function newForm(): WebinarForm {
         starts_at: '',
         ends_at: '',
         status: 'scheduled',
-        featured_product_ids: [],
+        featured_offers: [],
         settings: {
             host_name: '',
             thumbnail_url: '',
@@ -245,11 +314,20 @@ function newForm(): WebinarForm {
             chat_enabled: true,
             ai_assistant_enabled: false,
             knowledge_sources: [],
+            video_duration_seconds: null,
         },
     };
 }
 
 // ── Computed ───────────────────────────────────────────────────────────────
+
+const scheduleDatesDisabled = computed(() => form.value.status === 'live');
+
+const videoDurationSeconds = computed(() => {
+    const n = Number(form.value.settings.video_duration_seconds ?? 0);
+
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+});
 
 const filteredWebinars = computed(() => {
     const q = search.value.trim().toLowerCase();
@@ -349,6 +427,25 @@ return '';
 
     return local.toISOString().slice(0, 16);
 }
+
+function nowDateTimeLocal(): string {
+    return normalizeDateTimeLocal(new Date().toISOString());
+}
+
+watch(
+    () => form.value.status,
+    (status) => {
+        if (status !== 'live') {
+            return;
+        }
+
+        if (!form.value.starts_at) {
+            form.value.starts_at = nowDateTimeLocal();
+        }
+
+        form.value.ends_at = '';
+    },
+);
 
 function webinarThumbnail(item: WebinarItem): string | null {
     return item.thumbnail_url ?? item.settings?.thumbnail_url ?? item.video?.thumbnail_url ?? null;
@@ -503,14 +600,76 @@ async function uploadWebinarVideo() {
     }
 }
 
+function isProductSelected(productId: number): boolean {
+    return form.value.featured_offers.some((offer) => offer.product_id === productId);
+}
+
+function offerForProduct(productId: number): FeaturedOffer | undefined {
+    return form.value.featured_offers.find((offer) => offer.product_id === productId);
+}
+
 function toggleProduct(productId: number) {
-    const idx = form.value.featured_product_ids.indexOf(productId);
+    const idx = form.value.featured_offers.findIndex((offer) => offer.product_id === productId);
 
     if (idx === -1) {
-form.value.featured_product_ids.push(productId);
-} else {
-form.value.featured_product_ids.splice(idx, 1);
+        form.value.featured_offers.push({
+            product_id: productId,
+            starts_at_sec: 0,
+            ends_at_sec: null,
+            appearance: 'popup',
+            cta_url: '',
+            pin_order: form.value.featured_offers.length,
+        });
+    } else {
+        form.value.featured_offers.splice(idx, 1);
+    }
 }
+
+function updateOffer(
+    productId: number,
+    patch: Partial<Pick<FeaturedOffer, 'starts_at_sec' | 'ends_at_sec' | 'appearance' | 'cta_url'>>,
+) {
+    const offer = offerForProduct(productId);
+
+    if (!offer) {
+        return;
+    }
+
+    Object.assign(offer, patch);
+}
+
+function offerCheckoutHint(productId: number): string {
+    const offer = offerForProduct(productId);
+
+    if (!offer) {
+        return '';
+    }
+
+    if (offer.cta_url.trim()) {
+        return offer.cta_url.trim();
+    }
+
+    return offer.default_checkout_url || 'Uses your integration checkout link when attendees click Shop';
+}
+
+function mapFeaturedProductsToOffers(products: WebinarFeaturedProduct[]): FeaturedOffer[] {
+    return products.map((product, index) => ({
+        product_id: product.id,
+        starts_at_sec: Math.max(0, Math.round((product.starts_at_ms ?? 0) / 1000)),
+        ends_at_sec:
+            product.ends_at_ms != null && product.ends_at_ms > 0
+                ? Math.round(product.ends_at_ms / 1000)
+                : null,
+        appearance:
+            product.appearance === 'pin' ||
+            product.appearance === 'in_chat' ||
+            product.appearance === 'popup'
+                ? product.appearance
+                : 'popup',
+        cta_url: product.cta_url ?? '',
+        pin_order: product.pin_order ?? index,
+        default_checkout_url: product.default_checkout_url ?? undefined,
+    }));
 }
 
 function validateForm(): string | null {
@@ -518,9 +677,9 @@ function validateForm(): string | null {
 return 'Webinar title is required.';
 }
 
-    if (!form.value.starts_at) {
-return 'Start date is required.';
-}
+    if (form.value.status !== 'live' && !form.value.starts_at) {
+        return 'Start date is required.';
+    }
 
     if (form.value.ends_at && form.value.starts_at) {
         const s = new Date(form.value.starts_at);
@@ -531,19 +690,56 @@ return 'End date must be after start date.';
 }
     }
 
+    const duration = videoDurationSeconds.value;
+
+    for (const offer of form.value.featured_offers) {
+        if (offer.starts_at_sec < 0) {
+            return 'Offer show times cannot be negative.';
+        }
+
+        if (duration !== null && offer.starts_at_sec > duration) {
+            return 'An offer is scheduled after the video duration ends.';
+        }
+
+        if (
+            offer.ends_at_sec !== null &&
+            offer.ends_at_sec >= 0 &&
+            offer.ends_at_sec < offer.starts_at_sec
+        ) {
+            return 'Offer hide time must be after the show time.';
+        }
+
+        if (duration !== null && offer.ends_at_sec !== null && offer.ends_at_sec > duration) {
+            return 'An offer hide time is after the video duration ends.';
+        }
+    }
+
     return null;
 }
 
-function buildPayload() {
+function buildPayload(forCreate = false) {
     return {
         title: form.value.title.trim(),
         description: form.value.description.trim() || null,
         video_id: form.value.video_id,
-        starts_at: form.value.starts_at,
-        ends_at: form.value.ends_at || null,
+        starts_at:
+            form.value.status === 'live'
+                ? form.value.starts_at || nowDateTimeLocal()
+                : form.value.starts_at,
+        ends_at: form.value.status === 'live' ? null : form.value.ends_at || null,
         status: form.value.status,
         is_premiere: false,
-        featured_product_ids: form.value.featured_product_ids,
+        featured_products: form.value.featured_offers.map((offer, index) => ({
+            product_id: offer.product_id,
+            starts_at_ms: Math.max(0, Math.round(offer.starts_at_sec * 1000)),
+            ends_at_ms:
+                offer.ends_at_sec !== null && offer.ends_at_sec >= 0
+                    ? Math.round(offer.ends_at_sec * 1000)
+                    : null,
+            appearance: offer.appearance,
+            cta_url: offer.cta_url.trim() || null,
+            pin_order: index,
+        })),
         settings: {
             host_name: form.value.settings.host_name.trim() || null,
             thumbnail_url: selectedThumbnailUrl() || null,
@@ -552,9 +748,10 @@ function buildPayload() {
             registration_title: form.value.settings.registration_title.trim() || null,
             registration_description: form.value.settings.registration_description.trim() || null,
             room_title: form.value.settings.room_title.trim() || null,
-            chat_enabled: form.value.settings.chat_enabled,
-            ai_assistant_enabled: form.value.settings.ai_assistant_enabled,
-            knowledge_sources: form.value.settings.knowledge_sources,
+            chat_enabled: forCreate ? true : form.value.settings.chat_enabled,
+            ai_assistant_enabled: forCreate ? false : form.value.settings.ai_assistant_enabled,
+            knowledge_sources: forCreate ? [] : form.value.settings.knowledge_sources,
+            video_duration_seconds: videoDurationSeconds.value,
         },
     };
 }
@@ -638,15 +835,56 @@ async function loadData() {
     }
 }
 
-async function loadAttendees(webinarId: number) {
-    loadingAttendees.value = true;
+async function refreshEditingWebinarStats(webinarId: number) {
+    try {
+        const payload = await apiFetch<{ data: WebinarItem }>(
+            `/api/v1/admin/live-shows/${webinarId}?team_id=${teamId.value}`,
+        );
+
+        if (editingWebinar.value?.id === webinarId) {
+            editingWebinar.value = {
+                ...editingWebinar.value,
+                ...payload.data,
+            };
+        }
+
+        const index = webinars.value.findIndex((item) => item.id === webinarId);
+
+        if (index >= 0) {
+            webinars.value[index] = {
+                ...webinars.value[index],
+                ...payload.data,
+            };
+        }
+    } catch {
+        // Keep existing stats if refresh fails.
+    }
+}
+
+function resetAttendeePagination() {
+    attendeePage.value = 1;
+    attendeeLastPage.value = 1;
+    attendeeTotal.value = 0;
     attendees.value = [];
+}
+
+async function loadAttendees(webinarId: number, page = attendeePage.value) {
+    loadingAttendees.value = true;
 
     try {
-        const payload = await apiFetch<{ data: WebinarAttendee[] }>(
-            `/api/v1/admin/live-shows/${webinarId}/attendees`,
+        const payload = await apiFetch<{
+            data: WebinarAttendee[];
+            current_page: number;
+            last_page: number;
+            total: number;
+        }>(
+            `/api/v1/admin/live-shows/${webinarId}/attendees?per_page=${ATTENDEES_PER_PAGE}&page=${page}`,
         );
+
         attendees.value = payload.data ?? [];
+        attendeePage.value = payload.current_page ?? page;
+        attendeeLastPage.value = Math.max(1, payload.last_page ?? 1);
+        attendeeTotal.value = payload.total ?? attendees.value.length;
     } catch (error) {
         modalError.value = error instanceof Error ? error.message : 'Could not load attendees.';
     } finally {
@@ -654,7 +892,100 @@ async function loadAttendees(webinarId: number) {
     }
 }
 
+function goToAttendeePage(page: number) {
+    if (!editingWebinar.value || loadingAttendees.value) {
+        return;
+    }
+
+    const nextPage = Math.min(Math.max(1, page), attendeeLastPage.value);
+
+    if (nextPage === attendeePage.value && attendees.value.length > 0) {
+        return;
+    }
+
+    void loadAttendees(editingWebinar.value.id, nextPage);
+}
+
+async function notifyAllAttendees() {
+    if (!editingWebinar.value || notifyingAttendees.value) {
+        return;
+    }
+
+    notifyingAttendees.value = true;
+    modalError.value = '';
+
+    try {
+        const payload = await postJson<{
+            data: { attendees: number; email_batches_queued: number };
+            message?: string;
+        }>(`/api/v1/admin/live-shows/${editingWebinar.value.id}/attendees/notify`, {});
+
+        toast.success(
+            payload.message
+                ?? `Queued ${payload.data.email_batches_queued} email batch(es) for ${payload.data.attendees} attendee(s).`,
+        );
+    } catch (error) {
+        modalError.value = error instanceof Error ? error.message : 'Could not queue attendee emails.';
+    } finally {
+        notifyingAttendees.value = false;
+    }
+}
+
+function openAttendeeImportPicker() {
+    importAttendeesInputRef.value?.click();
+}
+
+async function onAttendeeImportSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+
+    input.value = '';
+
+    if (!file || !editingWebinar.value || importingAttendees.value) {
+        return;
+    }
+
+    importingAttendees.value = true;
+    modalError.value = '';
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const payload = await apiFetch<{
+            data: {
+                imported: number;
+                updated: number;
+                attendees: number;
+                email_batches_queued: number;
+            };
+            message?: string;
+        }>(`/api/v1/admin/live-shows/${editingWebinar.value.id}/attendees/import`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        await Promise.all([
+            loadAttendees(editingWebinar.value.id, 1),
+            refreshEditingWebinarStats(editingWebinar.value.id),
+        ]);
+
+        toast.success(
+            payload.message
+                ?? `Imported ${payload.data.imported} new attendee(s), updated ${payload.data.updated}. ${payload.data.email_batches_queued} email batch(es) queued.`,
+        );
+    } catch (error) {
+        modalError.value = error instanceof Error ? error.message : 'Could not import attendees.';
+    } finally {
+        importingAttendees.value = false;
+    }
+}
+
 // ── CRUD ───────────────────────────────────────────────────────────────────
+
+function clearSearch() {
+    search.value = '';
+}
 
 function openCreateModal() {
     form.value = newForm();
@@ -681,7 +1012,7 @@ async function createWebinar() {
     saving.value = true;
 
     try {
-        await postJson('/api/v1/admin/live-shows', buildPayload());
+        await postJson('/api/v1/admin/live-shows', buildPayload(true));
         createModalOpen.value = false;
         await loadData();
     } catch (error) {
@@ -701,7 +1032,7 @@ async function openEditModal(item: WebinarItem) {
         starts_at: normalizeDateTimeLocal(item.starts_at),
         ends_at: normalizeDateTimeLocal(item.ends_at),
         status: item.status,
-        featured_product_ids: (item.featured_products ?? []).map((p) => p.id),
+        featured_offers: mapFeaturedProductsToOffers(item.featured_products ?? []),
         settings: {
             host_name: item.host_name ?? s.host_name ?? '',
             thumbnail_url: item.thumbnail_url ?? s.thumbnail_url ?? '',
@@ -716,6 +1047,8 @@ async function openEditModal(item: WebinarItem) {
             chat_enabled: item.chat_enabled ?? s.chat_enabled ?? true,
             ai_assistant_enabled: item.ai_assistant_enabled ?? s.ai_assistant_enabled ?? false,
             knowledge_sources: Array.isArray(s.knowledge_sources) ? [...s.knowledge_sources] : [],
+            video_duration_seconds:
+                item.video_duration_seconds ?? s.video_duration_seconds ?? null,
         },
     };
     modalError.value = '';
@@ -725,8 +1058,9 @@ async function openEditModal(item: WebinarItem) {
     expandedSourceIndex.value = null;
     clearSelectedVideoFile();
     activeTab.value = 'basics';
+    resetAttendeePagination();
     editModalOpen.value = true;
-    await loadAttendees(item.id);
+    await Promise.all([loadAttendees(item.id, 1), refreshEditingWebinarStats(item.id)]);
 }
 
 async function saveWebinar() {
@@ -902,11 +1236,45 @@ onBeforeUnmount(() => {
                 <Skeleton v-for="n in 6" :key="n" class="h-14 rounded-lg" />
             </div>
 
+            <!-- Empty: no search results -->
+            <div
+                v-else-if="filteredWebinars.length === 0 && search.trim()"
+                class="flex flex-col items-center justify-center gap-5 px-6 py-16 text-center"
+            >
+                <div class="flex size-16 items-center justify-center rounded-2xl border border-[#F0EDE8] bg-[#FAF8F5]">
+                    <Search class="size-8 text-gray-400" />
+                </div>
+                <div class="max-w-sm">
+                    <p class="text-base font-bold text-gray-900">No webinars match your search</p>
+                    <p class="mt-1.5 text-sm text-gray-500">
+                        Nothing found for
+                        <span class="font-medium text-gray-700">“{{ search.trim() }}”</span>.
+                        Try a different title, host name, or status.
+                    </p>
+                </div>
+                <Button variant="outline" size="sm" class="ghost-btn" @click="clearSearch">
+                    Clear search
+                </Button>
+            </div>
+
+            <!-- Empty: no webinars yet -->
             <div
                 v-else-if="filteredWebinars.length === 0"
-                class="px-4 py-14 text-center text-sm text-gray-500"
+                class="flex flex-col items-center justify-center gap-5 px-6 py-16 text-center"
             >
-                {{ search ? 'No webinars match your search.' : 'No webinars yet — create your first one.' }}
+                <div class="page-icon flex size-16 items-center justify-center rounded-2xl shadow-lg">
+                    <Film class="size-8 text-white" />
+                </div>
+                <div class="max-w-md">
+                    <p class="text-base font-bold text-gray-900">No webinars yet</p>
+                    <p class="mt-1.5 text-sm text-gray-500">
+                        Create your first on-demand webinar funnel — registration page, viewer room, offers, and optional AI chat after publish.
+                    </p>
+                </div>
+                <Button size="sm" class="cta-btn" @click="openCreateModal">
+                    <PlusCircle class="mr-1.5 size-4" />
+                    Create your first webinar
+                </Button>
             </div>
 
             <div v-else class="overflow-x-auto">
@@ -1043,12 +1411,12 @@ onBeforeUnmount(() => {
 
     <!-- ═══════════════════════════════════════ Create Dialog ══════════════════════════════════════ -->
     <Dialog v-model:open="createModalOpen">
-        <DialogContent class="flex max-h-[min(92dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+        <DialogContent class="flex max-h-[min(92dvh,calc(100vh-2rem))] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
             <!-- Header -->
             <DialogHeader class="shrink-0 border-b px-6 py-4">
                 <DialogTitle>Create Webinar</DialogTitle>
                 <DialogDescription>
-                    Configure host, video, registration page, offers, and AI assistant.
+                    Set up host, video, registration page, and offers. Enable AI assistant, chat, and knowledge sources after the webinar is created.
                 </DialogDescription>
             </DialogHeader>
 
@@ -1081,7 +1449,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Tab content -->
-            <div class="flex-1 overflow-y-auto px-6 py-5">
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5">
 
                 <!-- Global error -->
                 <div
@@ -1119,21 +1487,41 @@ onBeforeUnmount(() => {
                             <div class="space-y-1.5">
                                 <Label>Status</Label>
                                 <select v-model="form.status" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
-                                    <option value="scheduled">Scheduled</option>
-                                    <option value="live">Live</option>
-                                    <option value="ended">Ended</option>
-                                    <option value="cancelled">Cancelled</option>
+                                    <option
+                                        v-for="opt in WEBINAR_STATUS_OPTIONS"
+                                        :key="opt.value"
+                                        :value="opt.value"
+                                    >
+                                        {{ opt.label }}
+                                    </option>
                                 </select>
                             </div>
                             <div class="space-y-1.5">
-                                <Label>Starts At <span class="text-destructive">*</span></Label>
-                                <Input v-model="form.starts_at" type="datetime-local" />
+                                <Label>
+                                    Starts At
+                                    <span v-if="!scheduleDatesDisabled" class="text-destructive">*</span>
+                                </Label>
+                                <Input
+                                    v-model="form.starts_at"
+                                    type="datetime-local"
+                                    :disabled="scheduleDatesDisabled"
+                                />
                             </div>
                             <div class="space-y-1.5">
                                 <Label>Ends At</Label>
-                                <Input v-model="form.ends_at" type="datetime-local" />
+                                <Input
+                                    v-model="form.ends_at"
+                                    type="datetime-local"
+                                    :disabled="scheduleDatesDisabled"
+                                />
                             </div>
                         </div>
+                        <p
+                            v-if="scheduleDatesDisabled"
+                            class="mt-2 text-xs text-muted-foreground"
+                        >
+                            Live webinars are open now — start and end dates are not used.
+                        </p>
                     </div>
                 </div>
 
@@ -1203,6 +1591,18 @@ onBeforeUnmount(() => {
                                 <Label>Video URL Override</Label>
                                 <Input v-model="form.settings.video_url" placeholder="https://.../video.mp4" />
                             </div>
+                            <div class="space-y-1.5 sm:col-span-2">
+                                <Label>Video duration (seconds)</Label>
+                                <Input
+                                    v-model.number="form.settings.video_duration_seconds"
+                                    type="number"
+                                    min="1"
+                                    placeholder="e.g. 120"
+                                />
+                                <p class="text-xs text-muted-foreground">
+                                    How long the room video runs. Offer timers and watch tracking (50% / watched to end) use this duration.
+                                </p>
+                            </div>
                         </div>
                         <div class="mt-4 grid gap-4 sm:grid-cols-2">
                             <div class="rounded-md border bg-muted/30 p-3">
@@ -1260,7 +1660,10 @@ onBeforeUnmount(() => {
                 <!-- ── Offers ── -->
                 <div v-show="activeTab === 'offers'" class="space-y-4">
                     <div class="rounded-lg border p-4">
-                        <p class="mb-3 text-sm font-semibold">Offers <span class="font-normal text-muted-foreground">— Assign products shown during the webinar room</span></p>
+                        <p class="mb-1 text-sm font-semibold">Offers</p>
+                        <p class="mb-3 text-xs text-muted-foreground">
+                            Assign products and schedule when each offer appears in the webinar room (requires video duration on the Video tab).
+                        </p>
                         <div class="relative mb-3">
                             <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                             <Input v-model="productSearch" placeholder="Search products..." class="pl-9" />
@@ -1268,174 +1671,119 @@ onBeforeUnmount(() => {
                         <div v-if="products.length === 0" class="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
                             No products yet. Add products in the Products section.
                         </div>
-                        <div v-else class="max-h-64 space-y-1.5 overflow-y-auto rounded-md border p-2">
-                            <button
+                        <div v-else class="max-h-[min(28rem,55vh)] space-y-2 overflow-y-auto">
+                            <div
                                 v-for="product in filteredProducts"
                                 :key="product.id"
-                                type="button"
                                 :class="[
-                                    'flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors',
-                                    form.featured_product_ids.includes(product.id) ? 'bg-[#E8563A]/5 ring-1 ring-[#E8563A]/30' : 'hover:bg-muted/40',
+                                    'overflow-hidden rounded-lg border transition-colors',
+                                    isProductSelected(product.id) ? 'border-[#E8563A]/40 shadow-sm' : 'border-border',
                                 ]"
-                                @click="toggleProduct(product.id)"
                             >
-                                <div class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
-                                    <img v-if="product.image_url" :src="product.image_url" class="h-full w-full object-cover">
-                                    <ImageOff v-else class="size-4 text-muted-foreground" />
+                                <button
+                                    type="button"
+                                    :class="[
+                                        'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',
+                                        isProductSelected(product.id) ? 'bg-[#E8563A]/5' : 'hover:bg-muted/40',
+                                    ]"
+                                    @click="toggleProduct(product.id)"
+                                >
+                                    <div class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
+                                        <img v-if="product.image_url" :src="product.image_url" class="h-full w-full object-cover">
+                                        <ImageOff v-else class="size-4 text-muted-foreground" />
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="truncate text-sm font-medium">{{ product.title }}</p>
+                                        <p class="text-xs text-muted-foreground">
+                                            {{ product.sale_price ? `$${product.sale_price}` : product.price ? `$${product.price}` : '' }}
+                                        </p>
+                                    </div>
+                                    <div :class="[
+                                        'flex size-5 shrink-0 items-center justify-center rounded-full border-2',
+                                        isProductSelected(product.id) ? 'border-[#E8563A] bg-[#E8563A] text-white' : 'border-muted-foreground/30',
+                                    ]">
+                                        <svg v-if="isProductSelected(product.id)" class="size-3" viewBox="0 0 12 12" fill="none">
+                                            <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </div>
+                                    <ChevronDown
+                                        :class="[
+                                            'size-4 shrink-0 text-muted-foreground transition-transform',
+                                            isProductSelected(product.id) ? 'rotate-180 text-[#E8563A]' : '',
+                                        ]"
+                                    />
+                                </button>
+
+                                <div
+                                    v-if="isProductSelected(product.id) && offerForProduct(product.id)"
+                                    class="space-y-3 border-t border-[#E8563A]/15 bg-muted/20 px-3 py-3"
+                                >
+                                    <div class="grid gap-3 sm:grid-cols-2">
+                                        <div class="space-y-1.5">
+                                            <Label>Show after (seconds)</Label>
+                                            <Input
+                                                :model-value="offerForProduct(product.id)!.starts_at_sec"
+                                                type="number"
+                                                min="0"
+                                                :max="videoDurationSeconds ?? undefined"
+                                                @update:model-value="(v) => updateOffer(product.id, { starts_at_sec: Number(v) || 0 })"
+                                            />
+                                        </div>
+                                        <div class="space-y-1.5">
+                                            <Label>Hide after (optional, seconds)</Label>
+                                            <Input
+                                                :model-value="offerForProduct(product.id)!.ends_at_sec ?? ''"
+                                                type="number"
+                                                min="0"
+                                                :max="videoDurationSeconds ?? undefined"
+                                                placeholder="Until video ends"
+                                                @update:model-value="(v) => updateOffer(product.id, { ends_at_sec: v === '' || v == null ? null : Number(v) })"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div class="space-y-1.5">
+                                        <Label>How it appears</Label>
+                                        <select
+                                            :value="offerForProduct(product.id)!.appearance"
+                                            class="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                                            @change="(e) => updateOffer(product.id, { appearance: (e.target as HTMLSelectElement).value as OfferAppearance })"
+                                        >
+                                            <option
+                                                v-for="opt in OFFER_APPEARANCE_OPTIONS"
+                                                :key="opt.value"
+                                                :value="opt.value"
+                                            >
+                                                {{ opt.label }}
+                                            </option>
+                                        </select>
+                                        <p class="text-xs text-muted-foreground">
+                                            {{ OFFER_APPEARANCE_OPTIONS.find((o) => o.value === offerForProduct(product.id)!.appearance)?.hint }}
+                                        </p>
+                                    </div>
+                                    <div class="space-y-1.5">
+                                        <Label class="flex items-center gap-1.5">
+                                            <Link2 class="size-3.5" />
+                                            Checkout link
+                                        </Label>
+                                        <p class="rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground break-all">
+                                            Default: {{ offerCheckoutHint(product.id) }}
+                                        </p>
+                                        <Input
+                                            :model-value="offerForProduct(product.id)!.cta_url"
+                                            placeholder="Override URL (leave empty for default checkout)"
+                                            @update:model-value="(v) => updateOffer(product.id, { cta_url: String(v ?? '') })"
+                                        />
+                                    </div>
                                 </div>
-                                <div class="min-w-0 flex-1">
-                                    <p class="truncate text-sm font-medium">{{ product.title }}</p>
-                                    <p class="text-xs text-muted-foreground">
-                                        {{ product.sale_price ? `$${product.sale_price}` : product.price ? `$${product.price}` : '' }}
-                                    </p>
-                                </div>
-                                <div :class="[
-                                    'flex size-5 shrink-0 items-center justify-center rounded-full border-2',
-                                    form.featured_product_ids.includes(product.id) ? 'border-[#E8563A] bg-[#E8563A] text-white' : 'border-muted-foreground/30',
-                                ]">
-                                    <svg v-if="form.featured_product_ids.includes(product.id)" class="size-3" viewBox="0 0 12 12" fill="none">
-                                        <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                    </svg>
-                                </div>
-                            </button>
+                            </div>
                         </div>
-                        <p v-if="form.featured_product_ids.length" class="mt-2 text-xs text-muted-foreground">
-                            {{ form.featured_product_ids.length }} offer(s) assigned
+
+                        <p v-if="form.featured_offers.length" class="mt-3 text-xs text-muted-foreground">
+                            {{ form.featured_offers.length }} offer(s) assigned — expand each product to edit its schedule.
                         </p>
-                    </div>
-                </div>
-
-                <!-- ── AI Assistant ── -->
-                <div v-show="activeTab === 'ai'" class="space-y-4">
-                    <div class="rounded-lg border p-4">
-                        <p class="mb-3 text-sm font-semibold">AI Assistant <span class="font-normal text-muted-foreground">— Auto-reply to attendee messages using your knowledge base</span></p>
-                        <label class="flex items-start gap-3 rounded-md border bg-muted/20 p-3">
-                            <input v-model="form.settings.ai_assistant_enabled" type="checkbox" class="mt-0.5 h-4 w-4 rounded">
-                            <div>
-                                <p class="text-sm font-medium">Enable AI assistant auto-replies</p>
-                                <p class="text-xs text-muted-foreground">
-                                    When enabled, AI will respond to attendee chat messages using the knowledge sources below.
-                                </p>
-                            </div>
-                        </label>
-                    </div>
-
-                    <div class="rounded-lg border p-4">
-                        <div class="mb-3 flex items-center justify-between">
-                            <div>
-                                <p class="text-sm font-semibold">Knowledge Base Sources</p>
-                                <p class="text-xs text-muted-foreground">
-                                    Up to 3 sources. AI uses these to generate replies.
-                                </p>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <span class="rounded-full border px-2 py-0.5 text-xs font-medium">
-                                    {{ form.settings.knowledge_sources.length }} / 3
-                                </span>
-                                <Button
-                                    v-if="canAddSource && !addingSource"
-                                    variant="outline"
-                                    size="sm"
-                                    @click="addingSource = true"
-                                >
-                                    <Plus class="mr-1 size-3.5" />
-                                    Add Source
-                                </Button>
-                            </div>
+                        <div class="mt-4 rounded-lg border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">
+                            After you create this webinar, open <strong>Edit</strong> to enable attendee chat, AI auto-replies, and knowledge base sources.
                         </div>
-
-                        <!-- Existing sources -->
-                        <div class="space-y-2">
-                            <div
-                                v-for="(source, sourceIndex) in form.settings.knowledge_sources"
-                                :key="sourceIndex"
-                                class="overflow-hidden rounded-lg border"
-                            >
-                                <div class="flex items-center justify-between gap-2 bg-muted/20 px-4 py-3">
-                                    <div class="flex min-w-0 items-center gap-2">
-                                        <BookOpen class="size-3.5 shrink-0 text-[#E8563A]" />
-                                        <span class="truncate text-sm font-medium">{{ source.title }}</span>
-                                        <span class="shrink-0 rounded-full bg-green-500/15 px-1.5 py-0.5 text-xs text-green-700 dark:text-green-400">
-                                            ✓ Ingested
-                                        </span>
-                                    </div>
-                                    <div class="flex shrink-0 items-center gap-1">
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            class="h-7 gap-1 text-xs"
-                                            @click="toggleSourceExpanded(idx)"
-                                        >
-                                            <Eye class="size-3.5" />
-                                            {{ expandedSourceIndex === idx ? 'Hide' : 'Review' }}
-                                            <ChevronUp v-if="expandedSourceIndex === idx" class="size-3" />
-                                            <ChevronDown v-else class="size-3" />
-                                        </Button>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            class="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                            @click="removeKnowledgeSource(idx)"
-                                        >
-                                            <Trash2 class="size-3.5" />
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div v-if="expandedSourceIndex !== idx" class="px-4 py-2">
-                                    <p class="truncate text-xs text-muted-foreground">{{ source.content.slice(0, 120) }}{{ source.content.length > 120 ? '...' : '' }}</p>
-                                </div>
-                                <div v-else class="border-t bg-muted/10 px-4 py-3">
-                                    <p class="mb-1 text-xs font-medium text-muted-foreground">Full content</p>
-                                    <pre class="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs text-foreground">{{ source.content }}</pre>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Add source form -->
-                        <div v-if="addingSource" class="mt-3 space-y-3 rounded-lg border bg-muted/10 p-4">
-                            <div class="space-y-1.5">
-                                <Label>Source Title</Label>
-                                <Input v-model="sourceForm.title" placeholder="e.g. FAQ, Pricing, Common Objections" />
-                            </div>
-                            <div class="space-y-1.5">
-                                <Label>Content</Label>
-                                <textarea
-                                    v-model="sourceForm.content"
-                                    rows="7"
-                                    class="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                                    placeholder="Paste or type the knowledge content that the AI will use to reply to attendees..."
-                                />
-                            </div>
-                            <div class="flex gap-2">
-                                <Button
-                                    size="sm"
-                                    :disabled="!sourceForm.title.trim() || !sourceForm.content.trim()"
-                                    @click="addKnowledgeSource"
-                                >
-                                    Add Source
-                                </Button>
-                                <Button size="sm" variant="ghost" @click="cancelAddingSource">
-                                    Cancel
-                                </Button>
-                            </div>
-                        </div>
-
-                        <div
-                            v-if="form.settings.knowledge_sources.length === 0 && !addingSource"
-                            class="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground"
-                        >
-                            No knowledge sources yet. Add up to 3 sources for AI-assisted replies.
-                        </div>
-                    </div>
-
-                    <div class="rounded-lg border p-4">
-                        <label class="flex items-start gap-3">
-                            <input v-model="form.settings.chat_enabled" type="checkbox" class="mt-0.5 h-4 w-4 rounded">
-                            <div>
-                                <p class="text-sm font-medium">Enable attendee chat in the room</p>
-                                <p class="text-xs text-muted-foreground">Allow attendees to send messages during the webinar.</p>
-                            </div>
-                        </label>
                     </div>
                 </div>
             </div>
@@ -1467,7 +1815,7 @@ onBeforeUnmount(() => {
 
     <!-- ═══════════════════════════════════════ Edit Dialog ══════════════════════════════════════ -->
     <Dialog v-model:open="editModalOpen">
-        <DialogContent class="flex max-h-[min(92dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+        <DialogContent class="flex max-h-[min(92dvh,calc(100vh-2rem))] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
 
             <!-- Header -->
             <div class="shrink-0 border-b px-6 py-4">
@@ -1477,14 +1825,22 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Stats row -->
-            <div v-if="editingWebinar" class="grid shrink-0 grid-cols-2 gap-px border-b bg-border sm:grid-cols-3 lg:grid-cols-6">
+            <div v-if="editingWebinar" class="grid shrink-0 grid-cols-2 gap-px border-b bg-border sm:grid-cols-4 xl:grid-cols-8">
                 <div class="bg-background px-3 py-2.5">
                     <p class="text-xs text-muted-foreground">Registrants</p>
-                    <p class="text-base font-bold">{{ attendees.length || editingWebinar.registrants_count || 0 }}</p>
+                    <p class="text-base font-bold">{{ (attendeeTotal || editingWebinar.registrants_count || 0).toLocaleString() }}</p>
                 </div>
                 <div class="bg-background px-3 py-2.5">
                     <p class="text-xs text-muted-foreground">Views</p>
                     <p class="text-base font-bold">{{ editingWebinar.views_count || 0 }}</p>
+                </div>
+                <div class="bg-background px-3 py-2.5">
+                    <p class="text-xs text-muted-foreground">Watched 50%</p>
+                    <p class="text-base font-bold">{{ editingWebinar.watched_half_count ?? 0 }}</p>
+                </div>
+                <div class="bg-background px-3 py-2.5">
+                    <p class="text-xs text-muted-foreground">Watched to end</p>
+                    <p class="text-base font-bold">{{ editingWebinar.watched_end_count ?? 0 }}</p>
                 </div>
                 <div class="bg-background px-3 py-2.5">
                     <p class="text-xs text-muted-foreground">Messages</p>
@@ -1492,7 +1848,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="bg-background px-3 py-2.5">
                     <p class="text-xs text-muted-foreground">Offers</p>
-                    <p class="text-base font-bold">{{ form.featured_product_ids.length }}</p>
+                    <p class="text-base font-bold">{{ form.featured_offers.length }}</p>
                 </div>
                 <div class="bg-background px-3 py-2.5">
                     <p class="text-xs text-muted-foreground">AI Sources</p>
@@ -1533,7 +1889,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Tab content -->
-            <div class="flex-1 overflow-y-auto px-6 py-5">
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5">
 
                 <!-- Global error -->
                 <div
@@ -1570,21 +1926,41 @@ onBeforeUnmount(() => {
                             <div class="space-y-1.5">
                                 <Label>Status</Label>
                                 <select v-model="form.status" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
-                                    <option value="scheduled">Scheduled</option>
-                                    <option value="live">Live</option>
-                                    <option value="ended">Ended</option>
-                                    <option value="cancelled">Cancelled</option>
+                                    <option
+                                        v-for="opt in WEBINAR_STATUS_OPTIONS"
+                                        :key="opt.value"
+                                        :value="opt.value"
+                                    >
+                                        {{ opt.label }}
+                                    </option>
                                 </select>
                             </div>
                             <div class="space-y-1.5">
-                                <Label>Starts At <span class="text-destructive">*</span></Label>
-                                <Input v-model="form.starts_at" type="datetime-local" />
+                                <Label>
+                                    Starts At
+                                    <span v-if="!scheduleDatesDisabled" class="text-destructive">*</span>
+                                </Label>
+                                <Input
+                                    v-model="form.starts_at"
+                                    type="datetime-local"
+                                    :disabled="scheduleDatesDisabled"
+                                />
                             </div>
                             <div class="space-y-1.5">
                                 <Label>Ends At</Label>
-                                <Input v-model="form.ends_at" type="datetime-local" />
+                                <Input
+                                    v-model="form.ends_at"
+                                    type="datetime-local"
+                                    :disabled="scheduleDatesDisabled"
+                                />
                             </div>
                         </div>
+                        <p
+                            v-if="scheduleDatesDisabled"
+                            class="mt-2 text-xs text-muted-foreground"
+                        >
+                            Live webinars are open now — start and end dates are not used.
+                        </p>
                     </div>
                 </div>
 
@@ -1654,6 +2030,18 @@ onBeforeUnmount(() => {
                                 <Label>Video URL Override</Label>
                                 <Input v-model="form.settings.video_url" placeholder="https://.../video.mp4" />
                             </div>
+                            <div class="space-y-1.5 sm:col-span-2">
+                                <Label>Video duration (seconds)</Label>
+                                <Input
+                                    v-model.number="form.settings.video_duration_seconds"
+                                    type="number"
+                                    min="1"
+                                    placeholder="e.g. 120"
+                                />
+                                <p class="text-xs text-muted-foreground">
+                                    How long the room video runs. Offer timers and watch tracking (50% / watched to end) use this duration.
+                                </p>
+                            </div>
                         </div>
                         <div class="mt-4 grid gap-4 sm:grid-cols-2">
                             <div class="rounded-md border bg-muted/30 p-3">
@@ -1707,34 +2095,126 @@ onBeforeUnmount(() => {
 
                 <!-- ── Attendees ── -->
                 <div v-show="activeTab === 'attendees'" class="space-y-4">
-                    <div class="rounded-lg border p-4">
-                        <p class="mb-3 text-sm font-semibold">Registered Attendees
-                            <span class="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                                {{ attendees.length }}
-                            </span>
-                        </p>
-                        <div v-if="loadingAttendees" class="space-y-2">
-                            <Skeleton v-for="n in 5" :key="n" class="h-12 rounded-md" />
-                        </div>
-                        <div v-else-if="attendees.length === 0" class="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-                            No registrations yet. Share the registration link to get attendees.
-                        </div>
-                        <div v-else class="max-h-72 space-y-2 overflow-y-auto">
-                            <div
-                                v-for="attendee in attendees"
-                                :key="attendee.id"
-                                class="flex items-center justify-between rounded-md border px-3 py-2"
-                            >
-                                <div>
-                                    <p class="text-sm font-medium">{{ attendee.full_name }}</p>
-                                    <p class="text-xs text-muted-foreground">{{ attendee.email }}</p>
-                                </div>
-                                <div class="text-right text-xs text-muted-foreground">
-                                    <p>{{ attendee.join_count ?? 0 }} join(s)</p>
-                                    <p>{{ formatDate(attendee.registered_at) }}</p>
-                                </div>
+                    <div class="flex max-h-[min(28rem,52vh)] min-h-0 flex-col rounded-lg border p-4">
+                        <div class="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2">
+                            <p class="text-sm font-semibold">
+                                Registered Attendees
+                                <span class="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                                    {{ (attendeeTotal || editingWebinar?.registrants_count || 0).toLocaleString() }}
+                                </span>
+                            </p>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <input
+                                    ref="importAttendeesInputRef"
+                                    type="file"
+                                    accept=".csv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    class="hidden"
+                                    @change="onAttendeeImportSelected"
+                                >
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    :disabled="importingAttendees || !editingWebinar"
+                                    @click="openAttendeeImportPicker"
+                                >
+                                    <Loader2 v-if="importingAttendees" class="mr-1.5 size-3.5 animate-spin" />
+                                    <Upload v-else class="mr-1.5 size-3.5" />
+                                    Import CSV / Excel
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    :disabled="notifyingAttendees || !hasAttendeeRegistrations"
+                                    @click="notifyAllAttendees"
+                                >
+                                    <Loader2 v-if="notifyingAttendees" class="mr-1.5 size-3.5 animate-spin" />
+                                    <Mail v-else class="mr-1.5 size-3.5" />
+                                    Notify all attendees
+                                </Button>
                             </div>
                         </div>
+                        <p class="mb-3 shrink-0 text-xs text-muted-foreground">
+                            Import CSV or Excel with an <strong>email</strong> column (required). A
+                            <strong>full_name</strong> column is optional — if missing, names are generated from the email.
+                            One email per line also works. Emails are sent in the background (10 per batch).
+                        </p>
+                        <div v-if="loadingAttendees" class="min-h-0 flex-1 space-y-2 overflow-y-auto">
+                            <Skeleton v-for="n in 5" :key="n" class="h-12 rounded-md" />
+                        </div>
+                        <div
+                            v-else-if="attendeeTotal === 0"
+                            class="flex flex-1 items-center justify-center rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground"
+                        >
+                            No registrations yet. Share the registration link to get attendees.
+                        </div>
+                        <template v-else>
+                            <div class="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1">
+                                <div
+                                    v-for="attendee in attendees"
+                                    :key="attendee.id"
+                                    class="flex items-center justify-between rounded-md border px-3 py-2"
+                                >
+                                    <div class="min-w-0 pr-3">
+                                        <p class="truncate text-sm font-medium">{{ attendee.full_name }}</p>
+                                        <p class="truncate text-xs text-muted-foreground">{{ attendee.email }}</p>
+                                    </div>
+                                    <div class="shrink-0 text-right text-xs text-muted-foreground">
+                                        <div class="mb-1 flex flex-wrap justify-end gap-1">
+                                            <Badge
+                                                v-if="attendee.watched_to_end_at"
+                                                variant="default"
+                                                class="bg-[#E8563A] hover:bg-[#E8563A]"
+                                            >
+                                                Watched to end
+                                            </Badge>
+                                            <Badge
+                                                v-else-if="attendee.reached_half_at"
+                                                variant="secondary"
+                                            >
+                                                Watched 50%+
+                                            </Badge>
+                                        </div>
+                                        <p>{{ attendee.join_count ?? 0 }} join(s)</p>
+                                        <p>{{ formatDate(attendee.registered_at) }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div
+                                class="mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t pt-3"
+                                :class="attendeeLastPage <= 1 ? 'mt-2 border-t-0 pt-0' : ''"
+                            >
+                                <p class="text-xs text-muted-foreground">
+                                    {{ attendeePageRangeLabel }}
+                                </p>
+                                <div v-if="attendeeLastPage > 1" class="flex items-center gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        :disabled="loadingAttendees || attendeePage <= 1"
+                                        @click="goToAttendeePage(attendeePage - 1)"
+                                    >
+                                        <ChevronLeft class="mr-1 size-3.5" />
+                                        Previous
+                                    </Button>
+                                    <span class="text-xs text-muted-foreground">
+                                        Page {{ attendeePage }} of {{ attendeeLastPage }}
+                                    </span>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        :disabled="loadingAttendees || attendeePage >= attendeeLastPage"
+                                        @click="goToAttendeePage(attendeePage + 1)"
+                                    >
+                                        Next
+                                        <ChevronRight class="ml-1 size-3.5" />
+                                    </Button>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
 
@@ -1769,7 +2249,13 @@ onBeforeUnmount(() => {
                 <!-- ── Offers ── -->
                 <div v-show="activeTab === 'offers'" class="space-y-4">
                     <div class="rounded-lg border p-4">
-                        <p class="mb-3 text-sm font-semibold">Offers</p>
+                        <p class="mb-1 text-sm font-semibold">Offers</p>
+                        <p class="mb-3 text-xs text-muted-foreground">
+                            Schedule when each product appears in the room player. Set video duration on the Video tab first.
+                        </p>
+                        <div v-if="!videoDurationSeconds" class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            Add <strong>video duration</strong> on the Video tab so offer timers can be validated.
+                        </div>
                         <div class="relative mb-3">
                             <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                             <Input v-model="productSearch" placeholder="Search products..." class="pl-9" />
@@ -1777,39 +2263,115 @@ onBeforeUnmount(() => {
                         <div v-if="products.length === 0" class="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
                             No products yet.
                         </div>
-                        <div v-else class="max-h-72 space-y-1.5 overflow-y-auto rounded-md border p-2">
-                            <button
+                        <div v-else class="max-h-[min(28rem,55vh)] space-y-2 overflow-y-auto">
+                            <div
                                 v-for="product in filteredProducts"
                                 :key="product.id"
-                                type="button"
                                 :class="[
-                                    'flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors',
-                                    form.featured_product_ids.includes(product.id) ? 'bg-[#E8563A]/5 ring-1 ring-[#E8563A]/30' : 'hover:bg-muted/40',
+                                    'overflow-hidden rounded-lg border transition-colors',
+                                    isProductSelected(product.id) ? 'border-[#E8563A]/40 shadow-sm' : 'border-border',
                                 ]"
-                                @click="toggleProduct(product.id)"
                             >
-                                <div class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
-                                    <img v-if="product.image_url" :src="product.image_url" class="h-full w-full object-cover">
-                                    <ImageOff v-else class="size-4 text-muted-foreground" />
+                                <button
+                                    type="button"
+                                    :class="[
+                                        'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',
+                                        isProductSelected(product.id) ? 'bg-[#E8563A]/5' : 'hover:bg-muted/40',
+                                    ]"
+                                    @click="toggleProduct(product.id)"
+                                >
+                                    <div class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
+                                        <img v-if="product.image_url" :src="product.image_url" class="h-full w-full object-cover">
+                                        <ImageOff v-else class="size-4 text-muted-foreground" />
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="truncate text-sm font-medium">{{ product.title }}</p>
+                                        <p class="text-xs text-muted-foreground">
+                                            {{ product.sale_price ? `$${product.sale_price}` : product.price ? `$${product.price}` : '' }}
+                                        </p>
+                                    </div>
+                                    <div :class="[
+                                        'flex size-5 shrink-0 items-center justify-center rounded-full border-2',
+                                        isProductSelected(product.id) ? 'border-[#E8563A] bg-[#E8563A] text-white' : 'border-muted-foreground/30',
+                                    ]">
+                                        <svg v-if="isProductSelected(product.id)" class="size-3" viewBox="0 0 12 12" fill="none">
+                                            <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </div>
+                                    <ChevronDown
+                                        :class="[
+                                            'size-4 shrink-0 text-muted-foreground transition-transform',
+                                            isProductSelected(product.id) ? 'rotate-180 text-[#E8563A]' : '',
+                                        ]"
+                                    />
+                                </button>
+
+                                <div
+                                    v-if="isProductSelected(product.id) && offerForProduct(product.id)"
+                                    class="space-y-3 border-t border-[#E8563A]/15 bg-muted/20 px-3 py-3"
+                                >
+                                    <div class="grid gap-3 sm:grid-cols-2">
+                                        <div class="space-y-1.5">
+                                            <Label>Show after (seconds)</Label>
+                                            <Input
+                                                :model-value="offerForProduct(product.id)!.starts_at_sec"
+                                                type="number"
+                                                min="0"
+                                                :max="videoDurationSeconds ?? undefined"
+                                                @update:model-value="(v) => updateOffer(product.id, { starts_at_sec: Number(v) || 0 })"
+                                            />
+                                        </div>
+                                        <div class="space-y-1.5">
+                                            <Label>Hide after (optional, seconds)</Label>
+                                            <Input
+                                                :model-value="offerForProduct(product.id)!.ends_at_sec ?? ''"
+                                                type="number"
+                                                min="0"
+                                                :max="videoDurationSeconds ?? undefined"
+                                                placeholder="Until video ends"
+                                                @update:model-value="(v) => updateOffer(product.id, { ends_at_sec: v === '' || v == null ? null : Number(v) })"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div class="space-y-1.5">
+                                        <Label>How it appears</Label>
+                                        <select
+                                            :value="offerForProduct(product.id)!.appearance"
+                                            class="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                                            @change="(e) => updateOffer(product.id, { appearance: (e.target as HTMLSelectElement).value as OfferAppearance })"
+                                        >
+                                            <option
+                                                v-for="opt in OFFER_APPEARANCE_OPTIONS"
+                                                :key="opt.value"
+                                                :value="opt.value"
+                                            >
+                                                {{ opt.label }}
+                                            </option>
+                                        </select>
+                                        <p class="text-xs text-muted-foreground">
+                                            {{ OFFER_APPEARANCE_OPTIONS.find((o) => o.value === offerForProduct(product.id)!.appearance)?.hint }}
+                                        </p>
+                                    </div>
+                                    <div class="space-y-1.5">
+                                        <Label class="flex items-center gap-1.5">
+                                            <Link2 class="size-3.5" />
+                                            Checkout link
+                                        </Label>
+                                        <p class="rounded-md border bg-background px-2 py-1.5 text-xs text-muted-foreground break-all">
+                                            Default: {{ offerCheckoutHint(product.id) }}
+                                        </p>
+                                        <Input
+                                            :model-value="offerForProduct(product.id)!.cta_url"
+                                            placeholder="Override URL (leave empty for default checkout)"
+                                            @update:model-value="(v) => updateOffer(product.id, { cta_url: String(v ?? '') })"
+                                        />
+                                    </div>
                                 </div>
-                                <div class="min-w-0 flex-1">
-                                    <p class="truncate text-sm font-medium">{{ product.title }}</p>
-                                    <p class="text-xs text-muted-foreground">
-                                        {{ product.sale_price ? `$${product.sale_price}` : product.price ? `$${product.price}` : '' }}
-                                    </p>
-                                </div>
-                                <div :class="[
-                                    'flex size-5 shrink-0 items-center justify-center rounded-full border-2',
-                                    form.featured_product_ids.includes(product.id) ? 'border-[#E8563A] bg-[#E8563A] text-white' : 'border-muted-foreground/30',
-                                ]">
-                                    <svg v-if="form.featured_product_ids.includes(product.id)" class="size-3" viewBox="0 0 12 12" fill="none">
-                                        <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                                    </svg>
-                                </div>
-                            </button>
+                            </div>
                         </div>
-                        <p v-if="form.featured_product_ids.length" class="mt-2 text-xs text-muted-foreground">
-                            {{ form.featured_product_ids.length }} offer(s) assigned
+
+                        <p v-if="form.featured_offers.length" class="mt-3 text-xs text-muted-foreground">
+                            {{ form.featured_offers.length }} offer(s) assigned — expand each product to edit its schedule.
                         </p>
                     </div>
                 </div>
@@ -1874,24 +2436,24 @@ onBeforeUnmount(() => {
                                             variant="ghost"
                                             size="sm"
                                             class="h-7 gap-1 text-xs"
-                                            @click="toggleSourceExpanded(idx)"
+                                            @click="toggleSourceExpanded(sourceIndex)"
                                         >
                                             <Eye class="size-3.5" />
-                                            {{ expandedSourceIndex === idx ? 'Hide' : 'Review' }}
-                                            <ChevronUp v-if="expandedSourceIndex === idx" class="size-3" />
+                                            {{ expandedSourceIndex === sourceIndex ? 'Hide' : 'Review' }}
+                                            <ChevronUp v-if="expandedSourceIndex === sourceIndex" class="size-3" />
                                             <ChevronDown v-else class="size-3" />
                                         </Button>
                                         <Button
                                             variant="ghost"
                                             size="icon"
                                             class="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                            @click="removeKnowledgeSource(idx)"
+                                            @click="removeKnowledgeSource(sourceIndex)"
                                         >
                                             <Trash2 class="size-3.5" />
                                         </Button>
                                     </div>
                                 </div>
-                                <div v-if="expandedSourceIndex !== idx" class="px-4 py-2">
+                                <div v-if="expandedSourceIndex !== sourceIndex" class="px-4 py-2">
                                     <p class="truncate text-xs text-muted-foreground">
                                         {{ source.content.slice(0, 120) }}{{ source.content.length > 120 ? '...' : '' }}
                                     </p>

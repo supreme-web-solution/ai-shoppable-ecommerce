@@ -81,15 +81,11 @@ class MultilingualVideoService
                     'voice_id' => $voiceId ?: ($validated['voice_id'] ?? null),
                     'enable_embed_overlays' => (bool) ($validated['enable_embed_overlays'] ?? true),
                     'product_ids' => $validated['product_ids'] ?? [],
-                    'product_placement' => [
-                        'enabled' => (bool) ($validated['product_placement_enabled'] ?? false),
-                        'image_url' => $validated['product_placement_image_url'] ?? null,
-                        'position' => $validated['product_placement_position'] ?? 'bottom_right',
-                        'scale' => isset($validated['product_placement_scale']) ? (float) $validated['product_placement_scale'] : 0.3,
-                        'opacity' => isset($validated['product_placement_opacity']) ? (float) $validated['product_placement_opacity'] : 1.0,
-                        'offset_x' => isset($validated['product_placement_offset_x']) ? (float) $validated['product_placement_offset_x'] : 0,
-                        'offset_y' => isset($validated['product_placement_offset_y']) ? (float) $validated['product_placement_offset_y'] : 0,
-                        'motion_prompt' => $validated['product_placement_motion_prompt'] ?? null,
+                    'avatar_background' => [
+                        'enabled' => (bool) ($validated['custom_background_enabled'] ?? false),
+                        'color' => ($validated['custom_background_enabled'] ?? false)
+                            ? ($validated['background_color'] ?? null)
+                            : null,
                     ],
                     'translation_provider' => $translated['provider'],
                 ],

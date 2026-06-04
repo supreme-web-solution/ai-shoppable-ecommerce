@@ -11,7 +11,6 @@ use App\Services\Integrations\ZernioService;
 use App\Services\Social\SocialShopLinkService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class ZernioController extends Controller
 {

@@ -357,7 +357,7 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
 <template>
     <Head title="Shoppable Videos" />
 
-    <div class="page-root flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-x-hidden p-4 md:p-6">
+    <div class="page-root flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-x-hidden p-4 md:p-6 h-full">
 
         <!-- Header -->
         <div class="flex flex-wrap items-center justify-between gap-3">
@@ -391,7 +391,7 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
         <div class="flex items-center gap-3">
             <div class="relative max-w-sm flex-1">
                 <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input v-model="search" placeholder="Search videos…" class="rounded-xl pl-9" />
+                <Input v-model="search" placeholder="Search videos…" class="rounded-xl pl-9 !bg-white" />
             </div>
             <button type="button" :disabled="loading" class="ghost-btn flex size-9 items-center justify-center rounded-xl" @click="loadVideos">
                 <svg :class="['size-4 text-muted-foreground', loading && 'animate-spin']" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>

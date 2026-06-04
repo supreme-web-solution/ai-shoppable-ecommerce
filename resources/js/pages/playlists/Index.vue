@@ -893,7 +893,7 @@ onMounted(loadData);
                     <Label>Add videos</Label>
                     <div class="relative">
                         <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
-                        <Input v-model="createVideoSearch" placeholder="Search videos…" class="search-input pl-9" />
+                        <Input v-model="createVideoSearch" placeholder="Search videos…" class="search-input pl-9 !bg-white" />
                     </div>
 
                     <div v-if="videos.length === 0" class="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-6 text-center text-sm text-gray-500">
@@ -968,7 +968,7 @@ onMounted(loadData);
             <div class="shrink-0 border-b px-4 py-3">
                 <div class="relative">
                     <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
-                    <Input v-model="contentVideoSearch" placeholder="Search videos…" class="search-input pl-9" />
+                    <Input v-model="contentVideoSearch" placeholder="Search videos…" class="search-input pl-9 !bg-white" />
                 </div>
             </div>
 

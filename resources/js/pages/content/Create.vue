@@ -107,21 +107,118 @@ type HeyGenOptions = {
 
 const { teamId, apiFetch, getList, postJson, uploadFile, ensureTeam } = useAdminApi();
 
-/* ── top-level tabs ── */
-const activeTab = ref<'upload' | 'ai'>('upload');
+type CreateMode = 'upload' | 'ai';
+const createMode = ref<CreateMode | null>(null);
+const wizardStep = ref(1);
 
-/* ── AI wizard step (1-4) ── */
-const aiStep = ref(1);
+const wizardSteps = computed(() => {
+    const base = [
+        { n: 1, label: 'Method', icon: Clapperboard },
+        { n: 2, label: 'Products', icon: ShoppingBag },
+    ];
 
-const AI_STEPS = [
-    { n: 1, label: 'Products', icon: ShoppingBag },
-    { n: 2, label: 'Script', icon: Wand2 },
-    { n: 3, label: 'Presenter', icon: Users },
-    { n: 4, label: 'Review', icon: Sparkles },
-];
+    if (createMode.value === 'upload') {
+        return [
+            ...base,
+            { n: 3, label: 'Video', icon: Film },
+            { n: 4, label: 'Publish', icon: Upload },
+        ];
+    }
+
+    if (createMode.value === 'ai') {
+        return [
+            ...base,
+            { n: 3, label: 'Script', icon: Wand2 },
+            { n: 4, label: 'Presenter', icon: Users },
+            { n: 5, label: 'Generate', icon: Sparkles },
+        ];
+    }
+
+    return [{ n: 1, label: 'Method', icon: Clapperboard }];
+});
+
+const maxWizardStep = computed(() => wizardSteps.value.length);
+
+function goWizardStep(n: number) {
+    wizardStep.value = Math.max(1, Math.min(maxWizardStep.value, n));
+}
+
+function selectCreateMode(mode: CreateMode) {
+    createMode.value = mode;
+    wizardStep.value = 2;
+}
+
+function syncSharedProducts(ids: number[]) {
+    uploadForm.value.product_ids = [...ids];
+    avatarForm.value.product_ids = [...ids];
+    scriptForm.value.product_ids = [...ids];
+}
+
+function sharedProductIds(): number[] {
+    return createMode.value === 'ai'
+        ? avatarForm.value.product_ids
+        : uploadForm.value.product_ids;
+}
+
+const selectedProducts = computed(() => {
+    const ids = sharedProductIds();
+
+    return products.value.filter((p) => ids.includes(p.id));
+});
+
+const canContinueWizard = computed(() => {
+    if (wizardStep.value === 1) {
+        return createMode.value !== null;
+    }
+
+    if (wizardStep.value === 2) {
+        return true;
+    }
+
+    if (createMode.value === 'upload' && wizardStep.value === 3) {
+        return Boolean(selectedFile.value && uploadForm.value.title.trim());
+    }
+
+    if (createMode.value === 'ai' && wizardStep.value === 3) {
+        return Boolean(avatarForm.value.script.trim());
+    }
+
+    if (createMode.value === 'ai' && wizardStep.value === 4) {
+        return Boolean(avatarForm.value.avatar_id);
+    }
+
+    return true;
+});
+
+function continueWizard() {
+    if (!canContinueWizard.value) {
+        return;
+    }
+
+    goWizardStep(wizardStep.value + 1);
+}
+
+function backWizard() {
+    if (wizardStep.value === 2 && createMode.value) {
+        createMode.value = null;
+        wizardStep.value = 1;
+
+        return;
+    }
+
+    goWizardStep(wizardStep.value - 1);
+}
+
+/* legacy alias for AI sub-navigation inside template */
+const aiStep = computed({
+    get: () => Math.max(1, wizardStep.value - 1),
+    set: (n: number) => {
+        wizardStep.value = n + 1;
+    },
+});
 
 function goStep(n: number) {
-    aiStep.value = Math.max(1, Math.min(4, n));
+    wizardStep.value = n + 1;
 }
 
 /* ── global error / notice ── */
@@ -140,6 +237,7 @@ const aiGenerating = ref(false);
 
 /* ── video file + preview ── */
 const selectedFile = ref<File | null>(null);
+const videoFileInputRef = ref<HTMLInputElement | null>(null);
 const previewVideoUrl = ref<string | null>(null);
 const thumbnailPreviewUrl = ref<string | null>(null);
 /* ── product modal ── */
@@ -244,7 +342,37 @@ const avatarForm = ref({
     avatar_id: '',
     voice_id: '',
     product_ids: [] as number[],
+    custom_background_enabled: false,
+    background_color: '#f2efea',
 });
+
+const HEYGEN_BACKGROUND_PRESETS = [
+    { label: 'Warm cream', value: '#f2efea' },
+    { label: 'White', value: '#ffffff' },
+    { label: 'Soft gray', value: '#f3f4f6' },
+    { label: 'Charcoal', value: '#111827' },
+    { label: 'Black', value: '#000000' },
+    { label: 'Brand coral', value: '#e8563a' },
+    { label: 'Navy', value: '#1e3a5f' },
+    { label: 'Sage', value: '#d1e7dd' },
+] as const;
+
+const selectedBackgroundPreset = computed(() =>
+    HEYGEN_BACKGROUND_PRESETS.find((preset) => preset.value === avatarForm.value.background_color)
+        ?? HEYGEN_BACKGROUND_PRESETS[0],
+);
+
+function toggleCustomBackground(enabled: boolean) {
+    avatarForm.value.custom_background_enabled = enabled;
+    if (enabled && !avatarForm.value.background_color) {
+        avatarForm.value.background_color = HEYGEN_BACKGROUND_PRESETS[0].value;
+    }
+}
+
+function selectBackgroundColor(color: string) {
+    avatarForm.value.background_color = color;
+    avatarForm.value.custom_background_enabled = true;
+}
 
 const enableEmbedOverlays = ref(true);
 
@@ -352,37 +480,33 @@ function openProductModal(target: 'upload' | 'ai') {
     productModalOpen.value = true;
 }
 
-const activeProductIds = computed(() =>
-    modalTarget.value === 'upload' ? uploadForm.value.product_ids : avatarForm.value.product_ids,
-);
+const activeProductIds = computed(() => sharedProductIds());
 
 function toggleProductInModal(productId: number) {
-    const ids = modalTarget.value === 'upload' ? uploadForm.value.product_ids : avatarForm.value.product_ids;
+    const ids = sharedProductIds();
     const idx = ids.indexOf(productId);
 
     if (idx === -1) {
-        ids.push(productId);
+        syncSharedProducts([...ids, productId]);
     } else {
-        ids.splice(idx, 1);
-    }
-
-    if (modalTarget.value === 'ai') {
-        scriptForm.value.product_ids = [...ids];
+        syncSharedProducts(ids.filter((id) => id !== productId));
     }
 }
 
-/* In-step product toggle (no modal, for step 1) */
-function toggleAiProduct(productId: number) {
-    const ids = avatarForm.value.product_ids;
+function toggleSharedProduct(productId: number) {
+    const ids = sharedProductIds();
     const idx = ids.indexOf(productId);
 
     if (idx === -1) {
-        ids.push(productId);
+        syncSharedProducts([...ids, productId]);
     } else {
-        ids.splice(idx, 1);
+        syncSharedProducts(ids.filter((id) => id !== productId));
     }
+}
 
-    scriptForm.value.product_ids = [...ids];
+/* In-step product toggle (wizard step 2) */
+function toggleAiProduct(productId: number) {
+    toggleSharedProduct(productId);
 }
 
 const uploadSelectedProducts = computed(() =>
@@ -424,24 +548,47 @@ function selectHeyGenAvatar(avatar: HeyGenAvatarOption) {
     syncVoiceForAvatar(avatar);
 }
 
-function onFileSelected(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-
-    if (!file) {
-return;
-}
-
+function applySelectedVideoFile(file: File) {
     selectedFile.value = file;
 
     if (previewVideoUrl.value) {
-URL.revokeObjectURL(previewVideoUrl.value);
-}
+        URL.revokeObjectURL(previewVideoUrl.value);
+    }
 
     previewVideoUrl.value = URL.createObjectURL(file);
 
     if (!uploadForm.value.title) {
         uploadForm.value.title = file.name.replace(/\.[^.]+$/, '');
+    }
+}
+
+function openVideoFilePicker() {
+    videoFileInputRef.value?.click();
+}
+
+function onFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+
+    if (!file) {
+        return;
+    }
+
+    applySelectedVideoFile(file);
+}
+
+function onVideoDrop(event: DragEvent) {
+    event.preventDefault();
+    const file = event.dataTransfer?.files?.[0];
+
+    if (!file || !file.type.startsWith('video/')) {
+        return;
+    }
+
+    applySelectedVideoFile(file);
+
+    if (videoFileInputRef.value) {
+        videoFileInputRef.value.value = '';
     }
 }
 
@@ -730,7 +877,15 @@ async function loadHeyGenOptions(refresh = false) {
     }
 }
 
-onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
+onMounted(() => {
+    const mode = new URLSearchParams(window.location.search).get('mode');
+
+    if (mode === 'upload' || mode === 'ai') {
+        selectCreateMode(mode);
+    }
+
+    return Promise.all([loadProducts(), loadHeyGenOptions()]);
+});
 </script>
 
 <template>
@@ -750,7 +905,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
             <div class="h-5 w-px bg-border" />
             <div>
                 <h1 class="text-2xl font-bold tracking-tight">Create Shoppable Video</h1>
-                <p class="mt-0.5 text-sm text-muted-foreground">Upload your own or let AI generate a product ad.</p>
+                <p class="mt-0.5 text-sm text-muted-foreground">One guided flow — pick how you create, tag products, then publish.</p>
             </div>
         </div>
 
@@ -763,33 +918,44 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
             {{ errorText }}
         </div>
 
-        <!-- Top mode tabs -->
-        <div class="inline-flex rounded-xl border border-[#E8563A]/20 bg-white p-1 shadow-sm">
-            <button
-                :class="[
-                    'flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-medium transition-all',
-                    activeTab === 'upload'
-                        ? 'bg-[#E8563A] text-white shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                ]"
-                @click="activeTab = 'upload'"
-            >
-                <Upload class="size-4" />
-                Upload Video
-            </button>
-            <button
-                :class="[
-                    'flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-medium transition-all',
-                    activeTab === 'ai'
-                        ? 'bg-[#E8563A] text-white shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                ]"
-                @click="activeTab = 'ai'"
-            >
-                <Sparkles class="size-4" />
-                AI Generate
-                <span class="rounded-full bg-linear-to-r from-[#E8563A] to-[#ff8c42] px-1.5 py-0.5 text-[10px] font-bold text-white">AI</span>
-            </button>
+        <!-- Unified wizard stepper -->
+        <div v-if="createMode" class="mb-2">
+            <div class="flex items-center gap-0">
+                <template v-for="(step, i) in wizardSteps" :key="step.n">
+                    <button
+                        type="button"
+                        :class="[
+                            'flex flex-col items-center gap-1 px-1',
+                            step.n <= wizardStep ? 'cursor-pointer' : 'cursor-default',
+                        ]"
+                        :disabled="step.n > wizardStep"
+                        @click="step.n < wizardStep && goWizardStep(step.n)"
+                    >
+                        <div :class="[
+                            'flex size-9 items-center justify-center rounded-full border-2 text-sm font-bold transition-all',
+                            step.n < wizardStep
+                                ? 'border-[#E8563A] bg-[#E8563A] text-white'
+                                : step.n === wizardStep
+                                    ? 'border-[#E8563A] bg-[#E8563A] text-white shadow-lg shadow-[#E8563A]/30'
+                                    : 'border-muted-foreground/30 bg-muted text-muted-foreground',
+                        ]">
+                            <Check v-if="step.n < wizardStep" class="size-4" />
+                            <component :is="step.icon" v-else class="size-4" />
+                        </div>
+                        <span :class="[
+                            'text-[11px] font-medium',
+                            step.n === wizardStep ? 'text-foreground' : 'text-muted-foreground',
+                        ]">{{ step.label }}</span>
+                    </button>
+                    <div
+                        v-if="i < wizardSteps.length - 1"
+                        :class="[
+                            'mb-4 h-0.5 flex-1 transition-colors',
+                            step.n < wizardStep ? 'bg-[#E8563A]' : 'bg-[#E8563A]/20',
+                        ]"
+                    />
+                </template>
+            </div>
         </div>
 
         <!-- ═══════════════ MAIN GRID ═══════════════ -->
@@ -798,9 +964,174 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
             <!-- ── LEFT COLUMN ── -->
             <div class="lg:col-span-3">
 
-                <!-- ══════════ UPLOAD TAB ══════════ -->
-                <template v-if="activeTab === 'upload'">
+                <!-- ═══ STEP 1: Choose method ═══ -->
+                <div v-if="wizardStep === 1" class="space-y-5">
+                    <div>
+                        <h2 class="text-lg font-semibold">How do you want to create?</h2>
+                        <p class="text-sm text-muted-foreground">Both paths share product tagging and the same publish preview.</p>
+                    </div>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <button
+                            type="button"
+                            class="group flex flex-col items-start gap-3 rounded-2xl border-2 border-border bg-white p-5 text-left transition-all hover:border-[#E8563A]/50 hover:shadow-md"
+                            @click="selectCreateMode('upload')"
+                        >
+                            <div class="flex size-12 items-center justify-center rounded-xl bg-[#E8563A]/10 text-[#E8563A] transition-colors group-hover:bg-[#E8563A] group-hover:text-white">
+                                <Upload class="size-6" />
+                            </div>
+                            <div>
+                                <p class="font-semibold text-foreground">Upload a video</p>
+                                <p class="mt-1 text-sm text-muted-foreground">Use your own clip — MP4, MOV, or WEBM. Tag products and publish to your shop feed.</p>
+                            </div>
+                        </button>
+                        <button
+                            type="button"
+                            class="group flex flex-col items-start gap-3 rounded-2xl border-2 border-border bg-white p-5 text-left transition-all hover:border-[#E8563A]/50 hover:shadow-md"
+                            @click="selectCreateMode('ai')"
+                        >
+                            <div class="flex size-12 items-center justify-center rounded-xl bg-linear-to-br from-[#E8563A] to-[#ff8c42] text-white shadow-sm">
+                                <Sparkles class="size-6" />
+                            </div>
+                            <div>
+                                <p class="font-semibold text-foreground">Generate with AI</p>
+                                <p class="mt-1 text-sm text-muted-foreground">Pick products, write a script, choose a HeyGen presenter — we render the video for you.</p>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ═══ STEP 2: Products (shared) ═══ -->
+                <div v-else-if="wizardStep === 2" class="space-y-5">
+                    <div>
+                        <h2 class="text-lg font-semibold">What are you selling?</h2>
+                        <p class="text-sm text-muted-foreground">
+                            Select products to feature in this video. Viewers can buy directly from the player.
+                        </p>
+                    </div>
+
+                    <div v-if="products.length === 0" class="rounded-xl border border-dashed bg-muted/30 py-12 text-center">
+                        <ShoppingBag class="mx-auto mb-3 size-8 text-muted-foreground" />
+                        <p class="text-sm font-medium">No products yet</p>
+                        <p class="mt-1 text-xs text-muted-foreground">Add products first, then come back to create a video.</p>
+                        <Button as-child variant="outline" size="sm" class="mt-4">
+                            <Link href="/products">Add products →</Link>
+                        </Button>
+                    </div>
+
+                    <template v-else>
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <p class="text-xs text-muted-foreground">
+                                {{ filteredAiProducts.length }} of {{ products.length }} products
+                                <span v-if="sharedProductIds().length">
+                                    · {{ sharedProductIds().length }} selected
+                                </span>
+                            </p>
+                            <p
+                                v-if="filteredAiProducts.length > PRODUCTS_PER_PAGE"
+                                class="text-xs font-medium text-muted-foreground"
+                            >
+                                Page {{ aiProductPage }} of {{ aiProductTotalPages }}
+                            </p>
+                        </div>
+
+                        <div class="relative">
+                            <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                                v-model="aiProductSearch"
+                                placeholder="Search products by name…"
+                                class="h-10 pl-9 !bg-white"
+                            />
+                        </div>
+
+                        <div
+                            v-if="filteredAiProducts.length === 0"
+                            class="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground"
+                        >
+                            No products match your search.
+                        </div>
+
+                        <div v-else class="space-y-2">
+                            <button
+                                v-for="p in paginatedAiProducts"
+                                :key="p.id"
+                                type="button"
+                                :class="[
+                                    'flex w-full items-center gap-3 rounded-2xl border-2 bg-background p-3 text-left transition-all',
+                                    sharedProductIds().includes(p.id)
+                                        ? 'border-[#E8563A] bg-[#E8563A]/5 shadow-sm shadow-[#E8563A]/10'
+                                        : 'border-border hover:border-[#E8563A]/35 hover:bg-muted/30',
+                                ]"
+                                @click="toggleSharedProduct(p.id)"
+                            >
+                                <div class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-muted">
+                                    <img
+                                        v-if="p.image_url"
+                                        :src="p.image_url"
+                                        :alt="p.title"
+                                        class="h-full w-full object-cover"
+                                    >
+                                    <ImageOff v-else class="size-5 text-muted-foreground/50" />
+                                </div>
+                                <div class="min-w-0 flex-1">
+                                    <p class="truncate font-semibold text-foreground">{{ p.title }}</p>
+                                    <p class="mt-0.5 text-sm font-medium text-[#E8563A]">
+                                        {{ formatPrice(p.currency, p.sale_price || p.price) }}
+                                    </p>
+                                    <p
+                                        v-if="p.description"
+                                        class="mt-0.5 line-clamp-1 text-xs text-muted-foreground"
+                                    >
+                                        {{ p.description }}
+                                    </p>
+                                </div>
+                                <div
+                                    :class="[
+                                        'flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition-all',
+                                        sharedProductIds().includes(p.id)
+                                            ? 'border-[#E8563A] bg-[#E8563A] text-white'
+                                            : 'border-muted-foreground/30 bg-background',
+                                    ]"
+                                >
+                                    <Check v-if="sharedProductIds().includes(p.id)" class="size-4" />
+                                </div>
+                            </button>
+
+                            <div
+                                v-if="aiProductTotalPages > 1"
+                                class="flex items-center justify-between gap-2 pt-1"
+                            >
+                                <Button type="button" variant="outline" size="sm" :disabled="aiProductPage <= 1" @click="aiProductPage--">
+                                    Previous
+                                </Button>
+                                <span class="text-xs text-muted-foreground">
+                                    Showing {{ paginatedAiProducts.length }} of {{ filteredAiProducts.length }}
+                                </span>
+                                <Button type="button" variant="outline" size="sm" :disabled="aiProductPage >= aiProductTotalPages" @click="aiProductPage++">
+                                    Next
+                                </Button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div class="flex items-center justify-between pt-2">
+                        <Button variant="ghost" @click="backWizard">
+                            <ChevronLeft class="mr-1.5 size-4" />
+                            Back
+                        </Button>
+                        <Button @click="continueWizard">
+                            {{ sharedProductIds().length ? `Continue with ${sharedProductIds().length} product${sharedProductIds().length > 1 ? 's' : ''}` : 'Skip & continue' }}
+                            <ChevronRight class="ml-1.5 size-4" />
+                        </Button>
+                    </div>
+                </div>
+
+                <!-- ═══ UPLOAD: Step 3 — Video file & details ═══ -->
+                <template v-else-if="createMode === 'upload' && wizardStep === 3">
                     <div class="space-y-5">
+                        <div>
+                            <h2 class="text-lg font-semibold">Upload your video</h2>
+                            <p class="text-sm text-muted-foreground">Add your clip, set title and visibility, then review before publishing.</p>
+                        </div>
 
                         <!-- ── Big drop zone at the top ── -->
                         <div
@@ -810,16 +1141,23 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     ? 'border-[#E8563A] bg-[#E8563A]/5'
                                     : 'border-border bg-white hover:border-[#E8563A]/50 hover:bg-[#E8563A]/5',
                             ]"
+                            role="button"
+                            tabindex="0"
+                            @click="openVideoFilePicker"
+                            @keydown.enter.prevent="openVideoFilePicker"
+                            @keydown.space.prevent="openVideoFilePicker"
+                            @dragover.prevent
+                            @drop.prevent="onVideoDrop"
                         >
                             <!-- Background video preview when file selected -->
                             <video
                                 v-if="previewVideoUrl"
                                 :src="previewVideoUrl"
-                                class="absolute inset-0 h-full w-full object-cover opacity-30"
+                                class="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover opacity-30"
                                 autoplay muted loop playsinline
                             />
 
-                            <div class="relative z-10 flex flex-col items-center gap-3 text-center">
+                            <div class="pointer-events-none relative z-10 flex flex-col items-center gap-3 text-center">
                                 <div :class="[
                                     'flex size-16 items-center justify-center rounded-2xl transition-all',
                                     selectedFile ? 'bg-[#E8563A]/20' : 'bg-muted group-hover:bg-[#E8563A]/10',
@@ -844,9 +1182,10 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
 
                             <input
                                 id="up-file"
+                                ref="videoFileInputRef"
                                 type="file"
-                                accept="video/*"
-                                class="absolute inset-0 cursor-pointer opacity-0"
+                                accept="video/mp4,video/quicktime,video/webm,video/*"
+                                class="sr-only"
                                 @change="onFileSelected"
                             >
                         </div>
@@ -949,41 +1288,27 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             </CardContent>
                         </Card>
 
-                        <!-- ── Products card ── -->
-                        <Card>
+                        <!-- ── Tagged products summary ── -->
+                        <Card v-if="selectedProducts.length">
                             <CardHeader class="pb-3">
-                                <div class="flex items-start justify-between">
-                                    <div>
-                                        <CardTitle class="text-base">Tag products</CardTitle>
-                                        <p class="mt-0.5 text-xs text-muted-foreground">Products shown as buy cards below the video.</p>
-                                    </div>
-                                    <Button type="button" variant="outline" size="sm" class="gap-1.5 shrink-0" @click="openProductModal('upload')">
-                                        <Plus class="size-3.5" />
-                                        {{ uploadForm.product_ids.length ? 'Edit' : 'Attach' }}
-                                    </Button>
+                                <div class="flex items-center justify-between">
+                                    <CardTitle class="text-base">{{ selectedProducts.length }} product{{ selectedProducts.length > 1 ? 's' : '' }} tagged</CardTitle>
+                                    <Button type="button" variant="ghost" size="sm" @click="goWizardStep(2)">Edit</Button>
                                 </div>
                             </CardHeader>
-                            <CardContent v-if="uploadSelectedProducts.length" class="pt-0">
-                                <div class="max-h-48 space-y-2 overflow-y-auto">
-                                    <div
-                                        v-for="p in uploadSelectedProducts"
+                            <CardContent class="pt-0">
+                                <div class="flex flex-wrap gap-2">
+                                    <span
+                                        v-for="p in selectedProducts.slice(0, 4)"
                                         :key="p.id"
-                                        class="flex items-center gap-3 rounded-xl border border-[#E8563A]/30 bg-[#E8563A]/5 p-2.5"
+                                        class="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-xs font-medium"
                                     >
-                                        <div class="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-background">
-                                            <img v-if="p.image_url" :src="p.image_url" class="h-full w-full object-cover" :alt="p.title">
-                                            <ImageOff v-else class="size-4 text-muted-foreground" />
-                                        </div>
-                                        <div class="min-w-0 flex-1">
-                                            <p class="truncate text-sm font-semibold">{{ p.title }}</p>
-                                            <p class="text-xs text-[#E8563A]">{{ formatPrice(p.currency, p.sale_price || p.price) }}</p>
-                                        </div>
-                                        <Check class="size-4 shrink-0 text-[#E8563A]" />
-                                    </div>
+                                        {{ p.title }}
+                                    </span>
+                                    <span v-if="selectedProducts.length > 4" class="text-xs text-muted-foreground">
+                                        +{{ selectedProducts.length - 4 }} more
+                                    </span>
                                 </div>
-                            </CardContent>
-                            <CardContent v-else class="pt-0">
-                                <p class="text-sm text-muted-foreground">No products attached yet.</p>
                             </CardContent>
                         </Card>
 
@@ -1016,7 +1341,50 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             </CardContent>
                         </Card>
 
-                        <!-- ── Publish button ── -->
+                        <div class="flex items-center justify-between pt-2">
+                            <Button variant="ghost" @click="backWizard">
+                                <ChevronLeft class="mr-1.5 size-4" />
+                                Back
+                            </Button>
+                            <Button :disabled="!canContinueWizard" @click="continueWizard">
+                                Review & publish
+                                <ChevronRight class="ml-1.5 size-4" />
+                            </Button>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- ═══ UPLOAD: Step 4 — Review & publish ═══ -->
+                <template v-else-if="createMode === 'upload' && wizardStep === 4">
+                    <div class="space-y-5">
+                        <div>
+                            <h2 class="text-lg font-semibold">Review & publish</h2>
+                            <p class="text-sm text-muted-foreground">Confirm everything looks right before going live.</p>
+                        </div>
+
+                        <Card>
+                            <CardContent class="space-y-4 pt-5">
+                                <div class="flex items-start gap-3">
+                                    <Film class="mt-0.5 size-5 shrink-0 text-[#E8563A]" />
+                                    <div>
+                                        <p class="font-semibold">{{ uploadForm.title || 'Untitled video' }}</p>
+                                        <p class="text-sm text-muted-foreground">{{ selectedFile?.name }} · {{ selectedFile ? (selectedFile.size / 1024 / 1024).toFixed(1) : 0 }} MB</p>
+                                    </div>
+                                </div>
+                                <div class="grid gap-2 text-sm sm:grid-cols-2">
+                                    <div class="rounded-xl bg-muted/50 px-3 py-2">
+                                        <p class="text-xs text-muted-foreground">Visibility</p>
+                                        <p class="font-medium capitalize">{{ uploadForm.visibility }}</p>
+                                    </div>
+                                    <div class="rounded-xl bg-muted/50 px-3 py-2">
+                                        <p class="text-xs text-muted-foreground">Products</p>
+                                        <p class="font-medium">{{ selectedProducts.length }} tagged</p>
+                                    </div>
+                                </div>
+                                <p v-if="uploadForm.description" class="text-sm text-muted-foreground">{{ uploadForm.description }}</p>
+                            </CardContent>
+                        </Card>
+
                         <Button
                             class="h-12 w-full bg-[#E8563A] text-base font-semibold text-white shadow-lg shadow-[#E8563A]/30 hover:bg-[#D44A2F]"
                             :disabled="uploading || !selectedFile"
@@ -1026,191 +1394,21 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             <Upload v-else class="mr-2 size-5" />
                             {{ uploading ? 'Uploading…' : 'Publish shoppable video' }}
                         </Button>
+
+                        <div class="flex justify-start">
+                            <Button variant="ghost" @click="backWizard">
+                                <ChevronLeft class="mr-1.5 size-4" />
+                                Back
+                            </Button>
+                        </div>
                     </div>
                 </template>
 
-                <!-- ══════════ AI GENERATE TAB ══════════ -->
-                <template v-else>
-
-                    <!-- ── Step indicator ── -->
-                    <div class="mb-6">
-                        <div class="flex items-center gap-0">
-                            <template v-for="(step, i) in AI_STEPS" :key="step.n">
-                                <!-- Step bubble -->
-                                <button
-                                    type="button"
-                                    :class="[
-                                        'flex flex-col items-center gap-1 px-1',
-                                        step.n <= aiStep ? 'cursor-pointer' : 'cursor-default',
-                                    ]"
-                                    :disabled="step.n > aiStep"
-                                    @click="step.n < aiStep && goStep(step.n)"
-                                >
-                                    <div :class="[
-                                        'flex size-9 items-center justify-center rounded-full border-2 text-sm font-bold transition-all',
-                                        step.n < aiStep
-                                            ? 'border-[#E8563A] bg-[#E8563A] text-white'
-                                                : step.n === aiStep
-                                                    ? 'border-[#E8563A] bg-[#E8563A] text-white shadow-lg shadow-[#E8563A]/30'
-                                                : 'border-muted-foreground/30 bg-muted text-muted-foreground',
-                                    ]">
-                                        <Check v-if="step.n < aiStep" class="size-4" />
-                                        <span v-else>{{ step.n }}</span>
-                                    </div>
-                                    <span :class="[
-                                        'text-[11px] font-medium',
-                                        step.n === aiStep ? 'text-foreground' : 'text-muted-foreground',
-                                    ]">{{ step.label }}</span>
-                                </button>
-
-                                <!-- Connector line -->
-                                <div
-                                    v-if="i < AI_STEPS.length - 1"
-                                    :class="[
-                                        'mb-4 h-0.5 flex-1 transition-colors',
-                                        step.n < aiStep ? 'bg-[#E8563A]' : 'bg-[#E8563A]/20',
-                                    ]"
-                                />
-                            </template>
-                        </div>
-                    </div>
-
-                    <!-- ═══ STEP 1: Products ═══ -->
-                    <div v-if="aiStep === 1" class="space-y-5">
-                        <div>
-                            <h2 class="text-lg font-semibold">What are you selling?</h2>
-                            <p class="text-sm text-muted-foreground">Select the products you want to feature in this ad. The AI will write about them.</p>
-                        </div>
-
-                        <div v-if="products.length === 0" class="rounded-xl border border-dashed bg-muted/30 py-12 text-center">
-                            <ShoppingBag class="mx-auto mb-3 size-8 text-muted-foreground" />
-                            <p class="text-sm font-medium">No products yet</p>
-                            <p class="mt-1 text-xs text-muted-foreground">Add products first, then come back to create an AI ad.</p>
-                            <Button as-child variant="outline" size="sm" class="mt-4">
-                                <Link href="/products">Add products →</Link>
-                            </Button>
-                        </div>
-
-                        <template v-else>
-                            <div class="flex flex-wrap items-center justify-between gap-2">
-                                <p class="text-xs text-muted-foreground">
-                                    {{ filteredAiProducts.length }} of {{ products.length }} products
-                                    <span v-if="avatarForm.product_ids.length">
-                                        · {{ avatarForm.product_ids.length }} selected
-                                    </span>
-                                </p>
-                                <p
-                                    v-if="filteredAiProducts.length > PRODUCTS_PER_PAGE"
-                                    class="text-xs font-medium text-muted-foreground"
-                                >
-                                    Page {{ aiProductPage }} of {{ aiProductTotalPages }}
-                                </p>
-                            </div>
-
-                            <div class="relative">
-                                <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                                <Input
-                                    v-model="aiProductSearch"
-                                    placeholder="Search products by name…"
-                                    class="h-10 pl-9"
-                                />
-                            </div>
-
-                            <div
-                                v-if="filteredAiProducts.length === 0"
-                                class="rounded-xl border border-dashed py-8 text-center text-sm text-muted-foreground"
-                            >
-                                No products match your search.
-                            </div>
-
-                            <div v-else class="space-y-2">
-                                <button
-                                    v-for="p in paginatedAiProducts"
-                                    :key="p.id"
-                                    type="button"
-                                    :class="[
-                                        'flex w-full items-center gap-3 rounded-2xl border-2 bg-background p-3 text-left transition-all',
-                                        avatarForm.product_ids.includes(p.id)
-                                            ? 'border-[#E8563A] bg-[#E8563A]/5 shadow-sm shadow-[#E8563A]/10'
-                                            : 'border-border hover:border-[#E8563A]/35 hover:bg-muted/30',
-                                    ]"
-                                    @click="toggleAiProduct(p.id)"
-                                >
-                                    <div class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-muted">
-                                        <img
-                                            v-if="p.image_url"
-                                            :src="p.image_url"
-                                            :alt="p.title"
-                                            class="h-full w-full object-cover"
-                                        >
-                                        <ImageOff v-else class="size-5 text-muted-foreground/50" />
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <p class="truncate font-semibold text-foreground">{{ p.title }}</p>
-                                        <p class="mt-0.5 text-sm font-medium text-[#E8563A]">
-                                            {{ formatPrice(p.currency, p.sale_price || p.price) }}
-                                        </p>
-                                        <p
-                                            v-if="p.description"
-                                            class="mt-0.5 line-clamp-1 text-xs text-muted-foreground"
-                                        >
-                                            {{ p.description }}
-                                        </p>
-                                    </div>
-                                    <div
-                                        :class="[
-                                            'flex size-7 shrink-0 items-center justify-center rounded-full border-2 transition-all',
-                                            avatarForm.product_ids.includes(p.id)
-                                                ? 'border-[#E8563A] bg-[#E8563A] text-white'
-                                                : 'border-muted-foreground/30 bg-background',
-                                        ]"
-                                    >
-                                        <Check
-                                            v-if="avatarForm.product_ids.includes(p.id)"
-                                            class="size-4"
-                                        />
-                                    </div>
-                                </button>
-
-                                <div
-                                    v-if="aiProductTotalPages > 1"
-                                    class="flex items-center justify-between gap-2 pt-1"
-                                >
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        :disabled="aiProductPage <= 1"
-                                        @click="aiProductPage--"
-                                    >
-                                        Previous
-                                    </Button>
-                                    <span class="text-xs text-muted-foreground">
-                                        Showing {{ paginatedAiProducts.length }} of {{ filteredAiProducts.length }}
-                                    </span>
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        :disabled="aiProductPage >= aiProductTotalPages"
-                                        @click="aiProductPage++"
-                                    >
-                                        Next
-                                    </Button>
-                                </div>
-                            </div>
-                        </template>
-
-                        <div class="flex justify-end pt-2">
-                            <Button @click="goStep(2)">
-                                {{ avatarForm.product_ids.length ? `Continue with ${avatarForm.product_ids.length} product${avatarForm.product_ids.length > 1 ? 's' : ''}` : 'Skip & continue' }}
-                                <ChevronRight class="ml-1.5 size-4" />
-                            </Button>
-                        </div>
-                    </div>
+                <!-- ═══ AI: Steps 3–5 ═══ -->
+                <template v-else-if="createMode === 'ai' && wizardStep >= 3">
 
                     <!-- ═══ STEP 2: Script ═══ -->
-                    <div v-else-if="aiStep === 2" class="space-y-5">
+                    <div v-if="aiStep === 2" class="space-y-5">
                         <div>
                             <h2 class="text-lg font-semibold">Write your ad script</h2>
                             <p class="text-sm text-muted-foreground">Tell the AI what kind of ad you want, then let it write the script.</p>
@@ -1332,7 +1530,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                         </Card>
 
                         <div class="flex items-center justify-between pt-2">
-                            <Button variant="ghost" @click="goStep(1)">
+                            <Button variant="ghost" @click="backWizard">
                                 <ChevronLeft class="mr-1.5 size-4" />
                                 Back
                             </Button>
@@ -1405,6 +1603,69 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                             </button>
                         </div>
 
+                        <div
+                            v-if="avatarForm.avatar_id"
+                            class="space-y-3 rounded-2xl border bg-white p-3"
+                        >
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="space-y-1">
+                                    <Label for="custom-background-toggle">Custom video background</Label>
+                                    <p class="text-xs text-muted-foreground">
+                                        Replaces the presenter&apos;s scene with your color (HeyGen removes the original background first).
+                                    </p>
+                                    <p
+                                        v-if="selectedHeyGenAvatar?.avatar_type === 'photo_avatar'"
+                                        class="text-xs text-amber-800 dark:text-amber-200"
+                                    >
+                                        Photo avatars like {{ selectedHeyGenAvatar.name }} include a room in the source image — results vary; plain-backdrop studio avatars work best.
+                                    </p>
+                                </div>
+                                <label class="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
+                                    <input
+                                        id="custom-background-toggle"
+                                        :checked="avatarForm.custom_background_enabled"
+                                        type="checkbox"
+                                        class="peer sr-only"
+                                        @change="toggleCustomBackground(($event.target as HTMLInputElement).checked)"
+                                    >
+                                    <span
+                                        class="h-6 w-11 rounded-full bg-muted transition peer-checked:bg-[#E8563A] peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
+                                    />
+                                    <span
+                                        class="absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition peer-checked:translate-x-5"
+                                    />
+                                </label>
+                            </div>
+
+                            <div v-if="avatarForm.custom_background_enabled" class="space-y-2">
+                                <p class="text-xs font-medium text-foreground">Background color</p>
+                                <div class="flex flex-wrap gap-2">
+                                    <button
+                                        v-for="preset in HEYGEN_BACKGROUND_PRESETS"
+                                        :key="preset.value"
+                                        type="button"
+                                        :title="preset.label"
+                                        :class="[
+                                            'flex size-10 items-center justify-center rounded-xl border-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                            avatarForm.background_color === preset.value
+                                                ? 'border-[#E8563A] ring-2 ring-[#E8563A]/30'
+                                                : 'border-border hover:border-[#E8563A]/40',
+                                        ]"
+                                        @click="selectBackgroundColor(preset.value)"
+                                    >
+                                        <span
+                                            class="size-7 rounded-lg border border-black/10 shadow-inner"
+                                            :style="{ backgroundColor: preset.value }"
+                                        />
+                                    </button>
+                                </div>
+                                <p class="text-[11px] text-muted-foreground">
+                                    Selected: <strong>{{ selectedBackgroundPreset.label }}</strong>
+                                    ({{ avatarForm.background_color }})
+                                </p>
+                            </div>
+                        </div>
+
                         <!-- ── AVATARS panel ── -->
                         <div v-if="presenterTab === 'avatars'">
                             <!-- Avatar filters -->
@@ -1414,7 +1675,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     <Input
                                         v-model="avatarSearch"
                                         placeholder="Search niche, look, industry, style..."
-                                        class="h-9 pl-9 text-sm"
+                                        class="h-9 pl-9 text-sm !bg-white"
                                     />
                                 </div>
                                 <div class="grid grid-cols-3 gap-2">
@@ -1449,7 +1710,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                     </select>
                                 </div>
                                 <p class="text-[11px] text-muted-foreground">
-                                    Showing {{ filteredHeyGenAvatars.length }} of {{ heygenOptions.avatars.length }} avatars. Use Refresh to pull the wider catalog.
+                                    Showing {{ filteredHeyGenAvatars.length }} API-ready avatars (legacy studio looks without API support are hidden). Click Refresh to update the catalog.
                                 </p>
                             </div>
 
@@ -1586,7 +1847,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
 
                         <!-- Nav row -->
                         <div class="flex items-center justify-between pt-1">
-                            <Button variant="ghost" @click="goStep(2)">
+                            <Button variant="ghost" @click="backWizard">
                                 <ChevronLeft class="mr-1.5 size-4" />
                                 Back
                             </Button>
@@ -1623,6 +1884,12 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                 </div>
                                 <p class="truncate px-2 py-1.5 text-center text-xs font-medium">
                                     {{ selectedHeyGenAvatar?.name ?? 'Auto-select' }}
+                                </p>
+                                <p
+                                    v-if="avatarForm.custom_background_enabled"
+                                    class="truncate px-2 pb-1.5 text-center text-[10px] text-muted-foreground"
+                                >
+                                    BG: {{ selectedBackgroundPreset.label }}
                                 </p>
                             </div>
 
@@ -1778,7 +2045,7 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                         </p> -->
 
                         <div class="flex justify-start pt-1">
-                            <Button variant="ghost" @click="goStep(3)">
+                            <Button variant="ghost" @click="backWizard">
                                 <ChevronLeft class="mr-1.5 size-4" />
                                 Back
                             </Button>
@@ -1884,9 +2151,9 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                 </div>
 
                                 <!-- Product cards -->
-                                <template v-if="(activeTab === 'upload' ? uploadSelectedProducts : avatarSelectedProducts).length">
+                                <template v-if="selectedProducts.length">
                                     <div
-                                        v-for="p in (activeTab === 'upload' ? uploadSelectedProducts : avatarSelectedProducts).slice(0, 2)"
+                                        v-for="p in selectedProducts.slice(0, 2)"
                                         :key="p.id"
                                         class="mb-1.5 flex items-center gap-2 rounded-2xl bg-white/15 px-2.5 py-2 backdrop-blur-md"
                                     >
@@ -1901,10 +2168,10 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
                                         <span class="shrink-0 rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-black shadow">Buy</span>
                                     </div>
                                     <p
-                                        v-if="(activeTab === 'upload' ? uploadSelectedProducts : avatarSelectedProducts).length > 2"
+                                        v-if="selectedProducts.length > 2"
                                         class="mt-1.5 text-center text-[9px] text-white/50"
                                     >
-                                        +{{ (activeTab === 'upload' ? uploadSelectedProducts : avatarSelectedProducts).length - 2 }} more products
+                                        +{{ selectedProducts.length - 2 }} more products
                                     </p>
                                 </template>
                                 <div v-else class="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 py-2.5">
@@ -1922,15 +2189,15 @@ onMounted(() => Promise.all([loadProducts(), loadHeyGenOptions()]));
 
                     <!-- Product list below phone -->
                     <div
-                        v-if="(activeTab === 'upload' ? uploadSelectedProducts : avatarSelectedProducts).length"
+                        v-if="selectedProducts.length"
                         class="w-full max-w-[260px] space-y-2"
                     >
                         <div class="flex items-center gap-1.5 px-1">
                             <Tag class="size-3.5 text-orange-500" />
-                            <p class="text-xs font-semibold">{{ (activeTab === 'upload' ? uploadSelectedProducts : avatarSelectedProducts).length }} product{{ (activeTab === 'upload' ? uploadSelectedProducts : avatarSelectedProducts).length > 1 ? 's' : '' }} tagged</p>
+                            <p class="text-xs font-semibold">{{ selectedProducts.length }} product{{ selectedProducts.length > 1 ? 's' : '' }} tagged</p>
                         </div>
                         <div
-                            v-for="p in (activeTab === 'upload' ? uploadSelectedProducts : avatarSelectedProducts)"
+                            v-for="p in selectedProducts"
                             :key="p.id"
                             class="flex items-center gap-2.5 rounded-xl border bg-card p-2.5"
                         >

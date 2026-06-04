@@ -174,8 +174,8 @@ const topVideos = computed(() => overview.value?.top_videos ?? []);
 const topVideoMax = computed(() => Math.max(...topVideos.value.map((v) => v.total), 1));
 
 const quickActions = [
-    { href: '/content/create', icon: Upload, label: 'Upload Video' },
-    { href: '/content/create', icon: Sparkles, label: 'AI Video' },
+    { href: '/content/create?mode=upload', icon: Upload, label: 'Upload Video' },
+    { href: '/content/create?mode=ai', icon: Sparkles, label: 'AI Video' },
     { href: '/live-shows', icon: Clapperboard, label: 'Live Show' },
     { href: '/playlists', icon: Layers3, label: 'Playlist' },
     { href: '/products', icon: Package, label: 'Products' },

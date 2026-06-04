@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1;
 
 use App\Http\Requests\Api\V1\Concerns\AuthorizesTeamAccess;
+use App\Models\LiveShow;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -19,7 +20,7 @@ class StoreLiveShowRequest extends FormRequest
 
         return $team !== null
             && $this->userCanAccessTeam($team->id)
-            && $this->user()?->can('create', \App\Models\LiveShow::class);
+            && $this->user()?->can('create', LiveShow::class);
     }
 
     /**
@@ -54,6 +55,14 @@ class StoreLiveShowRequest extends FormRequest
             'settings.knowledge_sources.*.content' => ['required', 'string'],
             'featured_product_ids' => ['nullable', 'array'],
             'featured_product_ids.*' => ['integer', 'exists:products,id'],
+            'featured_products' => ['nullable', 'array'],
+            'featured_products.*.product_id' => ['required', 'integer', 'exists:products,id'],
+            'featured_products.*.starts_at_ms' => ['nullable', 'integer', 'min:0'],
+            'featured_products.*.ends_at_ms' => ['nullable', 'integer', 'min:0'],
+            'featured_products.*.appearance' => ['nullable', 'string', 'in:pin,in_chat,popup'],
+            'featured_products.*.cta_url' => ['nullable', 'string', 'max:2048'],
+            'featured_products.*.pin_order' => ['nullable', 'integer', 'min:0'],
+            'settings.video_duration_seconds' => ['nullable', 'integer', 'min:1', 'max:86400'],
         ];
     }
 }

@@ -3,7 +3,6 @@
 namespace App\Services\Integrations;
 
 use App\Models\Team;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;

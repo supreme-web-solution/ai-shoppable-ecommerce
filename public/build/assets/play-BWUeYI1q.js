@@ -1,1 +1,0 @@
-import{N as e}from"./app-3DFU705Q.js";var t=e(`PlayIcon`,[[`polygon`,{points:`6 3 20 12 6 21 6 3`,key:`1oa8hb`}]]);export{t};

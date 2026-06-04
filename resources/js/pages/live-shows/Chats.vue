@@ -43,9 +43,11 @@ type WebinarConversation = {
 type LiveVideoConversation = {
     video_id: number;
     title: string;
+    display_title?: string;
     last_message?: string | null;
     last_message_at?: string | null;
     messages_count: number;
+    conversations_count?: number;
     ai_assistant_enabled: boolean;
 };
 
@@ -280,6 +282,7 @@ const filteredLiveVideoConversations = computed(() => {
 
     return liveVideoConversations.value.filter(
         (c) =>
+            liveVideoLabel(c).toLowerCase().includes(q) ||
             c.title.toLowerCase().includes(q) ||
             (c.last_message?.toLowerCase().includes(q) ?? false),
     );
@@ -313,6 +316,10 @@ function initials(name: string): string {
         .join('')
         .slice(0, 2)
         .toUpperCase();
+}
+
+function liveVideoLabel(conv: LiveVideoConversation | null | undefined): string {
+    return conv?.display_title?.trim() || conv?.title?.trim() || 'Live video';
 }
 
 function beginBackgroundSync(silent: boolean): () => void {
@@ -925,11 +932,11 @@ onBeforeUnmount(() => {
                         @click="selectLiveVideo(conv.video_id)"
                     >
                         <div class="avatar-chip flex size-11 shrink-0 items-center justify-center rounded-full text-sm font-bold">
-                            {{ initials(conv.title) }}
+                            {{ initials(liveVideoLabel(conv)) }}
                         </div>
                         <div class="min-w-0 flex-1">
                             <div class="flex items-center justify-between gap-2">
-                                <p class="truncate font-semibold text-gray-900">{{ conv.title }}</p>
+                                <p class="truncate font-semibold text-gray-900">{{ liveVideoLabel(conv) }}</p>
                                 <span class="shrink-0 text-[10px] text-gray-400">
                                     {{ formatTime(conv.last_message_at) }}
                                 </span>
@@ -968,11 +975,11 @@ onBeforeUnmount(() => {
                     <!-- Thread header -->
                     <div class="flex items-center gap-3 border-b border-[#F0EDE8] bg-white px-4 py-3">
                         <div class="avatar-chip flex size-10 items-center justify-center rounded-full text-sm font-bold">
-                            {{ initials(sourceTab === 'webinar' ? (selectedWebinarConversation?.full_name ?? 'A') : (selectedLiveVideoConversation?.title ?? 'L')) }}
+                            {{ initials(sourceTab === 'webinar' ? (selectedWebinarConversation?.full_name ?? 'A') : liveVideoLabel(selectedLiveVideoConversation)) }}
                         </div>
                         <div class="min-w-0 flex-1">
                             <p class="font-bold text-gray-900">
-                                {{ sourceTab === 'webinar' ? selectedWebinarConversation?.full_name : selectedLiveVideoConversation?.title }}
+                                {{ sourceTab === 'webinar' ? selectedWebinarConversation?.full_name : liveVideoLabel(selectedLiveVideoConversation) }}
                             </p>
                             <p class="truncate text-xs text-gray-500">
                                 {{ sourceTab === 'webinar' ? selectedWebinarConversation?.email : 'Live video comments channel' }}

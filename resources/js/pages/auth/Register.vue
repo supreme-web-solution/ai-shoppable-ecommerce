@@ -11,6 +11,8 @@ import { store } from '@/routes/register';
 
 defineProps<{
     passwordRules: string;
+    inviteToken?: string | null;
+    inviteEmail?: string | null;
 }>();
 
 defineOptions({
@@ -30,6 +32,15 @@ defineOptions({
         v-slot="{ errors, processing }"
         class="flex flex-col gap-3"
     >
+        <input v-if="inviteToken" type="hidden" name="invite_token" :value="inviteToken" />
+
+        <div
+            v-if="inviteToken"
+            class="rounded-xl border border-[#E8563A]/20 bg-[#E8563A]/5 px-4 py-3 text-sm text-gray-700"
+        >
+            You are creating an account to accept a team invitation.
+        </div>
+
         <div class="grid gap-3">
             <div class="grid gap-1">
                 <Label for="name" class="field-label">Full name</Label>
@@ -56,6 +67,7 @@ defineOptions({
                     :tabindex="2"
                     autocomplete="email"
                     name="email"
+                    :value="inviteEmail ?? undefined"
                     placeholder="you@example.com"
                     class="auth-input"
                 />
@@ -108,19 +120,7 @@ defineOptions({
             </p>
         </div>
 
-        <div class="divider flex items-center gap-3">
-            <span class="divider-line" />
-            <span class="text-xs text-gray-400 font-medium whitespace-nowrap">Already have an account?</span>
-            <span class="divider-line" />
-        </div>
-
-        <TextLink
-            :href="login()"
-            :tabindex="6"
-            class="signin-link flex h-10 w-full items-center justify-center rounded-xl text-sm font-semibold text-gray-600 border border-gray-200 hover:border-gray-300 hover:bg-gray-50 transition-colors"
-        >
-            Sign in instead
-        </TextLink>
+       
     </Form>
 </template>
 

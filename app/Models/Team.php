@@ -3,10 +3,10 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Model;
 
 class Team extends Model
 {
@@ -65,5 +65,10 @@ class Team extends Model
     public function liveShows(): HasMany
     {
         return $this->hasMany(LiveShow::class);
+    }
+
+    public function invites(): HasMany
+    {
+        return $this->hasMany(TeamInvite::class);
     }
 }

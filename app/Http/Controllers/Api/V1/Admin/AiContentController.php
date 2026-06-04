@@ -13,8 +13,6 @@ use App\Services\Ai\AiScriptGeneratorService;
 use App\Services\Ai\MultilingualVideoService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 
 class AiContentController extends Controller
 {
@@ -112,14 +110,8 @@ class AiContentController extends Controller
             'product_ids' => ['nullable', 'array'],
             'product_ids.*' => ['integer', 'exists:products,id'],
             'publish_when_ready' => ['nullable', 'boolean'],
-            'product_placement_enabled' => ['nullable', 'boolean'],
-            'product_placement_image_url' => ['nullable', 'url', 'max:2000'],
-            'product_placement_position' => ['nullable', 'in:top_left,top_right,bottom_left,bottom_right'],
-            'product_placement_scale' => ['nullable', 'numeric', 'gt:0', 'max:2'],
-            'product_placement_opacity' => ['nullable', 'numeric', 'min:0', 'max:1'],
-            'product_placement_offset_x' => ['nullable', 'numeric', 'min:-1', 'max:1'],
-            'product_placement_offset_y' => ['nullable', 'numeric', 'min:-1', 'max:1'],
-            'product_placement_motion_prompt' => ['nullable', 'string', 'max:400'],
+            'custom_background_enabled' => ['nullable', 'boolean'],
+            'background_color' => ['nullable', 'string', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'],
         ]);
 
         abort_unless($teamId === (int) $validated['team_id'], 403);
@@ -138,7 +130,7 @@ class AiContentController extends Controller
                 'voice_id' => $validated['voice_id'] ?? null,
                 'enable_embed_overlays' => (bool) ($validated['enable_embed_overlays'] ?? true),
                 'product_ids' => $validated['product_ids'] ?? [],
-                'product_placement' => $this->productPlacementMetadata($validated),
+                'avatar_background' => $this->avatarBackgroundMetadata($validated),
             ],
         ]);
 
@@ -165,9 +157,8 @@ class AiContentController extends Controller
             'avatar_id' => $validated['avatar_id'] ?? null,
             'voice_id' => $validated['voice_id'] ?? null,
             'product_ids' => $validated['product_ids'] ?? [],
-            'product_placement_enabled' => (bool) ($validated['product_placement_enabled'] ?? false),
-            'product_placement_image_url' => $validated['product_placement_image_url'] ?? null,
-            'product_placement_sent_to_heygen' => $avatarVideoService->willSendProductPlacementToHeyGen($validated),
+            'custom_background_enabled' => (bool) ($validated['custom_background_enabled'] ?? false),
+            'background_color' => $validated['background_color'] ?? null,
         ]);
 
         GenerateAvatarVideoJob::dispatch($generation->id)
@@ -196,14 +187,8 @@ class AiContentController extends Controller
             'product_ids' => ['nullable', 'array'],
             'product_ids.*' => ['integer', 'exists:products,id'],
             'publish_when_ready' => ['nullable', 'boolean'],
-            'product_placement_enabled' => ['nullable', 'boolean'],
-            'product_placement_image_url' => ['nullable', 'url', 'max:2000'],
-            'product_placement_position' => ['nullable', 'in:top_left,top_right,bottom_left,bottom_right'],
-            'product_placement_scale' => ['nullable', 'numeric', 'gt:0', 'max:2'],
-            'product_placement_opacity' => ['nullable', 'numeric', 'min:0', 'max:1'],
-            'product_placement_offset_x' => ['nullable', 'numeric', 'min:-1', 'max:1'],
-            'product_placement_offset_y' => ['nullable', 'numeric', 'min:-1', 'max:1'],
-            'product_placement_motion_prompt' => ['nullable', 'string', 'max:400'],
+            'custom_background_enabled' => ['nullable', 'boolean'],
+            'background_color' => ['nullable', 'string', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'],
         ]);
 
         abort_unless($teamId === (int) $validated['team_id'], 403);
@@ -224,41 +209,17 @@ class AiContentController extends Controller
         ], 202);
     }
 
-    public function uploadProductPlacementImage(Request $request)
-    {
-        $teamId = $this->resolveTeamId($request);
-
-        $validated = $request->validate([
-            'team_id' => ['required', 'integer', 'exists:teams,id'],
-            'file' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:8192'],
-        ]);
-
-        abort_unless($teamId === (int) $validated['team_id'], 403);
-
-        $path = $request->file('file')->store('uploads/product-placement', 'public');
-
-        return response()->json([
-            'path' => $path,
-            'url' => url(Storage::url($path)),
-            'filename' => Str::afterLast($path, '/'),
-        ]);
-    }
-
     /**
      * @param  array<string, mixed>  $validated
      * @return array<string, mixed>
      */
-    protected function productPlacementMetadata(array $validated): array
+    protected function avatarBackgroundMetadata(array $validated): array
     {
+        $enabled = (bool) ($validated['custom_background_enabled'] ?? false);
+
         return [
-            'enabled' => (bool) ($validated['product_placement_enabled'] ?? false),
-            'image_url' => $validated['product_placement_image_url'] ?? null,
-            'position' => $validated['product_placement_position'] ?? 'bottom_right',
-            'scale' => isset($validated['product_placement_scale']) ? (float) $validated['product_placement_scale'] : 0.3,
-            'opacity' => isset($validated['product_placement_opacity']) ? (float) $validated['product_placement_opacity'] : 1.0,
-            'offset_x' => isset($validated['product_placement_offset_x']) ? (float) $validated['product_placement_offset_x'] : 0,
-            'offset_y' => isset($validated['product_placement_offset_y']) ? (float) $validated['product_placement_offset_y'] : 0,
-            'motion_prompt' => $validated['product_placement_motion_prompt'] ?? null,
+            'enabled' => $enabled,
+            'color' => $enabled ? ($validated['background_color'] ?? null) : null,
         ];
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Services\Webinars\WebinarOfferService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -37,10 +38,15 @@ class LiveShowResource extends JsonResource
             'room_title' => data_get($settings, 'room_title'),
             'chat_enabled' => (bool) data_get($settings, 'chat_enabled', true),
             'ai_assistant_enabled' => (bool) data_get($settings, 'ai_assistant_enabled', false),
+            'video_duration_seconds' => data_get($settings, 'video_duration_seconds'),
             'views_count' => (int) data_get($settings, 'views_count', 0),
             'registration_url' => url("/webinars/{$this->id}/register"),
             'room_url' => url("/webinars/{$this->id}/room"),
-            'featured_products' => $this->whenLoaded('featuredProducts'),
+            'featured_products' => $this->whenLoaded('featuredProducts', function () {
+                $offerService = app(WebinarOfferService::class);
+
+                return $offerService->formatOffersForLiveShow($this->resource);
+            }),
             'video' => $this->whenLoaded('video', function (): array {
                 return [
                     'id' => $this->video?->id,
@@ -50,7 +56,10 @@ class LiveShowResource extends JsonResource
                 ];
             }),
             'registrants_count' => (int) ($this->registrations_count ?? 0),
+            'conversations_count' => (int) ($this->conversations_count ?? 0),
             'messages_count' => (int) ($this->messages_count ?? 0),
+            'watched_half_count' => (int) ($this->watched_half_count ?? 0),
+            'watched_end_count' => (int) ($this->watched_end_count ?? 0),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

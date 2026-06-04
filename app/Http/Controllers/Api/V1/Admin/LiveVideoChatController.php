@@ -38,7 +38,15 @@ class LiveVideoChatController extends Controller
             ->latest('id')
             ->get();
 
-        $conversations = $videos->map(function (Video $video): array {
+        $conversationCounts = Comment::query()
+            ->whereIn('video_id', $videos->pluck('id'))
+            ->whereNotNull('session_key')
+            ->where('session_key', '!=', '')
+            ->selectRaw('video_id, COUNT(DISTINCT session_key) as conversations_count')
+            ->groupBy('video_id')
+            ->pluck('conversations_count', 'video_id');
+
+        $conversations = $videos->map(function (Video $video) use ($conversationCounts): array {
             $lastComment = Comment::query()
                 ->where('video_id', $video->id)
                 ->latest('id')
@@ -49,9 +57,11 @@ class LiveVideoChatController extends Controller
             return [
                 'video_id' => $video->id,
                 'title' => $video->title,
+                'display_title' => $video->displayTitle(),
                 'last_message' => $lastComment?->body,
                 'last_message_at' => $lastComment?->created_at,
                 'messages_count' => (int) $video->comments_count,
+                'conversations_count' => (int) ($conversationCounts[$video->id] ?? 0),
                 'ai_assistant_enabled' => (bool) data_get($metadata, 'ai_assistant_enabled', false),
             ];
         })->values();

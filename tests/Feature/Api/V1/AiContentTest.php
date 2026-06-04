@@ -84,6 +84,7 @@ class AiContentTest extends TestCase
                         'preview_image_url' => 'https://cdn.example.com/avatar.jpg',
                         'default_voice_id' => 'voice_123',
                         'preferred_orientation' => 'portrait',
+                        'supported_api_engines' => ['avatar_iv'],
                     ]],
                 ]);
             }
@@ -135,7 +136,16 @@ class AiContentTest extends TestCase
         ]);
 
         config(['services.heygen.api_key' => 'test-heygen-key']);
+        Cache::flush();
+
         Http::fake([
+            'https://api.heygen.com/v3/avatars/looks/*' => Http::response([
+                'data' => [
+                    'id' => 'look_123',
+                    'avatar_type' => 'studio_avatar',
+                    'supported_api_engines' => ['avatar_iv'],
+                ],
+            ]),
             'https://api.heygen.com/v3/videos' => Http::response([
                 'data' => [
                     'video_id' => 'v_123',
@@ -166,23 +176,84 @@ class AiContentTest extends TestCase
                 && data_get($payload, 'avatar_id') === 'look_123'
                 && data_get($payload, 'voice_id') === 'voice_123'
                 && data_get($payload, 'aspect_ratio') === '9:16'
-                && data_get($payload, 'background') === null
-                && data_get($payload, 'motion_prompt') === null;
+                && data_get($payload, 'background') === null;
         });
     }
 
-    public function test_avatar_generation_can_send_product_placement_settings_to_heygen(): void
+    public function test_avatar_generation_throws_when_presenter_is_not_api_compatible(): void
     {
-        [$team, $owner] = $this->createTeamWithOwner();
-        config([
-            'services.heygen.api_key' => 'test-heygen-key',
-            'services.heygen.watermark_enabled' => true,
-        ]);
+        config(['services.heygen.api_key' => 'test-heygen-key']);
+        Cache::flush();
 
         Http::fake([
+            'https://api.heygen.com/v3/avatars/looks/*' => Http::response([
+                'data' => [
+                    'id' => 'Daphne_public_6',
+                    'avatar_type' => 'studio_avatar',
+                    'supported_api_engines' => [],
+                ],
+            ]),
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('not compatible with HeyGen API');
+
+        app(AiAvatarVideoService::class)->submit([
+            'title' => 'Legacy Presenter Demo',
+            'script' => 'This should fail before charging credits.',
+            'avatar_id' => 'Daphne_public_6',
+            'voice_id' => 'voice_123',
+        ]);
+    }
+
+    public function test_avatar_generation_throws_when_heygen_rejects_request(): void
+    {
+        config(['services.heygen.api_key' => 'test-heygen-key']);
+        Cache::flush();
+
+        Http::fake([
+            'https://api.heygen.com/v3/avatars/looks/*' => Http::response([
+                'data' => [
+                    'id' => 'look_123',
+                    'avatar_type' => 'studio_avatar',
+                    'supported_api_engines' => ['avatar_iv'],
+                ],
+            ]),
+            'https://api.heygen.com/v3/videos' => Http::response([
+                'error' => [
+                    'message' => 'Voice is not available for this avatar.',
+                ],
+            ], 400),
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Voice is not available');
+
+        app(AiAvatarVideoService::class)->submit([
+            'title' => 'Rejected Demo',
+            'script' => 'This should fail loudly.',
+            'avatar_id' => 'look_123',
+            'voice_id' => 'voice_123',
+        ]);
+    }
+
+    public function test_avatar_generation_can_send_custom_color_background_to_heygen(): void
+    {
+        [$team, $owner] = $this->createTeamWithOwner();
+        config(['services.heygen.api_key' => 'test-heygen-key']);
+        Cache::flush();
+
+        Http::fake([
+            'https://api.heygen.com/v3/avatars/looks/*' => Http::response([
+                'data' => [
+                    'id' => 'look_123',
+                    'avatar_type' => 'photo_avatar',
+                    'supported_api_engines' => ['avatar_iv', 'avatar_v'],
+                ],
+            ]),
             'https://api.heygen.com/v3/videos' => Http::response([
                 'data' => [
-                    'video_id' => 'v_placement',
+                    'video_id' => 'v_bg_color',
                     'status' => 'pending',
                 ],
             ]),
@@ -192,72 +263,58 @@ class AiContentTest extends TestCase
 
         app(AiAvatarVideoService::class)->submit([
             'team_id' => $team->id,
-            'title' => 'Placement Demo',
-            'script' => 'This product is amazing.',
+            'title' => 'Custom Background Demo',
+            'script' => 'This presenter uses a custom solid background.',
             'language' => 'en',
             'avatar_id' => 'look_123',
             'voice_id' => 'voice_123',
-            'product_placement_enabled' => true,
-            'product_placement_image_url' => 'https://cdn.example.com/product-bottle.png',
-            'product_placement_position' => 'top_right',
-            'product_placement_scale' => 0.45,
-            'product_placement_opacity' => 0.9,
-            'product_placement_offset_x' => 0.05,
-            'product_placement_offset_y' => -0.03,
-            'product_placement_motion_prompt' => 'Hold the bottle naturally and point to it.',
+            'custom_background_enabled' => true,
+            'background_color' => '#F2EFEA',
         ]);
 
         Http::assertSent(function ($request): bool {
             $payload = $request->data();
 
             return $request->url() === 'https://api.heygen.com/v3/videos'
-                && data_get($payload, 'watermark.image.type') === 'url'
-                && data_get($payload, 'watermark.image.url') === 'https://cdn.example.com/product-bottle.png'
-                && data_get($payload, 'watermark.placement.position') === 'top_right'
-                && (float) data_get($payload, 'watermark.scale') === 0.45
-                && (float) data_get($payload, 'watermark.opacity') === 0.9
-                && (float) data_get($payload, 'watermark.placement.offset_x') === 0.05
-                && (float) data_get($payload, 'watermark.placement.offset_y') === -0.03
-                && data_get($payload, 'motion_prompt') === 'Hold the bottle naturally and point to it.';
+                && data_get($payload, 'background.type') === 'color'
+                && data_get($payload, 'background.value') === '#f2efea'
+                && data_get($payload, 'fit') === 'contain'
+                && data_get($payload, 'remove_background') === true;
         });
     }
 
-    public function test_avatar_generation_omits_watermark_when_disabled_in_config(): void
+    public function test_avatar_generation_omits_background_when_custom_background_disabled(): void
     {
-        [$team, $owner] = $this->createTeamWithOwner();
-        config([
-            'services.heygen.api_key' => 'test-heygen-key',
-            'services.heygen.watermark_enabled' => false,
-        ]);
+        config(['services.heygen.api_key' => 'test-heygen-key']);
+        Cache::flush();
 
         Http::fake([
+            'https://api.heygen.com/v3/avatars/looks/*' => Http::response([
+                'data' => [
+                    'id' => 'look_123',
+                    'avatar_type' => 'studio_avatar',
+                    'supported_api_engines' => ['avatar_iv'],
+                ],
+            ]),
             'https://api.heygen.com/v3/videos' => Http::response([
                 'data' => [
-                    'video_id' => 'v_no_watermark',
+                    'video_id' => 'v_default_bg',
                     'status' => 'pending',
                 ],
             ]),
         ]);
 
-        Sanctum::actingAs($owner);
-
         app(AiAvatarVideoService::class)->submit([
-            'team_id' => $team->id,
-            'title' => 'No Watermark',
-            'script' => 'This product is amazing.',
-            'language' => 'en',
+            'title' => 'Default Background Demo',
+            'script' => 'Uses the avatar look default scene.',
             'avatar_id' => 'look_123',
             'voice_id' => 'voice_123',
-            'product_placement_enabled' => true,
-            'product_placement_image_url' => 'https://cdn.example.com/product-bottle.png',
+            'custom_background_enabled' => false,
+            'background_color' => '#f2efea',
         ]);
 
         Http::assertSent(function ($request): bool {
-            $payload = $request->data();
-
-            return $request->url() === 'https://api.heygen.com/v3/videos'
-                && ! isset($payload['watermark'])
-                && data_get($payload, 'motion_prompt') === null;
+            return ! isset($request->data()['background']);
         });
     }
 

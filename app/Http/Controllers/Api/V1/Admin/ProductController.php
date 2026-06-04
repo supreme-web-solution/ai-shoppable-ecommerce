@@ -6,7 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\StoreProductRequest;
 use App\Http\Resources\Api\V1\ProductResource;
 use App\Models\Product;
+use App\Services\CloudinaryService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ProductController extends Controller
 {
@@ -16,6 +19,28 @@ class ProductController extends Controller
         abort_unless($request->user()->team_id === $teamId || $request->user()->teams()->whereKey($teamId)->exists(), 403);
 
         return $teamId;
+    }
+
+    public function uploadImage(Request $request, CloudinaryService $cloudinary)
+    {
+        $teamId = $this->resolveTeamId($request);
+
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+            'file' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp,gif', 'max:8192'],
+        ]);
+
+        abort_unless($teamId === (int) $validated['team_id'], 403);
+
+        $file = $request->file('file');
+        $upload = $cloudinary->uploadImage($file->getRealPath(), [
+            'public_id' => 'teams/'.$teamId.'/products/'.Str::uuid()->toString(),
+        ]);
+
+        return response()->json([
+            'image_url' => $upload['secure_url'],
+            'public_id' => $upload['public_id'],
+        ]);
     }
 
     public function index(Request $request)
@@ -121,5 +146,80 @@ class ProductController extends Controller
         $product->delete();
 
         return response()->noContent();
+    }
+
+    public function duplicate(Product $product)
+    {
+        $this->authorize('view', $product);
+        $this->authorize('create', Product::class);
+
+        $product->load('variants');
+
+        $copy = DB::transaction(function () use ($product): Product {
+            $title = Str::limit(trim($product->title).' (copy)', 255, '');
+            $slug = $this->uniqueProductSlug($product->team_id, $title);
+            $sku = $product->sku ? Str::limit($product->sku.'-copy', 255, '') : null;
+
+            $copy = Product::query()->create([
+                'team_id' => $product->team_id,
+                'external_id' => null,
+                'source' => 'native',
+                'title' => $title,
+                'slug' => $slug,
+                'description' => $product->description,
+                'image_url' => $product->image_url,
+                'currency' => $product->currency,
+                'price' => $product->price,
+                'sale_price' => $product->sale_price,
+                'sku' => $sku,
+                'inventory' => $product->inventory,
+                'metadata' => $product->metadata,
+                'is_active' => $product->is_active,
+            ]);
+
+            foreach ($product->variants as $variant) {
+                $copy->variants()->create([
+                    'team_id' => $copy->team_id,
+                    'title' => $variant->title,
+                    'sku' => $variant->sku ? Str::limit($variant->sku.'-copy', 255, '') : null,
+                    'options' => $variant->options ?? [],
+                    'price' => $variant->price,
+                    'sale_price' => $variant->sale_price,
+                    'inventory' => $variant->inventory,
+                    'is_default' => (bool) $variant->is_default,
+                ]);
+            }
+
+            if ($copy->variants()->count() === 0) {
+                $copy->variants()->create([
+                    'team_id' => $copy->team_id,
+                    'title' => 'Default',
+                    'sku' => $sku,
+                    'options' => [],
+                    'price' => $copy->price,
+                    'sale_price' => $copy->sale_price,
+                    'inventory' => $copy->inventory,
+                    'is_default' => true,
+                ]);
+            }
+
+            return $copy;
+        });
+
+        return new ProductResource($copy->load('variants'));
+    }
+
+    protected function uniqueProductSlug(int $teamId, string $title): string
+    {
+        $base = Str::slug($title) ?: 'product';
+        $candidate = $base;
+        $suffix = 2;
+
+        while (Product::query()->where('team_id', $teamId)->where('slug', $candidate)->exists()) {
+            $candidate = $base.'-'.$suffix;
+            $suffix++;
+        }
+
+        return $candidate;
     }
 }

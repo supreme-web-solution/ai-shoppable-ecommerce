@@ -3,10 +3,10 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Model;
 
 class LiveShow extends Model
 {
@@ -47,7 +47,7 @@ class LiveShow extends Model
     public function featuredProducts(): BelongsToMany
     {
         return $this->belongsToMany(Product::class, 'live_show_products')
-            ->withPivot(['starts_at_ms', 'ends_at_ms', 'pin_order', 'flash_discount'])
+            ->withPivot(['starts_at_ms', 'ends_at_ms', 'pin_order', 'flash_discount', 'appearance', 'cta_url'])
             ->withTimestamps();
     }
 

@@ -19,6 +19,12 @@ class LoginResponse implements LoginResponseContract
             return response()->json('', Response::HTTP_NO_CONTENT);
         }
 
+        $inviteToken = trim((string) $request->input('invite', $request->query('invite', '')));
+
+        if ($inviteToken !== '') {
+            return redirect('/invites/'.$inviteToken);
+        }
+
         return redirect()->intended(config('fortify.home', '/dashboard'));
     }
 }

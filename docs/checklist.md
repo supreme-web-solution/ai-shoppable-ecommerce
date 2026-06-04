@@ -41,7 +41,7 @@ You are past “early MVP backend” — the checklist correctly calls this a **
 | 2 | **Commerce attribution** | Analytics tracks `checkout_completed` but not **revenue per video / per tag timestamp / per playlist** in the dashboard. |
 | 3 | **“For You” / session memory** | No per-viewer feed state, swipe memory, or personalization. |
 | 4 | **Social proof commerce layer** | No “X just bought”, stock urgency, countdown drops, purchase pulses tied to real orders. |
-| 5 | **Unified “Create content” UX** | Still **Upload vs AI** as separate top-level paths on Create — AI should feel like one step inside create, not a separate product. |
+| 5 | **Unified “Create content” UX** | **Done** — single wizard: Method → Products → Upload or AI branch → Publish/Generate |
 | 6 | **Product dock v2 (conversion)** | Carousel exists; checklist’s **sticky buy bar + inline variant + one-tap buy** without modal friction is still weak vs TikTok Shop. |
 | 7 | **Social distribution completeness** | Zernio on **video edit only**; no playlist publish UI; no schedule UI (API supports schedule). |
 
@@ -52,7 +52,7 @@ You are past “early MVP backend” — the checklist correctly calls this a **
 | 8 | **ROI analytics** — top videos by revenue, not just views |
 | 9 | **Product performance** — which tagged product wins per video |
 | 10 | **Abandoned cart / recovery** — not built |
-| 11 | **Team/member invites** — teams exist; no invite flow for collaborators |
+| 11 | **Team/member invites** | **Done** — invite by email, accept page, member roles (admin/member), remove/revoke |
 | 12 | **Embed “For You” on merchant site** — optional ranked mode per embed |
 
 ### Explicitly out of scope (you said skip)
@@ -75,10 +75,10 @@ These are “Phase 1 polish” on existing code — faster than net-new systems.
 | **Product carousel** | Sticky bottom bar on `/shop` + vertical; default variant; fewer modals; stronger CTA. |
 | **Floating reactions / viewer sim** | Wire to **real** reaction/viewer events only in prod; add “purchase” pulse when `checkout_completed` fires. |
 | **Analytics** | Add **revenue** and **conversion rate** columns using orders + `video_id` on events payload. |
-| **Create flow** | Single entry: “Create” → choose Upload or AI wizard (same page, not separate nav). |
+| **Create flow** | Unified wizard at `/content/create` — method picker, shared products step, then upload or AI path. |
 | **Publish + Share** | Already gated on published — good; add checklist item “draft preview link” if needed for internal review. |
 | **Playlists** | Public embed + Zernio shop link for playlist (API exists). |
-| **Teams page** | Add rename, optional member list (read-only) — you just added management. |
+| **Teams page** | Member invites, role management, pending invites — implemented at `/teams`. |
 | **Webinars** | Keep as “scheduled interactive video” — rename in UI so buyers don’t expect Twitch-style live. |
 
 ---
@@ -120,7 +120,7 @@ These are “Phase 1 polish” on existing code — faster than net-new systems.
 |-------------------|-------|-------------------|
 | A. Core video commerce | ~90% | Attribution, revenue analytics |
 | B. Social commerce layer | ~75% | Social proof, feed intelligence |
-| C. AI layer | ~80% tech, ~50% UX | Unified create flow |
+| C. AI layer | ~80% tech, ~85% UX | Unified create wizard |
 | D. Live shows | ~70% for webinars | **Skip** true live per your call |
 | E. Integrations + distribution | ~85% | Zernio playlist + schedule UI |
 | Phase 1 UX (TikTok + dock) | ~60% | Polish dock + feed session |

@@ -105,6 +105,37 @@ class VideoController extends Controller
         return new VideoResource($video->load('productTags.product'));
     }
 
+    public function retryProcessing(Video $video)
+    {
+        $this->authorize('update', $video);
+
+        if (! in_array($video->status, ['processing', 'failed'], true)) {
+            return response()->json([
+                'message' => 'This video is not waiting for processing.',
+            ], 422);
+        }
+
+        $relativePath = (string) data_get($video->metadata, 'local_staging.relative_path', '');
+
+        if ($relativePath === '' || ! Storage::disk('local')->exists($relativePath)) {
+            return response()->json([
+                'message' => 'The local video file is no longer available. Re-upload the video file.',
+            ], 422);
+        }
+
+        $localPath = Storage::disk('local')->path($relativePath);
+
+        $video->update([
+            'status' => 'processing',
+            'playback_url' => null,
+            'cloudinary_public_id' => null,
+        ]);
+
+        $this->dispatchVideoProcessing($video->id, $localPath);
+
+        return new VideoResource($video->fresh('productTags.product'));
+    }
+
     public function update(Request $request, Video $video)
     {
         $this->authorize('update', $video);

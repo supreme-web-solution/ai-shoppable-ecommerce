@@ -48,7 +48,7 @@ const navSections: NavSection[] = [
         label: 'Commerce',
         items: [
             { title: 'Shoppable Videos', href: '/content', icon: Film },
-            { title: 'AI Creator', href: '/content/create', icon: Sparkles },
+            { title: 'Create Video', href: '/content/create', icon: Sparkles },
             { title: 'Products', href: '/products', icon: Package },
             { title: 'Playlists', href: '/playlists', icon: Layers3 },
         ],

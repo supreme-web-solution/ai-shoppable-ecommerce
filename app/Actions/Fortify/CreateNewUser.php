@@ -5,7 +5,9 @@ namespace App\Actions\Fortify;
 use App\Concerns\PasswordValidationRules;
 use App\Concerns\ProfileValidationRules;
 use App\Models\Team;
+use App\Models\TeamInvite;
 use App\Models\User;
+use App\Services\Teams\TeamInviteService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -25,6 +27,7 @@ class CreateNewUser implements CreatesNewUsers
         Validator::make($input, [
             ...$this->profileRules(),
             'password' => $this->passwordRules(),
+            'invite_token' => ['nullable', 'string', 'max:64'],
         ])->validate();
 
         return DB::transaction(function () use ($input): User {
@@ -33,6 +36,20 @@ class CreateNewUser implements CreatesNewUsers
                 'email' => $input['email'],
                 'password' => $input['password'],
             ]);
+
+            $inviteToken = trim((string) ($input['invite_token'] ?? ''));
+
+            if ($inviteToken !== '') {
+                $invite = TeamInvite::query()
+                    ->where('token', $inviteToken)
+                    ->first();
+
+                if ($invite && $invite->isPending() && Str::lower($invite->email) === Str::lower($user->email)) {
+                    app(TeamInviteService::class)->accept($invite, $user);
+
+                    return $user->refresh();
+                }
+            }
 
             $team = Team::query()->create([
                 'owner_user_id' => $user->id,

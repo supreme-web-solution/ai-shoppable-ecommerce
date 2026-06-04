@@ -40,6 +40,8 @@ return [
         'api_key' => env('CLOUDINARY_API_KEY'),
         'api_secret' => env('CLOUDINARY_API_SECRET'),
         'url' => env('CLOUDINARY_URL'),
+        'upload_timeout' => (int) env('CLOUDINARY_UPLOAD_TIMEOUT', 600),
+        'chunk_size' => (int) env('CLOUDINARY_CHUNK_SIZE', 6_000_000),
     ],
 
     'shopify' => [
@@ -69,7 +71,6 @@ return [
         'default_avatar_id' => env('HEYGEN_DEFAULT_AVATAR_ID'),
         'default_voice_id' => env('HEYGEN_DEFAULT_VOICE_ID'),
         'cache_ttl_seconds' => (int) env('HEYGEN_CACHE_TTL_SECONDS', 21600),
-        'watermark_enabled' => filter_var(env('HEYGEN_WATERMARK_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
     ],
 
     'zernio' => [

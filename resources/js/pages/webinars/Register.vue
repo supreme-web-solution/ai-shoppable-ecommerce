@@ -82,7 +82,7 @@ async function register() {
     errorText.value = '';
 
     try {
-        const response = await apiFetch<{ data: { room_url: string } }>(
+        const response = await apiFetch<{ data: { room_url: string; registration_id: number } }>(
             `/api/v1/player/webinars/${webinarId}/register`,
             {
                 method: 'POST',
@@ -93,6 +93,14 @@ async function register() {
                 }),
             },
         );
+
+        if (response.data.registration_id > 0) {
+            sessionStorage.setItem(
+                `webinar_registration_${webinarId}`,
+                String(response.data.registration_id),
+            );
+        }
+
         router.visit(response.data.room_url);
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not register.';
@@ -101,7 +109,18 @@ async function register() {
     }
 }
 
-onMounted(loadWebinar);
+onMounted(() => {
+    const errors = page.props.errors as Record<string, string | string[] | undefined>;
+    const registrationError = errors?.registration;
+
+    if (registrationError) {
+        errorText.value = Array.isArray(registrationError)
+            ? registrationError[0]
+            : registrationError;
+    }
+
+    loadWebinar();
+});
 </script>
 
 <template>

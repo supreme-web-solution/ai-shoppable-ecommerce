@@ -15,7 +15,7 @@ class ProcessVideoAssetJob implements ShouldQueue
 
     public int $tries = 3;
 
-    public int $timeout = 600;
+    public int $timeout = 900;
 
     public function __construct(
         public int $videoId,
@@ -51,8 +51,25 @@ class ProcessVideoAssetJob implements ShouldQueue
             throw new \RuntimeException("Local video file not found: {$this->localFilePath}");
         }
 
-        $upload = $cloudinaryService->uploadVideo($this->localFilePath, [
-            'public_id' => 'video_'.$video->id,
+        $uploadStartedAt = microtime(true);
+
+        try {
+            $upload = $cloudinaryService->uploadVideo($this->localFilePath, [
+                'public_id' => 'video_'.$video->id,
+            ]);
+        } catch (\Throwable $exception) {
+            Log::error('ProcessVideoAssetJob: Cloudinary upload threw', [
+                'video_id' => $this->videoId,
+                'elapsed_seconds' => round(microtime(true) - $uploadStartedAt, 1),
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+
+        Log::info('ProcessVideoAssetJob: Cloudinary upload finished', [
+            'video_id' => $this->videoId,
+            'elapsed_seconds' => round(microtime(true) - $uploadStartedAt, 1),
         ]);
 
         Log::info('ProcessVideoAssetJob: Cloudinary upload complete', [

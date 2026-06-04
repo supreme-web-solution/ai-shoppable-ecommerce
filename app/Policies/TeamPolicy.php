@@ -63,6 +63,11 @@ class TeamPolicy
         return $this->isOwnerOrAdmin($user, $team);
     }
 
+    public function manageMembers(User $user, Team $team): bool
+    {
+        return $this->isOwnerOrAdmin($user, $team);
+    }
+
     protected function belongsToTeam(User $user, Team $team): bool
     {
         if ($user->team_id === $team->id) {

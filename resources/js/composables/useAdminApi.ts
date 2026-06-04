@@ -139,6 +139,20 @@ export function useAdminApi() {
         await apiFetch<void>(path, { method: 'DELETE' });
     }
 
+    async function uploadProductImage(file: File): Promise<{ image_url: string; public_id?: string }> {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('team_id', String(teamId.value));
+
+        const headers = buildHeaders();
+
+        return apiFetch<{ image_url: string; public_id?: string }>('/api/v1/admin/products/upload-image', {
+            method: 'POST',
+            headers,
+            body: formData,
+        });
+    }
+
     async function uploadFile(path: string, file: File, extra: Record<string, string> = {}): Promise<{ local_file_path: string }> {
         const formData = new FormData();
         formData.append('file', file);
@@ -181,6 +195,7 @@ export function useAdminApi() {
         patchJson,
         deleteResource,
         uploadFile,
+        uploadProductImage,
         ensureTeam,
     };
 }

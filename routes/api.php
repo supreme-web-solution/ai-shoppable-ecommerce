@@ -2,12 +2,14 @@
 
 use App\Http\Controllers\Api\V1\Admin\AiContentController;
 use App\Http\Controllers\Api\V1\Admin\EmbedController;
+use App\Http\Controllers\Api\V1\Admin\ChatHubController;
 use App\Http\Controllers\Api\V1\Admin\LiveShowController;
 use App\Http\Controllers\Api\V1\Admin\LiveVideoChatController;
 use App\Http\Controllers\Api\V1\Admin\OverviewController;
 use App\Http\Controllers\Api\V1\Admin\PlaylistController;
 use App\Http\Controllers\Api\V1\Admin\ProductController;
 use App\Http\Controllers\Api\V1\Admin\TeamController;
+use App\Http\Controllers\Api\V1\Admin\TeamMemberController;
 use App\Http\Controllers\Api\V1\Admin\VideoController;
 use App\Http\Controllers\Api\V1\Admin\VideoProductTagController;
 use App\Http\Controllers\Api\V1\Admin\ZernioController;
@@ -24,6 +26,7 @@ use App\Http\Controllers\Api\V1\Player\LinkPreviewController;
 use App\Http\Controllers\Api\V1\Player\LiveShowController as PlayerLiveShowController;
 use App\Http\Controllers\Api\V1\Player\NativePaymentController;
 use App\Http\Controllers\Api\V1\Player\WebinarController as PlayerWebinarController;
+use App\Http\Controllers\Api\V1\TeamInviteAcceptController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -32,13 +35,19 @@ Route::get('/user', function (Request $request) {
 })->middleware('auth:sanctum');
 
 Route::prefix('v1')->group(function (): void {
+    Route::get('invites/{token}', [TeamInviteAcceptController::class, 'show']);
+    Route::post('invites/{token}/accept', [TeamInviteAcceptController::class, 'accept'])
+        ->middleware('auth:sanctum');
+
     Route::prefix('player')->middleware('throttle:player-engagement')->group(function (): void {
         Route::get('feed', [FeedController::class, 'index'])->middleware('throttle:player-feed');
         Route::get('live-show', [PlayerLiveShowController::class, 'current'])->middleware('throttle:player-feed');
         Route::get('webinars/{liveShow}', [PlayerWebinarController::class, 'show'])->middleware('throttle:player-feed');
         Route::post('webinars/{liveShow}/register', [PlayerWebinarController::class, 'register']);
+        Route::post('webinars/{liveShow}/watch-progress', [PlayerWebinarController::class, 'recordWatchProgress']);
         Route::get('webinars/{liveShow}/messages', [PlayerWebinarController::class, 'messages'])->middleware('throttle:player-feed');
         Route::post('webinars/{liveShow}/messages', [PlayerWebinarController::class, 'sendMessage']);
+        Route::post('webinars/{liveShow}/offers/{productId}/checkout', [PlayerWebinarController::class, 'checkoutOffer']);
         Route::get('broadcast-config', [EngagementController::class, 'broadcastConfig'])->middleware('throttle:player-feed');
         Route::get('comments', [EngagementController::class, 'comments'])->middleware('throttle:player-feed');
         Route::get('link-preview', [LinkPreviewController::class, 'show'])->middleware('throttle:player-feed');
@@ -83,50 +92,60 @@ Route::prefix('v1')->group(function (): void {
         ->prefix('admin')
         ->name('admin.')
         ->group(function (): void {
-        Route::get('overview', [OverviewController::class, 'show']);
-        Route::post('videos/upload', [VideoController::class, 'upload']);
-        Route::get('ai/heygen-options', [AiContentController::class, 'heygenOptions']);
-        Route::get('ai/generations', [AiContentController::class, 'index']);
-        Route::get('ai/generations/{generation}', [AiContentController::class, 'show']);
-        Route::post('ai/scripts', [AiContentController::class, 'generateScript']);
-        Route::post('ai/product-placement-image', [AiContentController::class, 'uploadProductPlacementImage']);
-        Route::post('ai/avatar-videos', [AiContentController::class, 'generateAvatarVideo']);
-        Route::post('ai/multilingual-videos', [AiContentController::class, 'generateMultilingualVideos']);
-        Route::post('teams/{team}/activate', [TeamController::class, 'activate']);
-        Route::apiResource('teams', TeamController::class);
-        Route::apiResource('videos', VideoController::class);
-        Route::get('videos/{video}/product-tags', [VideoProductTagController::class, 'index']);
-        Route::post('videos/{video}/product-tags', [VideoProductTagController::class, 'store']);
-        Route::post('videos/{video}/product-tags/sync', [VideoProductTagController::class, 'sync']);
-        Route::put('videos/{video}/product-tags/{productTag}', [VideoProductTagController::class, 'update']);
-        Route::delete('videos/{video}/product-tags/{productTag}', [VideoProductTagController::class, 'destroy']);
-        Route::apiResource('products', ProductController::class);
-        Route::apiResource('playlists', PlaylistController::class);
-        Route::apiResource('embeds', EmbedController::class);
-        Route::apiResource('live-shows', LiveShowController::class);
-        Route::get('live-shows/{liveShow}/attendees', [LiveShowController::class, 'attendees']);
-        Route::get('live-shows/{liveShow}/conversations', [LiveShowController::class, 'conversations']);
-        Route::get('live-shows/{liveShow}/messages', [LiveShowController::class, 'messages']);
-        Route::post('live-shows/{liveShow}/messages', [LiveShowController::class, 'postHostMessage']);
-        Route::patch('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'updateMessage']);
-        Route::delete('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'destroyMessage']);
-        Route::get('live-video-chats', [LiveVideoChatController::class, 'index']);
-        Route::get('live-video-chats/{video}/threads', [LiveVideoChatController::class, 'threads']);
-        Route::get('live-video-chats/{video}/messages', [LiveVideoChatController::class, 'messages']);
-        Route::post('live-video-chats/{video}/messages', [LiveVideoChatController::class, 'postMessage']);
-        Route::patch('live-video-chats/{video}/comments/{comment}/hide', [LiveVideoChatController::class, 'hideComment']);
-        Route::delete('live-video-chats/{video}/comments/{comment}', [LiveVideoChatController::class, 'deleteComment']);
-        Route::post('live-video-chats/{video}/ban-session', [LiveVideoChatController::class, 'banSession']);
-        Route::post('teams/{team}/tokens', [TeamController::class, 'issueToken']);
+            Route::get('overview', [OverviewController::class, 'show']);
+            Route::post('videos/upload', [VideoController::class, 'upload']);
+            Route::post('videos/{video}/retry-processing', [VideoController::class, 'retryProcessing']);
+            Route::get('ai/heygen-options', [AiContentController::class, 'heygenOptions']);
+            Route::get('ai/generations', [AiContentController::class, 'index']);
+            Route::get('ai/generations/{generation}', [AiContentController::class, 'show']);
+            Route::post('ai/scripts', [AiContentController::class, 'generateScript']);
+            Route::post('ai/avatar-videos', [AiContentController::class, 'generateAvatarVideo']);
+            Route::post('ai/multilingual-videos', [AiContentController::class, 'generateMultilingualVideos']);
+            Route::post('teams/{team}/activate', [TeamController::class, 'activate']);
+            Route::get('teams/{team}/members', [TeamMemberController::class, 'index']);
+            Route::post('teams/{team}/invites', [TeamMemberController::class, 'invite']);
+            Route::delete('teams/{team}/invites/{invite}', [TeamMemberController::class, 'destroyInvite']);
+            Route::patch('teams/{team}/members/{user}', [TeamMemberController::class, 'updateMember']);
+            Route::delete('teams/{team}/members/{user}', [TeamMemberController::class, 'destroyMember']);
+            Route::apiResource('teams', TeamController::class);
+            Route::apiResource('videos', VideoController::class);
+            Route::get('videos/{video}/product-tags', [VideoProductTagController::class, 'index']);
+            Route::post('videos/{video}/product-tags', [VideoProductTagController::class, 'store']);
+            Route::post('videos/{video}/product-tags/sync', [VideoProductTagController::class, 'sync']);
+            Route::put('videos/{video}/product-tags/{productTag}', [VideoProductTagController::class, 'update']);
+            Route::delete('videos/{video}/product-tags/{productTag}', [VideoProductTagController::class, 'destroy']);
+            Route::post('products/upload-image', [ProductController::class, 'uploadImage']);
+            Route::post('products/{product}/duplicate', [ProductController::class, 'duplicate']);
+            Route::apiResource('products', ProductController::class);
+            Route::apiResource('playlists', PlaylistController::class);
+            Route::apiResource('embeds', EmbedController::class);
+            Route::get('chats/summary', [ChatHubController::class, 'summary']);
+            Route::apiResource('live-shows', LiveShowController::class);
+            Route::get('live-shows/{liveShow}/attendees', [LiveShowController::class, 'attendees']);
+            Route::post('live-shows/{liveShow}/attendees/notify', [LiveShowController::class, 'notifyAttendees']);
+            Route::post('live-shows/{liveShow}/attendees/import', [LiveShowController::class, 'importAttendees']);
+            Route::get('live-shows/{liveShow}/conversations', [LiveShowController::class, 'conversations']);
+            Route::get('live-shows/{liveShow}/messages', [LiveShowController::class, 'messages']);
+            Route::post('live-shows/{liveShow}/messages', [LiveShowController::class, 'postHostMessage']);
+            Route::patch('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'updateMessage']);
+            Route::delete('live-shows/{liveShow}/messages/{message}', [LiveShowController::class, 'destroyMessage']);
+            Route::get('live-video-chats', [LiveVideoChatController::class, 'index']);
+            Route::get('live-video-chats/{video}/threads', [LiveVideoChatController::class, 'threads']);
+            Route::get('live-video-chats/{video}/messages', [LiveVideoChatController::class, 'messages']);
+            Route::post('live-video-chats/{video}/messages', [LiveVideoChatController::class, 'postMessage']);
+            Route::patch('live-video-chats/{video}/comments/{comment}/hide', [LiveVideoChatController::class, 'hideComment']);
+            Route::delete('live-video-chats/{video}/comments/{comment}', [LiveVideoChatController::class, 'deleteComment']);
+            Route::post('live-video-chats/{video}/ban-session', [LiveVideoChatController::class, 'banSession']);
+            Route::post('teams/{team}/tokens', [TeamController::class, 'issueToken']);
 
-        Route::prefix('zernio')->group(function (): void {
-            Route::get('status', [ZernioController::class, 'status']);
-            Route::post('profile', [ZernioController::class, 'ensureProfile']);
-            Route::get('connect', [ZernioController::class, 'connectUrl']);
-            Route::get('accounts', [ZernioController::class, 'accounts']);
-            Route::get('shop-link', [ZernioController::class, 'shopLink']);
-            Route::post('publish', [ZernioController::class, 'publish']);
-            Route::get('history', [ZernioController::class, 'history']);
+            Route::prefix('zernio')->group(function (): void {
+                Route::get('status', [ZernioController::class, 'status']);
+                Route::post('profile', [ZernioController::class, 'ensureProfile']);
+                Route::get('connect', [ZernioController::class, 'connectUrl']);
+                Route::get('accounts', [ZernioController::class, 'accounts']);
+                Route::get('shop-link', [ZernioController::class, 'shopLink']);
+                Route::post('publish', [ZernioController::class, 'publish']);
+                Route::get('history', [ZernioController::class, 'history']);
+            });
         });
-    });
 });

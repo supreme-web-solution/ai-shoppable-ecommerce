@@ -118,31 +118,57 @@ async function copyCode() {
         <!-- Flash sale drop -->
         <template v-if="kind === 'flash'">
             <div class="timed-overlay-flash-pulse" aria-hidden="true" />
-            <p class="timed-overlay-kicker">Flash sale</p>
-            <p v-if="discountLabel" class="timed-overlay-discount">
-                {{ discountLabel }}
-            </p>
-            <p v-if="tag.product?.title" class="timed-overlay-title">
-                {{ tag.product.title }}
-            </p>
-            <p v-if="displayPrice" class="timed-overlay-price">
-                {{ displayPrice }}
-            </p>
-            <p v-if="remainingMs > 0" class="timed-overlay-countdown">
-                Ends in <strong>{{ countdown }}</strong>
-            </p>
-            <button
-                v-if="tag.product"
-                type="button"
-                class="timed-overlay-cta"
-                @click.stop="emit('addToCart', tag)"
+            <div
+                class="timed-overlay-flash-inner"
+                :class="{
+                    'timed-overlay-flash-inner--with-thumb': !!tag.product?.image_url,
+                }"
             >
-                {{ tag.cta_label || 'Grab deal' }}
-            </button>
+                <div v-if="tag.product?.image_url" class="timed-overlay-thumb">
+                    <img
+                        :src="tag.product.image_url"
+                        :alt="tag.product.title"
+                        class="timed-overlay-thumb-img"
+                    />
+                </div>
+                <div class="timed-overlay-body">
+                    <p class="timed-overlay-kicker">Flash sale</p>
+                    <p v-if="discountLabel" class="timed-overlay-discount">
+                        {{ discountLabel }}
+                    </p>
+                    <p v-if="tag.product?.title" class="timed-overlay-title">
+                        {{ tag.product.title }}
+                    </p>
+                    <p v-if="displayPrice" class="timed-overlay-price">
+                        {{ displayPrice }}
+                    </p>
+                    <p v-if="remainingMs > 0" class="timed-overlay-countdown">
+                        Ends in <strong>{{ countdown }}</strong>
+                    </p>
+                    <button
+                        v-if="tag.product"
+                        type="button"
+                        class="timed-overlay-cta"
+                        @click.stop="emit('addToCart', tag)"
+                    >
+                        {{ tag.cta_label || 'Grab deal' }}
+                    </button>
+                </div>
+            </div>
         </template>
 
         <!-- Coupon drop -->
         <template v-else-if="kind === 'coupon'">
+            <div
+                v-if="tag.product?.image_url"
+                class="timed-overlay-thumb timed-overlay-thumb--coupon"
+            >
+                <img
+                    :src="tag.product.image_url"
+                    :alt="tag.product.title"
+                    class="timed-overlay-thumb-img"
+                />
+            </div>
             <p class="timed-overlay-kicker">Coupon drop</p>
             <p class="timed-overlay-coupon-label">Use code</p>
             <p class="timed-overlay-coupon-code">
@@ -276,6 +302,17 @@ async function copyCode() {
     );
     border: 1px solid rgba(255, 255, 255, 0.25);
     text-align: left;
+}
+
+.timed-overlay-flash-inner--with-thumb {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.timed-overlay-flash-inner--with-thumb .timed-overlay-body {
+    min-width: 0;
+    flex: 1;
 }
 
 .timed-overlay--coupon {
@@ -423,6 +460,12 @@ async function copyCode() {
     overflow: hidden;
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.1);
+}
+
+.timed-overlay-thumb--coupon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 8px;
 }
 
 .timed-overlay-thumb-img {

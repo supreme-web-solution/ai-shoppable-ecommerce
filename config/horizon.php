@@ -106,6 +106,7 @@ return [
         'redis:integration' => 120,
         'redis:analytics' => 120,
         'redis:default' => 60,
+        'redis:mail' => 60,
     ],
 
     /*
@@ -239,9 +240,9 @@ return [
             'maxProcesses' => 3,
             'maxTime' => 0,
             'maxJobs' => 0,
-            'memory' => 256,
+            'memory' => 512,
             'tries' => 3,
-            'timeout' => 180,
+            'timeout' => 900,
             'nice' => 0,
         ],
         'ai' => [
@@ -322,6 +323,19 @@ return [
             'timeout' => 120,
             'nice' => 0,
         ],
+        'mail' => [
+            'connection' => 'redis',
+            'queue' => ['mail'],
+            'balance' => 'simple',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 3,
+            'timeout' => 120,
+            'nice' => 0,
+        ],
     ],
 
     'environments' => [
@@ -355,6 +369,9 @@ return [
             'default' => [
                 'maxProcesses' => 4,
             ],
+            'mail' => [
+                'maxProcesses' => 2,
+            ],
         ],
 
         'local' => [
@@ -367,6 +384,7 @@ return [
             'integration' => ['maxProcesses' => 1],
             'analytics' => ['maxProcesses' => 1],
             'default' => ['maxProcesses' => 1],
+            'mail' => ['maxProcesses' => 1],
         ],
 
         'staging' => [
@@ -398,6 +416,9 @@ return [
             ],
             'default' => [
                 'maxProcesses' => 8,
+            ],
+            'mail' => [
+                'maxProcesses' => 2,
             ],
         ],
     ],

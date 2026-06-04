@@ -10,65 +10,12 @@ use Illuminate\Support\Str;
 
 class AiAvatarVideoService
 {
-    public function watermarkEnabled(): bool
-    {
-        return (bool) config('services.heygen.watermark_enabled', false);
-    }
-
-    /**
-     * @param  array<string, mixed>  $input
-     * @return array<string, mixed>
-     */
-    /**
-     * @param  array<string, mixed>  $input
-     */
-    public function willSendProductPlacementToHeyGen(array $input): bool
-    {
-        if (! $this->watermarkEnabled()) {
-            return false;
-        }
-
-        $imageUrl = trim((string) ($input['product_placement_image_url'] ?? ''));
-
-        return (bool) ($input['product_placement_enabled'] ?? false) && $imageUrl !== '';
-    }
-
-    /**
-     * @param  array<string, mixed>  $input
-     * @return array<string, mixed>
-     */
-    public function withoutProductPlacementUnlessEnabled(array $input): array
-    {
-        if ($this->watermarkEnabled()) {
-            return $input;
-        }
-
-        if ((bool) ($input['product_placement_enabled'] ?? false)) {
-            Log::warning('HeyGen product placement skipped because HEYGEN_WATERMARK_ENABLED is false', [
-                'product_placement_image_url' => $input['product_placement_image_url'] ?? null,
-            ]);
-        }
-
-        $input['product_placement_enabled'] = false;
-        $input['product_placement_image_url'] = null;
-        $input['product_placement_position'] = null;
-        $input['product_placement_scale'] = null;
-        $input['product_placement_opacity'] = null;
-        $input['product_placement_offset_x'] = null;
-        $input['product_placement_offset_y'] = null;
-        $input['product_placement_motion_prompt'] = null;
-
-        return $input;
-    }
-
     /**
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      */
     public function submit(array $input): array
     {
-        $input = $this->withoutProductPlacementUnlessEnabled($input);
-
         $apiKey = $this->apiKey();
 
         if ($apiKey !== '') {
@@ -78,24 +25,21 @@ class AiAvatarVideoService
                 'avatar_id' => $input['avatar_id'] ?? null,
                 'voice_id' => $input['voice_id'] ?? null,
                 'product_ids' => $input['product_ids'] ?? [],
-                'product_placement_enabled' => (bool) ($input['product_placement_enabled'] ?? false),
-                'product_placement_image_url' => $input['product_placement_image_url'] ?? null,
+                'custom_background_enabled' => (bool) ($input['custom_background_enabled'] ?? false),
+                'background_color' => $input['background_color'] ?? null,
                 'script_length' => strlen((string) ($input['script'] ?? '')),
             ]);
 
             $remote = $this->submitToHeyGen($apiKey, $input);
-            if ($remote !== null) {
-                Log::info('HeyGen avatar video submit accepted', [
-                    'external_id' => $remote['external_id'] ?? null,
-                    'avatar_id' => $remote['avatar_id'] ?? null,
-                    'voice_id' => $remote['voice_id'] ?? null,
-                    'visual_background' => $remote['visual_background'] ?? null,
-                ]);
 
-                return $remote;
-            }
+            Log::info('HeyGen avatar video submit accepted', [
+                'external_id' => $remote['external_id'] ?? null,
+                'avatar_id' => $remote['avatar_id'] ?? null,
+                'voice_id' => $remote['voice_id'] ?? null,
+                'visual_background' => $remote['visual_background'] ?? null,
+            ]);
 
-            Log::warning('HeyGen avatar video submit failed, falling back to mock provider');
+            return $remote;
         }
 
         Log::info('Mock avatar video submission created', [
@@ -116,7 +60,6 @@ class AiAvatarVideoService
         if ($apiKey === '') {
             return [
                 'enabled' => false,
-                'watermark_enabled' => $this->watermarkEnabled(),
                 'avatars' => [],
                 'voices' => [],
                 'cached_at' => null,
@@ -142,8 +85,6 @@ class AiAvatarVideoService
                 'message' => $avatars || $voices ? null : 'HeyGen did not return any avatars or voices for this API key.',
             ];
         });
-
-        $options['watermark_enabled'] = $this->watermarkEnabled();
 
         return $options;
     }
@@ -171,9 +112,9 @@ class AiAvatarVideoService
 
     /**
      * @param  array<string, mixed>  $input
-     * @return array<string, mixed>|null
+     * @return array<string, mixed>
      */
-    protected function submitToHeyGen(string $apiKey, array $input): ?array
+    protected function submitToHeyGen(string $apiKey, array $input): array
     {
         $payload = $this->buildVideoPayload($input);
 
@@ -183,7 +124,7 @@ class AiAvatarVideoService
                 'voice_id' => $input['voice_id'] ?? null,
             ]);
 
-            return null;
+            throw new \RuntimeException('Could not build a HeyGen video request for the selected presenter.');
         }
 
         try {
@@ -194,8 +135,8 @@ class AiAvatarVideoService
                 'voice_id' => $payload['voice_id'] ?? null,
                 'aspect_ratio' => $payload['aspect_ratio'] ?? null,
                 'fit' => $payload['fit'] ?? null,
-                'has_watermark' => isset($payload['watermark']),
-                'has_motion_prompt' => isset($payload['motion_prompt']),
+                'background' => $payload['background'] ?? null,
+                'remove_background' => $payload['remove_background'] ?? false,
                 'script_length' => strlen((string) ($payload['script'] ?? '')),
             ]);
 
@@ -204,12 +145,15 @@ class AiAvatarVideoService
                 ->post('https://api.heygen.com/v3/videos', $payload);
 
             if (! $response->successful()) {
+                $message = (string) data_get($response->json(), 'error.message', 'HeyGen rejected the video request.');
+
                 Log::warning('HeyGen avatar video request was rejected', [
                     'status' => $response->status(),
                     'body' => Str::limit($response->body(), 800),
+                    'avatar_id' => $payload['avatar_id'] ?? null,
                 ]);
 
-                return null;
+                throw new \RuntimeException($message);
             }
 
             $videoId = (string) data_get($response->json(), 'data.video_id', '');
@@ -219,7 +163,7 @@ class AiAvatarVideoService
                     'body' => Str::limit($response->body(), 800),
                 ]);
 
-                return null;
+                throw new \RuntimeException('HeyGen accepted the request but did not return a video_id.');
             }
 
             return [
@@ -229,12 +173,14 @@ class AiAvatarVideoService
                 'avatar_id' => $payload['avatar_id'],
                 'voice_id' => $payload['voice_id'] ?? null,
             ];
+        } catch (\RuntimeException $exception) {
+            throw $exception;
         } catch (\Throwable $exception) {
             Log::warning('HeyGen avatar video request threw exception', [
                 'message' => $exception->getMessage(),
             ]);
 
-            return null;
+            throw new \RuntimeException('HeyGen request failed: '.$exception->getMessage(), 0, $exception);
         }
     }
 
@@ -318,23 +264,6 @@ class AiAvatarVideoService
         return trim((string) config('services.heygen.api_key'));
     }
 
-    protected function resolvePublicImageUrl(string $url): string
-    {
-        if ($url === '') {
-            return '';
-        }
-
-        if (Str::startsWith($url, ['http://', 'https://'])) {
-            return $url;
-        }
-
-        if (Str::startsWith($url, '//')) {
-            return 'https:'.$url;
-        }
-
-        return url($url);
-    }
-
     /**
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>|null
@@ -345,6 +274,13 @@ class AiAvatarVideoService
 
         if ($avatarId === '') {
             return null;
+        }
+
+        $avatarMeta = $this->resolveAvatarMeta($input, $avatarId);
+        if (! $this->avatarSupportsV3Video($avatarMeta)) {
+            throw new \RuntimeException(
+                'The selected presenter is not compatible with HeyGen API video generation. Refresh the avatar list and choose a different look.',
+            );
         }
 
         $voiceId = $this->resolveVoiceId($input, $avatarId);
@@ -362,34 +298,182 @@ class AiAvatarVideoService
             $payload['voice_id'] = $voiceId;
         }
 
-        $productPlacementEnabled = $this->willSendProductPlacementToHeyGen($input);
-        $productPlacementImageUrl = $this->resolvePublicImageUrl(
-            trim((string) ($input['product_placement_image_url'] ?? '')),
-        );
-        if ($productPlacementEnabled && $productPlacementImageUrl !== '') {
-            $watermark = [
-                'image' => [
-                    'type' => 'url',
-                    'url' => $productPlacementImageUrl,
-                ],
-                'placement' => [
-                    'position' => (string) ($input['product_placement_position'] ?? 'bottom_right'),
-                    'offset_x' => isset($input['product_placement_offset_x']) ? (float) $input['product_placement_offset_x'] : 0,
-                    'offset_y' => isset($input['product_placement_offset_y']) ? (float) $input['product_placement_offset_y'] : 0,
-                ],
-                'scale' => isset($input['product_placement_scale']) ? (float) $input['product_placement_scale'] : 0.3,
-                'opacity' => isset($input['product_placement_opacity']) ? (float) $input['product_placement_opacity'] : 1,
-            ];
+        $engine = $this->resolveEngine($input, $avatarId);
+        if ($engine !== null) {
+            $payload['engine'] = $engine;
+        }
 
-            $payload['watermark'] = $watermark;
-
-            $motionPrompt = trim((string) ($input['product_placement_motion_prompt'] ?? ''));
-            if ($motionPrompt !== '') {
-                $payload['motion_prompt'] = $motionPrompt;
+        $background = $this->resolveBackgroundSetting($input, $avatarId);
+        if ($background !== null) {
+            $payload['background'] = $background;
+            // Photo looks ship with a baked-in scene; color alone is ignored unless
+            // the avatar is matted onto the new background (HeyGen: remove_background).
+            if ($this->shouldRemoveAvatarBackgroundForCustomColor($input, $avatarId)) {
+                $payload['remove_background'] = true;
             }
+            // cover fills the frame with the avatar look (often hiding a custom color).
+            $payload['fit'] = 'contain';
         }
 
         return $payload;
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array{type: string, value: string}|null
+     */
+    protected function resolveBackgroundSetting(array $input, string $avatarId): ?array
+    {
+        if (! (bool) ($input['custom_background_enabled'] ?? false)) {
+            return null;
+        }
+
+        $color = $this->normalizeHexColor((string) ($input['background_color'] ?? ''));
+        if ($color === '') {
+            return null;
+        }
+
+        return [
+            'type' => 'color',
+            'value' => $color,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array{type: string}|null
+     */
+    protected function resolveEngine(array $input, string $avatarId): ?array
+    {
+        $engines = $this->supportedApiEngines($this->resolveAvatarMeta($input, $avatarId));
+
+        if (in_array('avatar_iv', $engines, true)) {
+            return null;
+        }
+
+        if (in_array('avatar_v', $engines, true)) {
+            return ['type' => 'avatar_v'];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     */
+    protected function shouldRemoveAvatarBackgroundForCustomColor(array $input, string $avatarId): bool
+    {
+        $meta = $this->resolveAvatarMeta($input, $avatarId);
+        $avatarType = (string) ($meta['avatar_type'] ?? '');
+
+        if ($avatarType === 'photo_avatar') {
+            return true;
+        }
+
+        return in_array('avatar_iv', $this->supportedApiEngines($meta), true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $avatar
+     * @return array<int, string>
+     */
+    protected function supportedApiEngines(array $avatar): array
+    {
+        return collect($avatar['supported_api_engines'] ?? [])
+            ->map(fn (mixed $engine): string => strtolower(trim((string) $engine)))
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  array<string, mixed>  $avatar
+     */
+    protected function avatarSupportsV3Video(array $avatar): bool
+    {
+        $engines = $this->supportedApiEngines($avatar);
+
+        return in_array('avatar_iv', $engines, true) || in_array('avatar_v', $engines, true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array<string, mixed>
+     */
+    protected function resolveAvatarMeta(array $input, string $avatarId): array
+    {
+        if ($avatarId === '') {
+            return [];
+        }
+
+        $cached = collect($this->options()['avatars'] ?? [])->firstWhere('id', $avatarId);
+        if (is_array($cached) && $cached !== []) {
+            return $cached;
+        }
+
+        return $this->fetchAvatarLookMeta($avatarId);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function fetchAvatarLookMeta(string $avatarId): array
+    {
+        $apiKey = $this->apiKey();
+        if ($apiKey === '') {
+            return [];
+        }
+
+        try {
+            $response = Http::timeout(20)
+                ->withHeaders(['x-api-key' => $apiKey])
+                ->get("https://api.heygen.com/v3/avatars/looks/{$avatarId}");
+
+            if (! $response->successful()) {
+                return [];
+            }
+
+            $data = $response->json('data');
+            if (! is_array($data)) {
+                return [];
+            }
+
+            $engines = (array) data_get($data, 'supported_api_engines', []);
+
+            return [
+                'id' => (string) data_get($data, 'id', ''),
+                'name' => (string) data_get($data, 'name', 'HeyGen avatar'),
+                'avatar_type' => (string) data_get($data, 'avatar_type', ''),
+                'supported_api_engines' => $engines,
+                'supports_v3_video' => $this->avatarSupportsV3Video(['supported_api_engines' => $engines]),
+            ];
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    protected function normalizeHexColor(string $color): string
+    {
+        $color = trim($color);
+        if ($color === '') {
+            return '';
+        }
+
+        if (! str_starts_with($color, '#')) {
+            $color = '#'.$color;
+        }
+
+        if (preg_match('/^#([A-Fa-f0-9]{6})$/', $color, $matches) === 1) {
+            return '#'.strtolower($matches[1]);
+        }
+
+        if (preg_match('/^#([A-Fa-f0-9]{3})$/', $color, $matches) === 1) {
+            $short = strtolower($matches[1]);
+
+            return '#'.$short[0].$short[0].$short[1].$short[1].$short[2].$short[2];
+        }
+
+        return '';
     }
 
     /**
@@ -554,9 +638,12 @@ class AiAvatarVideoService
                     'default_voice_id' => data_get($avatar, 'default_voice_id'),
                     'preferred_orientation' => data_get($avatar, 'preferred_orientation'),
                     'supported_api_engines' => (array) data_get($avatar, 'supported_api_engines', []),
+                    'supports_v3_video' => $this->avatarSupportsV3Video([
+                        'supported_api_engines' => (array) data_get($avatar, 'supported_api_engines', []),
+                    ]),
                     'ownership' => $ownership,
                 ])
-                ->filter(fn (array $avatar): bool => $avatar['id'] !== '')
+                ->filter(fn (array $avatar): bool => $avatar['id'] !== '' && $avatar['supports_v3_video'])
                 ->values()
                 ->all();
         } catch (\Throwable) {

@@ -18,6 +18,9 @@ class LiveShowRegistration extends Model
         'registered_at',
         'last_joined_at',
         'join_count',
+        'max_watch_ms',
+        'reached_half_at',
+        'watched_to_end_at',
         'meta',
     ];
 
@@ -27,6 +30,9 @@ class LiveShowRegistration extends Model
             'registered_at' => 'datetime',
             'last_joined_at' => 'datetime',
             'join_count' => 'integer',
+            'max_watch_ms' => 'integer',
+            'reached_half_at' => 'datetime',
+            'watched_to_end_at' => 'datetime',
             'meta' => 'array',
         ];
     }

@@ -159,6 +159,7 @@ const { getList, postJson, patchJson, apiFetch, uploadFile, ensureTeam } = useAd
 const videoLoading = ref(true);
 const saving = ref(false);
 const replacingVideo = ref(false);
+const retryingProcessing = ref(false);
 const errorText = ref('');
 const infoText = ref('');
 const thumbnailBroken = ref(false);
@@ -612,6 +613,27 @@ function stopPolling() {
     }
 }
 
+async function retryVideoProcessing() {
+    retryingProcessing.value = true;
+    errorText.value = '';
+
+    try {
+        await ensureTeam();
+        const payload = await postJson<{ data?: Record<string, unknown> } | Record<string, unknown>>(
+            `/api/v1/admin/videos/${props.videoId}/retry-processing`,
+            {},
+        );
+        const v = (payload as { data?: Record<string, unknown> }).data ?? payload as Record<string, unknown>;
+        form.value.status = String(v.status ?? 'processing');
+        infoText.value = 'Video processing restarted. Large uploads can take several minutes.';
+        startPollingIfNeeded();
+    } catch (err) {
+        errorText.value = err instanceof Error ? err.message : 'Could not retry video processing.';
+    } finally {
+        retryingProcessing.value = false;
+    }
+}
+
 async function replaceVideoFile(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
@@ -734,7 +756,7 @@ onMounted(async () => {
     await Promise.all([loadVideo(), loadProducts()]);
 
     if (isProcessing.value) {
-        infoText.value = 'Video is processing. This page will update automatically.';
+        infoText.value = 'Uploading to Cloudinary (large files can take several minutes).';
         startPollingIfNeeded();
     } else if (!hasPlayback.value && form.value.status !== 'failed') {
         infoText.value = 'No playback URL yet. Re-upload the video.';
@@ -835,12 +857,22 @@ onUnmounted(stopPolling);
         >
             <Loader2 v-if="isProcessing" class="mt-0.5 size-4 shrink-0 animate-spin" />
             <AlertCircle v-else class="mt-0.5 size-4 shrink-0" />
-            <div>
+            <div class="flex-1">
                 <p v-if="infoText">{{ infoText }}</p>
                 <p v-else-if="isProcessing">Processing on Cloudinary…</p>
                 <p v-else-if="isFailed">Upload failed. Try replacing the video file below.</p>
                 <!-- <p v-if="cloudinaryPublicId" class="mt-0.5 text-xs opacity-70">Cloudinary: {{ cloudinaryPublicId }}</p> -->
             </div>
+            <!-- <button
+                v-if="isProcessing || isFailed"
+                type="button"
+                class="ghost-btn shrink-0 rounded-xl px-3 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-50"
+                :disabled="retryingProcessing || replacingVideo"
+                @click="retryVideoProcessing"
+            >
+                <Loader2 v-if="retryingProcessing" class="mr-1 inline size-3 animate-spin" />
+                {{ retryingProcessing ? 'Retrying…' : 'Retry processing' }}
+            </button> -->
         </div>
 
         <!-- ── Loading skeleton ── -->

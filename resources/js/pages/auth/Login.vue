@@ -20,6 +20,7 @@ defineOptions({
 defineProps<{
     status?: string;
     canResetPassword: boolean;
+    inviteToken?: string | null;
 }>();
 </script>
 
@@ -39,6 +40,8 @@ defineProps<{
         v-slot="{ errors, processing }"
         class="flex flex-col gap-3"
     >
+        <input v-if="inviteToken" type="hidden" name="invite" :value="inviteToken" />
+
         <div class="grid gap-3">
             <div class="grid gap-1">
                 <Label for="email" class="field-label">Email address</Label>

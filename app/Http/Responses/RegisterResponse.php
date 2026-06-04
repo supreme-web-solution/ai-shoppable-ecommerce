@@ -2,7 +2,6 @@
 
 namespace App\Http\Responses;
 
-use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Laravel\Fortify\Contracts\RegisterResponse as RegisterResponseContract;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
@@ -18,6 +17,12 @@ class RegisterResponse implements RegisterResponseContract
 
         if ($request->wantsJson()) {
             return response()->json('', Response::HTTP_CREATED);
+        }
+
+        $inviteToken = trim((string) $request->input('invite_token', ''));
+
+        if ($inviteToken !== '') {
+            return redirect('/teams');
         }
 
         return redirect()->intended(config('fortify.home', '/dashboard'));

@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
 import {
+    Copy,
     ImageOff,
+    Loader2,
     Package,
     Pencil,
     PlusCircle,
     ShoppingBag,
     Trash2,
+    Upload,
     XCircle,
 } from 'lucide-vue-next';
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -58,10 +61,14 @@ defineOptions({
     },
 });
 
-const { getList, postJson, patchJson, deleteResource, ensureTeam } = useAdminApi();
+const { getList, postJson, patchJson, deleteResource, ensureTeam, uploadProductImage } = useAdminApi();
 
 const loading = ref(false);
 const saving = ref(false);
+const duplicatingId = ref<number | null>(null);
+const imageUploading = ref(false);
+const imagePreviewUrl = ref<string | null>(null);
+const selectedImageFile = ref<File | null>(null);
 const createModalOpen = ref(false);
 const editingProductId = ref<number | null>(null);
 const errorText = ref('');
@@ -79,6 +86,31 @@ const form = ref({
     inventory: 0,
     variants: [{ title: 'Default', sku: '', price: 0, inventory: 0, is_default: true }] as VariantDraft[],
 });
+
+const isModalLocked = computed(() => saving.value || imageUploading.value);
+
+function onCreateModalOpenChange(open: boolean) {
+    if (!open && isModalLocked.value) {
+        return;
+    }
+
+    createModalOpen.value = open;
+
+    if (!open) {
+        editingProductId.value = null;
+        resetForm();
+    }
+}
+
+function closeCreateModal() {
+    onCreateModalOpenChange(false);
+}
+
+function preventModalDismiss(event: Event) {
+    if (isModalLocked.value) {
+        event.preventDefault();
+    }
+}
 
 function slugify(value: string): string {
     return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -108,16 +140,35 @@ async function loadProducts() {
     }
 }
 
+async function resolveProductImageUrl(): Promise<string | null> {
+    if (selectedImageFile.value) {
+        imageUploading.value = true;
+
+        try {
+            const result = await uploadProductImage(selectedImageFile.value);
+
+            return result.image_url;
+        } finally {
+            imageUploading.value = false;
+        }
+    }
+
+    return form.value.image_url || null;
+}
+
 async function createProduct() {
     saving.value = true;
     errorText.value = '';
 
     try {
+        await ensureTeam();
+        const image_url = await resolveProductImageUrl();
+
         await postJson('/api/v1/admin/products', {
             title: form.value.title,
             slug: form.value.slug || slugify(form.value.title),
             description: form.value.description || null,
-            image_url: form.value.image_url || null,
+            image_url,
             currency: form.value.currency,
             price: form.value.price,
             sale_price: form.value.sale_price === '' ? null : form.value.sale_price,
@@ -132,18 +183,7 @@ async function createProduct() {
             })),
         });
 
-        form.value = {
-            title: '',
-            slug: '',
-            description: '',
-            image_url: '',
-            currency: 'USD',
-            price: 0,
-            sale_price: '',
-            sku: '',
-            inventory: 0,
-            variants: [{ title: 'Default', sku: '', price: 0, inventory: 0, is_default: true }],
-        };
+        resetForm();
         createModalOpen.value = false;
         await loadProducts();
     } catch (error) {
@@ -162,11 +202,14 @@ return;
     errorText.value = '';
 
     try {
+        await ensureTeam();
+        const image_url = await resolveProductImageUrl();
+
         await patchJson(`/api/v1/admin/products/${editingProductId.value}`, {
             title: form.value.title,
             slug: form.value.slug || slugify(form.value.title),
             description: form.value.description || null,
-            image_url: form.value.image_url || null,
+            image_url,
             currency: form.value.currency,
             price: form.value.price,
             sale_price: form.value.sale_price === '' ? null : form.value.sale_price,
@@ -179,6 +222,7 @@ return;
             })),
         });
 
+        resetForm();
         createModalOpen.value = false;
         editingProductId.value = null;
         await loadProducts();
@@ -211,6 +255,21 @@ return;
     }
 }
 
+async function duplicateProduct(product: ProductItem) {
+    duplicatingId.value = product.id;
+    errorText.value = '';
+
+    try {
+        await ensureTeam();
+        await postJson(`/api/v1/admin/products/${product.id}/duplicate`, {});
+        await loadProducts();
+    } catch (error) {
+        errorText.value = error instanceof Error ? error.message : 'Could not duplicate product.';
+    } finally {
+        duplicatingId.value = null;
+    }
+}
+
 
 function addVariant() {
     form.value.variants.push({
@@ -228,8 +287,21 @@ function removeVariant(index: number) {
     }
 }
 
-function openCreateModal() {
-    editingProductId.value = null;
+function clearImagePreview() {
+    if (imagePreviewUrl.value?.startsWith('blob:')) {
+        URL.revokeObjectURL(imagePreviewUrl.value);
+    }
+
+    imagePreviewUrl.value = null;
+}
+
+function clearSelectedImageFile() {
+    selectedImageFile.value = null;
+    clearImagePreview();
+}
+
+function resetForm() {
+    clearSelectedImageFile();
     form.value = {
         title: '',
         slug: '',
@@ -242,11 +314,38 @@ function openCreateModal() {
         inventory: 0,
         variants: [{ title: 'Default', sku: '', price: 0, inventory: 0, is_default: true }],
     };
+}
+
+async function onImageFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+
+    if (!file) {
+        return;
+    }
+
+    clearSelectedImageFile();
+    selectedImageFile.value = file;
+    imagePreviewUrl.value = URL.createObjectURL(file);
+    input.value = '';
+}
+
+function onImageUrlInput() {
+    if (selectedImageFile.value) {
+        clearSelectedImageFile();
+    }
+}
+
+function openCreateModal() {
+    editingProductId.value = null;
+    resetForm();
     createModalOpen.value = true;
 }
 
 function openEditModal(product: ProductItem) {
     editingProductId.value = product.id;
+    selectedImageFile.value = null;
+    clearImagePreview();
     form.value = {
         title: product.title ?? '',
         slug: product.slug ?? '',
@@ -272,6 +371,8 @@ function openEditModal(product: ProductItem) {
 }
 
 onMounted(loadProducts);
+
+onUnmounted(clearSelectedImageFile);
 </script>
 
 <template>
@@ -398,6 +499,19 @@ onMounted(loadProducts);
                         <Pencil class="size-3.5" />
                         Edit
                     </button>
+                    <button
+                        type="button"
+                        class="action-btn"
+                        :disabled="duplicatingId === product.id"
+                        @click="duplicateProduct(product)"
+                    >
+                        <Loader2
+                            v-if="duplicatingId === product.id"
+                            class="size-3.5 animate-spin"
+                        />
+                        <Copy v-else class="size-3.5" />
+                        Duplicate
+                    </button>
                     <button type="button" class="action-btn" @click="toggleActive(product)">
                         {{ product.is_active ? 'Deactivate' : 'Activate' }}
                     </button>
@@ -410,8 +524,15 @@ onMounted(loadProducts);
     </div>
 
     <!-- ═══════ Create product modal ═══════ -->
-    <Dialog v-model:open="createModalOpen">
-        <DialogContent class="flex max-h-[min(90dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[600px]">
+    <Dialog :open="createModalOpen" @update:open="onCreateModalOpenChange">
+        <DialogContent
+            class="flex max-h-[min(90dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[600px]"
+            :show-close-button="!isModalLocked"
+            @pointer-down-outside="preventModalDismiss"
+            @interact-outside="preventModalDismiss"
+            @escape-key-down="preventModalDismiss"
+            @focus-outside="preventModalDismiss"
+        >
             <DialogHeader class="shrink-0 border-b px-6 py-4">
                 <DialogTitle class="flex items-center gap-2">
                     <ShoppingBag class="size-4 text-orange-500" />
@@ -451,21 +572,55 @@ onMounted(loadProducts);
                         />
                     </div>
                     <div class="space-y-1.5 sm:col-span-2">
-                        <Label for="p-image">Product image URL</Label>
-                        <Input
-                            id="p-image"
-                            v-model="form.image_url"
-                            type="url"
-                            placeholder="https://example.com/product.jpg"
-                        />
-                        <div v-if="form.image_url" class="mt-2 flex items-center gap-3">
-                            <img
-                                :src="form.image_url"
-                                alt="Preview"
-                                class="h-16 w-16 rounded-lg border object-cover"
-                                @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
-                            >
-                            <p class="text-xs text-muted-foreground">Image preview</p>
+                        <Label>Product image</Label>
+                        <div class="flex gap-4">
+                            <div class="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border bg-muted">
+                                <img
+                                    v-if="imagePreviewUrl || form.image_url"
+                                    :src="imagePreviewUrl || form.image_url"
+                                    alt="Product preview"
+                                    class="h-full w-full object-cover"
+                                    @error="(e) => (e.target as HTMLImageElement).style.opacity = '0'"
+                                >
+                                <div v-else class="flex h-full items-center justify-center">
+                                    <ImageOff class="size-8 text-muted-foreground/40" />
+                                </div>
+                                <div
+                                    v-if="imageUploading"
+                                    class="absolute inset-0 flex items-center justify-center bg-black/40"
+                                >
+                                    <Loader2 class="size-6 animate-spin text-white" />
+                                </div>
+                            </div>
+                            <div class="flex min-w-0 flex-1 flex-col gap-2">
+                                <label
+                                    class="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed py-3 text-sm text-muted-foreground transition-colors hover:border-[#E8563A]/40 hover:bg-[#E8563A]/5 hover:text-[#E8563A]"
+                                    :class="saving ? 'pointer-events-none opacity-60' : ''"
+                                >
+                                    <Upload class="size-4 shrink-0" />
+                                    Upload from computer
+                                    <input
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp,image/gif"
+                                        class="hidden"
+                                        :disabled="saving"
+                                        @change="onImageFileSelected"
+                                    >
+                                </label>
+                                <div class="relative">
+                                    <Input
+                                        id="p-image"
+                                        v-model="form.image_url"
+                                        type="url"
+                                        placeholder="Or paste image URL (https://…)"
+                                        class="h-9 text-xs"
+                                        @input="onImageUrlInput"
+                                    />
+                                </div>
+                                <p class="text-[10px] text-muted-foreground">
+                                    JPG, PNG, WebP or GIF · max 8 MB
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -534,11 +689,11 @@ onMounted(loadProducts);
             </div>
 
             <DialogFooter class="shrink-0 border-t px-6 py-4">
-                <Button variant="ghost" @click="createModalOpen = false; editingProductId = null">Cancel</Button>
-                <Button :disabled="saving || !form.title || form.price === 0" @click="editingProductId ? updateProduct() : createProduct()">
+                <Button variant="ghost" :disabled="isModalLocked" @click="closeCreateModal">Cancel</Button>
+                <Button :disabled="saving || imageUploading || !form.title || form.price === 0" @click="editingProductId ? updateProduct() : createProduct()">
                     {{
-                        saving
-                            ? (editingProductId ? 'Saving…' : 'Creating…')
+                        saving || imageUploading
+                            ? (imageUploading ? 'Uploading image…' : (editingProductId ? 'Saving…' : 'Creating…'))
                             : (editingProductId ? 'Save changes' : 'Create product')
                     }}
                 </Button>

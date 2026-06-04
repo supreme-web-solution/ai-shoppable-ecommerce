@@ -9,6 +9,8 @@ use App\Jobs\RefreshKnowledgeEmbeddingsJob;
 use App\Models\LiveShow;
 use App\Models\LiveShowMessage;
 use App\Models\LiveShowRegistration;
+use App\Services\Webinars\WebinarAttendeeService;
+use App\Services\Webinars\WebinarOfferService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Validation\Rule;
@@ -29,8 +31,14 @@ class LiveShowController extends Controller
 
         $liveShows = LiveShow::query()
             ->where('team_id', $teamId)
-            ->with(['featuredProducts', 'video'])
-            ->withCount(['registrations', 'messages'])
+            ->with(['featuredProducts', 'video', 'team'])
+            ->withCount([
+                'registrations',
+                'messages',
+                'registrations as conversations_count' => fn ($query) => $query->whereHas('messages'),
+                'registrations as watched_half_count' => fn ($query) => $query->whereNotNull('reached_half_at'),
+                'registrations as watched_end_count' => fn ($query) => $query->whereNotNull('watched_to_end_at'),
+            ])
             ->orderBy('starts_at')
             ->paginate(15);
 
@@ -50,22 +58,16 @@ class LiveShowController extends Controller
         $liveShow = LiveShow::query()->create($validated);
         RefreshKnowledgeEmbeddingsJob::dispatch('live_show', (int) $liveShow->id);
 
-        if ($request->filled('featured_product_ids')) {
-            $syncData = collect($request->input('featured_product_ids'))
-                ->values()
-                ->mapWithKeys(fn ($productId, $index) => [$productId => ['pin_order' => $index]])
-                ->all();
-            $liveShow->featuredProducts()->sync($syncData);
-        }
+        $this->syncFeaturedProducts($request, $liveShow);
 
-        return new LiveShowResource($liveShow->fresh(['featuredProducts', 'video'])->loadCount(['registrations', 'messages']));
+        return new LiveShowResource($liveShow->fresh(['featuredProducts', 'video', 'team'])->loadCount($this->liveShowCounts()));
     }
 
     public function show(LiveShow $liveShow)
     {
         $this->authorize('view', $liveShow);
 
-        return new LiveShowResource($liveShow->load(['featuredProducts', 'video'])->loadCount(['registrations', 'messages']));
+        return new LiveShowResource($liveShow->load(['featuredProducts', 'video', 'team'])->loadCount($this->liveShowCounts()));
     }
 
     public function update(Request $request, LiveShow $liveShow)
@@ -95,9 +97,17 @@ class LiveShowController extends Controller
             'settings.knowledge_sources.*.content' => ['required_with:settings.knowledge_sources', 'string'],
             'featured_product_ids' => ['sometimes', 'array'],
             'featured_product_ids.*' => ['integer', 'exists:products,id'],
+            'featured_products' => ['sometimes', 'array'],
+            'featured_products.*.product_id' => ['required', 'integer', 'exists:products,id'],
+            'featured_products.*.starts_at_ms' => ['nullable', 'integer', 'min:0'],
+            'featured_products.*.ends_at_ms' => ['nullable', 'integer', 'min:0'],
+            'featured_products.*.appearance' => ['nullable', 'string', 'in:pin,in_chat,popup'],
+            'featured_products.*.cta_url' => ['nullable', 'string', 'max:2048'],
+            'featured_products.*.pin_order' => ['nullable', 'integer', 'min:0'],
+            'settings.video_duration_seconds' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:86400'],
         ]);
 
-        $payload = collect($validated)->except('featured_product_ids')->all();
+        $payload = collect($validated)->except(['featured_product_ids', 'featured_products'])->all();
         if (array_key_exists('settings', $payload)) {
             $payload['settings'] = $this->normalizeSettings(
                 array_merge($liveShow->settings ?? [], Arr::get($payload, 'settings', [])),
@@ -109,15 +119,9 @@ class LiveShowController extends Controller
             RefreshKnowledgeEmbeddingsJob::dispatch('live_show', (int) $liveShow->id);
         }
 
-        if (array_key_exists('featured_product_ids', $validated)) {
-            $syncData = collect($validated['featured_product_ids'])
-                ->values()
-                ->mapWithKeys(fn ($productId, $index) => [$productId => ['pin_order' => $index]])
-                ->all();
-            $liveShow->featuredProducts()->sync($syncData);
-        }
+        $this->syncFeaturedProducts($request, $liveShow);
 
-        return new LiveShowResource($liveShow->fresh(['featuredProducts', 'video'])->loadCount(['registrations', 'messages']));
+        return new LiveShowResource($liveShow->fresh(['featuredProducts', 'video', 'team'])->loadCount($this->liveShowCounts()));
     }
 
     public function destroy(LiveShow $liveShow)
@@ -132,12 +136,55 @@ class LiveShowController extends Controller
     {
         $this->authorize('view', $liveShow);
 
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $perPage = (int) ($validated['per_page'] ?? 50);
+
         $attendees = LiveShowRegistration::query()
             ->where('live_show_id', $liveShow->id)
+            ->select([
+                'id',
+                'full_name',
+                'email',
+                'registered_at',
+                'last_joined_at',
+                'join_count',
+                'max_watch_ms',
+                'reached_half_at',
+                'watched_to_end_at',
+            ])
             ->orderByDesc('registered_at')
-            ->paginate(50);
+            ->orderByDesc('id')
+            ->paginate($perPage, ['*'], 'page', (int) ($validated['page'] ?? 1));
 
         return response()->json($attendees);
+    }
+
+    public function notifyAttendees(LiveShow $liveShow, WebinarAttendeeService $attendeeService)
+    {
+        $this->authorize('update', $liveShow);
+
+        return response()->json([
+            'data' => $attendeeService->notifyAll($liveShow),
+            'message' => 'Attendee emails have been queued.',
+        ]);
+    }
+
+    public function importAttendees(Request $request, LiveShow $liveShow, WebinarAttendeeService $attendeeService)
+    {
+        $this->authorize('update', $liveShow);
+
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:10240'],
+        ]);
+
+        return response()->json([
+            'data' => $attendeeService->import($liveShow, $validated['file']),
+            'message' => 'Attendees imported. Registration emails are being sent in the background.',
+        ]);
     }
 
     public function conversations(Request $request, LiveShow $liveShow)
@@ -289,6 +336,20 @@ class LiveShowController extends Controller
      * @param  array<string, mixed>  $settings
      * @return array<string, mixed>
      */
+    /**
+     * @return array<int|string, mixed>
+     */
+    protected function liveShowCounts(): array
+    {
+        return [
+            'registrations',
+            'messages',
+            'registrations as conversations_count' => fn ($query) => $query->whereHas('messages'),
+            'registrations as watched_half_count' => fn ($query) => $query->whereNotNull('reached_half_at'),
+            'registrations as watched_end_count' => fn ($query) => $query->whereNotNull('watched_to_end_at'),
+        ];
+    }
+
     protected function normalizeSettings(array $settings): array
     {
         $rawSources = $settings['knowledge_sources'] ?? [];
@@ -315,6 +376,36 @@ class LiveShowController extends Controller
             'knowledge_base_text' => isset($settings['knowledge_base_text']) ? trim((string) $settings['knowledge_base_text']) : null,
             'knowledge_sources' => ! empty($sources) ? $sources : null,
             'views_count' => (int) ($settings['views_count'] ?? 0),
+            'video_duration_seconds' => isset($settings['video_duration_seconds'])
+                ? max(1, (int) $settings['video_duration_seconds'])
+                : null,
         ], fn (mixed $value): bool => $value !== null);
+    }
+
+    protected function syncFeaturedProducts(Request $request, LiveShow $liveShow): void
+    {
+        $offerService = app(WebinarOfferService::class);
+
+        if ($request->has('featured_products')) {
+            $offerService->syncOffers($liveShow, (array) $request->input('featured_products', []));
+
+            return;
+        }
+
+        if ($request->has('featured_product_ids')) {
+            $syncData = collect($request->input('featured_product_ids'))
+                ->values()
+                ->mapWithKeys(fn ($productId, $index): array => [
+                    (int) $productId => [
+                        'starts_at_ms' => 0,
+                        'ends_at_ms' => null,
+                        'pin_order' => $index,
+                        'appearance' => 'popup',
+                        'cta_url' => null,
+                    ],
+                ])
+                ->all();
+            $liveShow->featuredProducts()->sync($syncData);
+        }
     }
 }
