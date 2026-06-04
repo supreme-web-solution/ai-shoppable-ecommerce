@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Support\ExternalVideoUrl;
 use App\Services\Webinars\WebinarOfferService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -17,6 +18,12 @@ class LiveShowResource extends JsonResource
     {
         $settings = is_array($this->settings) ? $this->settings : [];
         $thumbnailUrl = data_get($settings, 'thumbnail_url') ?: optional($this->video)->thumbnail_url;
+        $resolvedVideoUrl = $this->resolvedVideoUrl($settings);
+        $videoPlayback = ExternalVideoUrl::parse($resolvedVideoUrl);
+
+        if ($thumbnailUrl === null && is_array($videoPlayback)) {
+            $thumbnailUrl = $videoPlayback['thumbnail_url'] ?? null;
+        }
 
         return [
             'id' => $this->id,
@@ -31,7 +38,8 @@ class LiveShowResource extends JsonResource
             'settings' => $settings,
             'host_name' => data_get($settings, 'host_name'),
             'thumbnail_url' => $thumbnailUrl,
-            'video_url' => data_get($settings, 'video_url'),
+            'video_url' => $resolvedVideoUrl,
+            'video_playback' => $videoPlayback,
             'source_type' => data_get($settings, 'source_type', 'upload'),
             'registration_title' => data_get($settings, 'registration_title'),
             'registration_description' => data_get($settings, 'registration_description'),
@@ -63,5 +71,21 @@ class LiveShowResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     */
+    protected function resolvedVideoUrl(array $settings): ?string
+    {
+        $override = trim((string) data_get($settings, 'video_url', ''));
+
+        if ($override !== '') {
+            return $override;
+        }
+
+        $playback = trim((string) ($this->video?->playback_url ?? ''));
+
+        return $playback !== '' ? $playback : null;
     }
 }

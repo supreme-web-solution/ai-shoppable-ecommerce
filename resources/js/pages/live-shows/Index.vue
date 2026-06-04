@@ -52,6 +52,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAdminApi } from '@/composables/useAdminApi';
+import { isEmbedPlayback, parseExternalVideoUrl } from '@/lib/externalVideoUrl';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -470,6 +471,8 @@ return form.value.settings.video_url.trim();
 
     return videos.value.find((v) => v.id === form.value.video_id)?.playback_url ?? '';
 }
+
+const selectedPlayback = computed(() => parseExternalVideoUrl(selectedVideoUrl() || null));
 
 function chatsPageUrl(webinarId?: number | null): string {
     if (!webinarId) {
@@ -1589,7 +1592,10 @@ onBeforeUnmount(() => {
                             </div>
                             <div class="space-y-1.5">
                                 <Label>Video URL Override</Label>
-                                <Input v-model="form.settings.video_url" placeholder="https://.../video.mp4" />
+                                <Input
+                                    v-model="form.settings.video_url"
+                                    placeholder="YouTube, Vimeo, Cloudinary, or direct MP4 URL"
+                                />
                             </div>
                             <div class="space-y-1.5 sm:col-span-2">
                                 <Label>Video duration (seconds)</Label>
@@ -1615,9 +1621,17 @@ onBeforeUnmount(() => {
                             <div class="rounded-md border bg-muted/30 p-3">
                                 <p class="mb-2 text-xs font-medium text-muted-foreground">Video preview</p>
                                 <div class="flex aspect-video items-center justify-center overflow-hidden rounded-md border bg-black/90">
+                                    <iframe
+                                        v-if="isEmbedPlayback(selectedPlayback)"
+                                        :src="selectedPlayback.embed_url"
+                                        title="Video preview"
+                                        class="h-full w-full border-0"
+                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                        allowfullscreen
+                                    />
                                     <video
-                                        v-if="selectedVideoUrl()"
-                                        :src="selectedVideoUrl()"
+                                        v-else-if="selectedPlayback?.direct_url"
+                                        :src="selectedPlayback.direct_url"
                                         controls
                                         playsinline
                                         class="h-full w-full object-contain"
@@ -2028,7 +2042,10 @@ onBeforeUnmount(() => {
                             </div>
                             <div class="space-y-1.5">
                                 <Label>Video URL Override</Label>
-                                <Input v-model="form.settings.video_url" placeholder="https://.../video.mp4" />
+                                <Input
+                                    v-model="form.settings.video_url"
+                                    placeholder="YouTube, Vimeo, Cloudinary, or direct MP4 URL"
+                                />
                             </div>
                             <div class="space-y-1.5 sm:col-span-2">
                                 <Label>Video duration (seconds)</Label>
@@ -2054,9 +2071,17 @@ onBeforeUnmount(() => {
                             <div class="rounded-md border bg-muted/30 p-3">
                                 <p class="mb-2 text-xs font-medium text-muted-foreground">Video preview</p>
                                 <div class="flex aspect-video items-center justify-center overflow-hidden rounded-md border bg-black/90">
+                                    <iframe
+                                        v-if="isEmbedPlayback(selectedPlayback)"
+                                        :src="selectedPlayback.embed_url"
+                                        title="Video preview"
+                                        class="h-full w-full border-0"
+                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                        allowfullscreen
+                                    />
                                     <video
-                                        v-if="selectedVideoUrl()"
-                                        :src="selectedVideoUrl()"
+                                        v-else-if="selectedPlayback?.direct_url"
+                                        :src="selectedPlayback.direct_url"
                                         controls
                                         playsinline
                                         class="h-full w-full object-contain"

@@ -10,6 +10,7 @@ import {
     MessageSquare,
     Package,
     Settings,
+    ShieldCheck,
     Sparkles,
     Users,
 } from 'lucide-vue-next';
@@ -35,7 +36,7 @@ type NavSection = {
     items: NavItem[];
 };
 
-const navSections: NavSection[] = [
+const baseNavSections: NavSection[] = [
     {
         label: 'Overview',
         items: [
@@ -70,6 +71,19 @@ const navSections: NavSection[] = [
 ];
 
 const page = usePage();
+
+const navSections = computed((): NavSection[] => {
+    const sections = [...baseNavSections];
+
+    if ((page.props as { isPlatformAdmin?: boolean }).isPlatformAdmin) {
+        sections.push({
+            label: 'Platform',
+            items: [{ title: 'Users', href: '/admin/users', icon: ShieldCheck }],
+        });
+    }
+
+    return sections;
+});
 const currentPath = computed(() => {
     try {
         return new URL(page.url).pathname;
@@ -88,6 +102,10 @@ return path === href;
     if (href === '/content') {
 return path === '/content' || (path.startsWith('/content/') && !path.startsWith('/content/create'));
 }
+
+    if (href === '/admin/users') {
+        return path === '/admin/users' || path.startsWith('/admin/users/');
+    }
 
     return path === href || path.startsWith(href + '/');
 }

@@ -40,6 +40,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::redirect('embeds', '/playlists')->name('embeds.page');
     Route::inertia('analytics', 'analytics/Index')->name('analytics.page');
     Route::inertia('teams', 'teams/Index')->name('teams.page');
+
+    Route::middleware('platform.admin')->group(function (): void {
+        Route::inertia('admin/users', 'admin/users/Index')->name('admin.users.page');
+    });
 });
 
 Route::get('embed/{slug}', [EmbedPageController::class, 'show'])->name('embed.show');

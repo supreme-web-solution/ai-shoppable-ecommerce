@@ -17,6 +17,12 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+    embedUrlForLiveWebinar,
+    isEmbedPlayback,
+    parseExternalVideoUrl,
+    type VideoPlayback,
+} from '@/lib/externalVideoUrl';
 
 type OfferAppearance = 'pin' | 'in_chat' | 'popup';
 
@@ -40,6 +46,7 @@ type WebinarData = {
     host_name?: string | null;
     room_title?: string | null;
     video_url?: string | null;
+    video_playback?: VideoPlayback | null;
     thumbnail_url?: string | null;
     chat_enabled?: boolean;
     video_duration_seconds?: number | null;
@@ -82,7 +89,34 @@ const lastWatchReportAtMs = ref(-1);
 const watchReportInFlight = ref(false);
 const watchHalfReported = ref(false);
 const watchEndReported = ref(false);
+const embedSessionKey = ref(0);
+const embedPlayStartedAt = ref<number | null>(null);
+let embedTimelineRef: number | null = null;
 let offerMessageId = 1_000_000;
+
+const videoPlayback = computed(() => {
+    const fromApi = webinar.value?.video_playback;
+
+    if (fromApi?.source_url) {
+        return fromApi;
+    }
+
+    return parseExternalVideoUrl(webinar.value?.video_url ?? null);
+});
+
+const hasVideoSource = computed(() => Boolean(videoPlayback.value));
+
+const usesEmbedPlayer = computed(() => isEmbedPlayback(videoPlayback.value));
+
+const activeEmbedUrl = computed(() => {
+    const playback = videoPlayback.value;
+
+    if (!isEmbedPlayback(playback) || !videoStarted.value) {
+        return null;
+    }
+
+    return embedUrlForLiveWebinar(playback.embed_url, playback.provider);
+});
 
 const DEFAULT_CHAT_WELCOME =
     "Welcome! Feel free to ask questions in the chat — we're glad you're here.";
@@ -261,7 +295,7 @@ function isOwnMessage(message: RoomMessage): boolean {
 
 function messageRowClass(message: RoomMessage): string {
     if (message.sender_type === 'offer') {
-        return 'justify-center';
+        return 'justify-start';
     }
 
     return isOwnMessage(message) ? 'justify-end' : 'justify-start';
@@ -306,12 +340,71 @@ function formatMoney(offer: WebinarOffer): string {
     }).format(Number(value));
 }
 
+function stopEmbedTimeline() {
+    if (embedTimelineRef !== null) {
+        window.clearInterval(embedTimelineRef);
+        embedTimelineRef = null;
+    }
+}
+
+function syncEmbedTimeline() {
+    if (embedPlayStartedAt.value === null) {
+        return;
+    }
+
+    const elapsed = Math.max(0, Date.now() - embedPlayStartedAt.value);
+    videoCurrentMs.value = elapsed;
+
+    const durationMs = webinarDurationMs();
+
+    if (durationMs > 0) {
+        if (elapsed >= durationMs) {
+            finishScheduledPlayback();
+
+            return;
+        }
+
+        void reportWatchProgress(elapsed);
+    }
+}
+
 function syncVideoTimeline() {
+    if (usesEmbedPlayer.value) {
+        syncEmbedTimeline();
+
+        return;
+    }
+
     if (!videoRef.value) {
         return;
     }
 
     videoCurrentMs.value = Math.floor(videoRef.value.currentTime * 1000);
+}
+
+function finishScheduledPlayback() {
+    if (videoEnded.value) {
+        return;
+    }
+
+    const durationMs = webinarDurationMs();
+    const positionMs = durationMs > 0 ? durationMs : videoCurrentMs.value;
+
+    videoEnded.value = true;
+    videoCurrentMs.value = positionMs;
+    stopEmbedTimeline();
+
+    const video = videoRef.value;
+
+    if (video && !usesEmbedPlayer.value) {
+        video.pause();
+
+        if (durationMs > 0) {
+            video.currentTime = durationMs / 1000;
+        }
+    }
+
+    void reportWatchProgress(positionMs, true);
 }
 
 function webinarDurationMs(): number {
@@ -374,6 +467,15 @@ async function reportWatchProgress(positionMs: number, completed = false) {
 
 function onVideoTimeUpdate() {
     syncVideoTimeline();
+
+    const durationMs = webinarDurationMs();
+
+    if (durationMs > 0 && videoCurrentMs.value >= durationMs) {
+        finishScheduledPlayback();
+
+        return;
+    }
+
     void reportWatchProgress(videoCurrentMs.value);
 }
 
@@ -384,7 +486,12 @@ function onVideoPlay() {
 }
 
 function onVideoEnded() {
+    if (videoEnded.value) {
+        return;
+    }
+
     videoEnded.value = true;
+    stopEmbedTimeline();
     syncVideoTimeline();
     void reportWatchProgress(videoCurrentMs.value, true);
 }
@@ -396,6 +503,17 @@ function resetOfferPlaybackState() {
 }
 
 async function startVideoPlayback() {
+    if (usesEmbedPlayer.value) {
+        videoStarted.value = true;
+        videoEnded.value = false;
+        embedPlayStartedAt.value = Date.now();
+        stopEmbedTimeline();
+        embedTimelineRef = window.setInterval(syncEmbedTimeline, 250);
+        syncEmbedTimeline();
+
+        return;
+    }
+
     const video = videoRef.value;
 
     if (!video) {
@@ -413,19 +531,30 @@ async function startVideoPlayback() {
 }
 
 async function replayVideo() {
+    videoEnded.value = false;
+    resetOfferPlaybackState();
+    lastWatchReportAtMs.value = -1;
+    watchHalfReported.value = false;
+    watchEndReported.value = false;
+    videoCurrentMs.value = 0;
+
+    if (usesEmbedPlayer.value) {
+        stopEmbedTimeline();
+        embedPlayStartedAt.value = null;
+        videoStarted.value = false;
+        embedSessionKey.value += 1;
+        await startVideoPlayback();
+
+        return;
+    }
+
     const video = videoRef.value;
 
     if (!video) {
         return;
     }
 
-    videoEnded.value = false;
-    resetOfferPlaybackState();
-    lastWatchReportAtMs.value = -1;
-    watchHalfReported.value = false;
-    watchEndReported.value = false;
     video.currentTime = 0;
-    videoCurrentMs.value = 0;
 
     try {
         video.muted = false;
@@ -591,6 +720,8 @@ onBeforeUnmount(() => {
     if (pollRef.value !== null) {
         window.clearInterval(pollRef.value);
     }
+
+    stopEmbedTimeline();
 });
 </script>
 
@@ -633,14 +764,40 @@ onBeforeUnmount(() => {
             <div class="grid gap-4 lg:grid-cols-[1.75fr_1fr]">
                 <section class="video-card relative rounded-3xl p-3 md:p-4">
                     <div class="video-stage relative aspect-video overflow-hidden rounded-2xl bg-black">
+                        <img
+                            v-if="usesEmbedPlayer && !videoStarted && webinar?.thumbnail_url"
+                            :src="webinar.thumbnail_url"
+                            alt=""
+                            class="absolute inset-0 h-full w-full object-cover"
+                        >
+                        <div
+                            v-if="usesEmbedPlayer && videoStarted && activeEmbedUrl && !videoEnded"
+                            class="embed-player-shell"
+                        >
+                            <iframe
+                                :key="embedSessionKey"
+                                :src="activeEmbedUrl"
+                                title="Live webinar stream"
+                                class="embed-player-frame"
+                                allow="accelerometer; autoplay; encrypted-media; gyroscope"
+                                tabindex="-1"
+                            />
+                            <div class="embed-top-fade" aria-hidden="true" />
+                            <div class="embed-edge-fade" aria-hidden="true" />
+                            <div
+                                v-if="!videoEnded"
+                                class="embed-chrome-mask"
+                                aria-hidden="true"
+                            />
+                        </div>
                         <video
-                            v-if="webinar?.video_url"
+                            v-else-if="videoPlayback?.direct_url"
                             ref="videoRef"
-                            :src="webinar.video_url"
+                            :src="videoPlayback.direct_url"
                             playsinline
                             preload="metadata"
                             class="absolute inset-0 h-full w-full object-contain"
-                            :poster="webinar.thumbnail_url || undefined"
+                            :poster="webinar?.thumbnail_url || undefined"
                             @timeupdate="onVideoTimeUpdate"
                             @loadedmetadata="syncVideoTimeline"
                             @seeked="syncVideoTimeline"
@@ -671,7 +828,7 @@ onBeforeUnmount(() => {
                         </div>
 
                         <div
-                            v-if="webinar?.video_url && !videoStarted"
+                            v-if="hasVideoSource && !videoStarted"
                             class="absolute inset-0 z-10 flex items-center justify-center bg-black/45 p-4"
                         >
                             <button
@@ -685,13 +842,13 @@ onBeforeUnmount(() => {
                                     <Play class="ml-1 size-8 fill-current" />
                                 </span>
                                 <span class="text-sm font-bold text-gray-900">
-                                    Click to start video
+                                    Click to Enable Sound
                                 </span>
                             </button>
                         </div>
 
                         <div
-                            v-if="webinar?.video_url && videoStarted && videoEnded"
+                            v-if="hasVideoSource && videoStarted && videoEnded"
                             class="absolute inset-0 z-30 flex items-center justify-center bg-black/75 p-4"
                         >
                             <div
@@ -786,9 +943,7 @@ onBeforeUnmount(() => {
                                 {{ emoji }}
                             </button>
                         </div>
-                        <p class="text-xs text-gray-500">
-                            Special offers may appear during the session.
-                        </p>
+                        
                     </div>
                 </section>
 
@@ -1029,6 +1184,54 @@ onBeforeUnmount(() => {
 
 .empty-video {
     background: linear-gradient(135deg, #1f2937, #111827);
+}
+
+.embed-player-shell {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    overflow: hidden;
+    background: #000;
+}
+
+.embed-player-frame {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    transform: translate(-50%, -50%) scale(1.14);
+    pointer-events: none;
+}
+
+.embed-top-fade {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 4;
+    height: 16%;
+    pointer-events: none;
+    background: linear-gradient(to bottom, rgb(0 0 0 / 75%), transparent);
+}
+
+.embed-edge-fade {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 4;
+    height: 22%;
+    pointer-events: none;
+    background: linear-gradient(to top, rgb(0 0 0 / 92%), transparent);
+}
+
+.embed-chrome-mask {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    cursor: default;
 }
 
 .video-play-btn {

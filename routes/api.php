@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Admin\PlaylistController;
 use App\Http\Controllers\Api\V1\Admin\ProductController;
 use App\Http\Controllers\Api\V1\Admin\TeamController;
 use App\Http\Controllers\Api\V1\Admin\TeamMemberController;
+use App\Http\Controllers\Api\V1\Admin\UserManagementController;
 use App\Http\Controllers\Api\V1\Admin\VideoController;
 use App\Http\Controllers\Api\V1\Admin\VideoProductTagController;
 use App\Http\Controllers\Api\V1\Admin\ZernioController;
@@ -146,6 +147,13 @@ Route::prefix('v1')->group(function (): void {
                 Route::get('shop-link', [ZernioController::class, 'shopLink']);
                 Route::post('publish', [ZernioController::class, 'publish']);
                 Route::get('history', [ZernioController::class, 'history']);
+            });
+
+            Route::middleware('platform.admin')->group(function (): void {
+                Route::get('platform/users', [UserManagementController::class, 'index']);
+                Route::post('platform/users', [UserManagementController::class, 'store']);
+                Route::patch('platform/users/{user}', [UserManagementController::class, 'update']);
+                Route::delete('platform/users/{user}', [UserManagementController::class, 'destroy']);
             });
         });
 });

@@ -50,6 +50,41 @@ class WebinarRoomTest extends TestCase
             ->assertJsonPath('message', 'Registration not found. Open the registration page and join again before sending messages.');
     }
 
+    public function test_player_show_parses_youtube_video_url(): void
+    {
+        $team = Team::query()->create([
+            'owner_user_id' => User::factory()->create()->id,
+            'name' => 'Video Team',
+            'slug' => 'video-team',
+            'checkout_mode' => 'native',
+            'external_provider' => 'none',
+        ]);
+
+        $liveShow = LiveShow::query()->create([
+            'team_id' => $team->id,
+            'title' => 'YouTube Webinar',
+            'status' => 'live',
+            'starts_at' => now()->subMinute(),
+            'settings' => [
+                'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                'video_duration_seconds' => 120,
+            ],
+        ]);
+
+        $this->getJson("/api/v1/player/webinars/{$liveShow->id}")
+            ->assertOk()
+            ->assertJsonPath('data.video_url', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+            ->assertJsonPath('data.video_playback.provider', 'youtube')
+            ->assertJsonPath(
+                'data.video_playback.embed_url',
+                'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
+            )
+            ->assertJsonPath(
+                'data.thumbnail_url',
+                'https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+            );
+    }
+
     public function test_player_show_includes_featured_products_with_schedule(): void
     {
         $team = Team::query()->create([

@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\PlatformAdmin;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -44,6 +45,7 @@ class HandleInertiaRequests extends Middleware
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
             'zernioEnabled' => (bool) config('services.zernio.enabled', false)
                 && trim((string) config('services.zernio.api_key')) !== '',
+            'isPlatformAdmin' => PlatformAdmin::isPlatformAdmin($request->user()),
         ];
     }
 }
