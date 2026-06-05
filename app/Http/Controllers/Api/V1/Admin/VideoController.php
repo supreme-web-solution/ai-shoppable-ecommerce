@@ -8,11 +8,13 @@ use App\Http\Resources\Api\V1\VideoResource;
 use App\Jobs\ProcessVideoAssetJob;
 use App\Jobs\RefreshKnowledgeEmbeddingsJob;
 use App\Models\Video;
+use App\Services\CloudinaryService;
 use App\Services\Media\LocalVideoStagingService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class VideoController extends Controller
 {
@@ -43,6 +45,29 @@ class VideoController extends Controller
             ->paginate(15);
 
         return VideoResource::collection($videos);
+    }
+
+    public function uploadParams(Request $request, CloudinaryService $cloudinaryService)
+    {
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+        ]);
+
+        $this->assertBelongsToCurrentTeam($request, (int) $validated['team_id']);
+
+        try {
+            return response()->json(
+                $cloudinaryService->signedVideoUploadParams('video_'.Str::uuid()->toString()),
+            );
+        } catch (\Throwable $exception) {
+            Log::warning('Video direct upload unavailable, falling back to server upload', [
+                'error' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'direct_upload' => false,
+            ]);
+        }
     }
 
     public function upload(Request $request)
@@ -80,6 +105,8 @@ class VideoController extends Controller
 
         if (! empty($data['local_file_path'])) {
             $data['status'] = 'processing';
+        } elseif (! empty($data['cloudinary_public_id']) && ! empty($data['playback_url'])) {
+            $data['status'] = 'ready';
         }
 
         $video = Video::query()->create([
@@ -156,18 +183,24 @@ class VideoController extends Controller
             'metadata.knowledge_sources.*.title' => ['required_with:metadata.knowledge_sources', 'string', 'max:255'],
             'metadata.knowledge_sources.*.content' => ['required_with:metadata.knowledge_sources', 'string'],
             'local_file_path' => ['sometimes', 'nullable', 'string', 'max:1000'],
+            'cloudinary_public_id' => ['sometimes', 'nullable', 'string', 'max:255'],
         ]);
 
         $localFilePath = $validated['local_file_path'] ?? null;
         unset($validated['local_file_path']);
 
+        $hasDirectCloudinaryUpload = ! empty($validated['cloudinary_public_id'])
+            && ! empty($validated['playback_url']);
+
         if ($localFilePath) {
             $validated['status'] = 'processing';
             $validated['playback_url'] = null;
             $validated['cloudinary_public_id'] = null;
+        } elseif ($hasDirectCloudinaryUpload) {
+            $validated['status'] = 'ready';
         }
 
-        if ($localFilePath) {
+        if ($localFilePath || $hasDirectCloudinaryUpload) {
             app(LocalVideoStagingService::class)->deleteForVideo($video);
         }
 

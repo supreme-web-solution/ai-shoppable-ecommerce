@@ -38,7 +38,7 @@ import {
 import ScrollableDialogContent from '@/components/ui/dialog/ScrollableDialogContent.vue';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAdminApi } from '@/composables/useAdminApi';
+import { useAdminApi, videoUploadFields } from '@/composables/useAdminApi';
 import {
     
     
@@ -154,7 +154,7 @@ function onTagPinnedChange(tag: TagDraft) {
     }
 }
 
-const { getList, postJson, patchJson, apiFetch, uploadFile, ensureTeam } = useAdminApi();
+const { getList, postJson, patchJson, apiFetch, uploadVideoFile, ensureTeam } = useAdminApi();
 
 const videoLoading = ref(true);
 const saving = ref(false);
@@ -648,15 +648,21 @@ return;
 
     try {
         await ensureTeam();
-        const upload = await uploadFile('/api/v1/admin/videos/upload', file);
-        await patchJson(`/api/v1/admin/videos/${props.videoId}`, {
-            local_file_path: upload.local_file_path,
-        });
-        form.value.status = 'processing';
-        setPlaybackUrl(null);
-        cloudinaryPublicId.value = null;
-        infoText.value = 'Video processing. This page will update automatically.';
-        startPollingIfNeeded();
+        const upload = await uploadVideoFile(file);
+        await patchJson(`/api/v1/admin/videos/${props.videoId}`, videoUploadFields(upload));
+
+        if (upload.local_file_path) {
+            form.value.status = 'processing';
+            setPlaybackUrl(null);
+            cloudinaryPublicId.value = null;
+            infoText.value = 'Video processing. This page will update automatically.';
+            startPollingIfNeeded();
+        } else {
+            form.value.status = 'ready';
+            setPlaybackUrl(upload.playback_url ?? null);
+            cloudinaryPublicId.value = upload.cloudinary_public_id ?? null;
+            infoText.value = 'Video replaced successfully.';
+        }
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not replace video.';
         infoText.value = '';

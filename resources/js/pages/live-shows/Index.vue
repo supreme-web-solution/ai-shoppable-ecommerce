@@ -51,7 +51,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAdminApi } from '@/composables/useAdminApi';
+import { useAdminApi, videoUploadFields } from '@/composables/useAdminApi';
 import { isEmbedPlayback, parseExternalVideoUrl } from '@/lib/externalVideoUrl';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ defineOptions({
 
 // ── Composables ────────────────────────────────────────────────────────────
 
-const { teamId, getList, postJson, putJson, apiFetch, uploadFile, deleteResource, ensureTeam } = useAdminApi();
+const { teamId, getList, postJson, putJson, apiFetch, uploadVideoFile, deleteResource, ensureTeam } = useAdminApi();
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -569,7 +569,7 @@ async function uploadWebinarVideo() {
 
     try {
         await ensureTeam();
-        const upload = await uploadFile('/api/v1/admin/videos/upload', selectedVideoFile.value);
+        const upload = await uploadVideoFile(selectedVideoFile.value);
         const title =
             form.value.title.trim() ||
             selectedVideoFile.value.name.replace(/\.[^.]+$/, '');
@@ -578,7 +578,7 @@ async function uploadWebinarVideo() {
             description: form.value.description.trim() || null,
             source: 'uploaded',
             visibility: 'public',
-            local_file_path: upload.local_file_path,
+            ...videoUploadFields(upload),
         });
         const created = unwrapVideo(payload);
 

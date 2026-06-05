@@ -38,6 +38,7 @@ class StoreVideoRequest extends FormRequest
             'visibility' => ['sometimes', 'in:public,unlisted,private'],
             'playback_url' => ['nullable', 'url'],
             'thumbnail_url' => ['nullable', 'url'],
+            'cloudinary_public_id' => ['nullable', 'string', 'max:255'],
             'duration_seconds' => ['nullable', 'integer', 'min:0'],
             'published_at' => ['nullable', 'date'],
             'metadata' => ['nullable', 'array'],

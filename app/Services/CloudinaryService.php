@@ -100,6 +100,70 @@ class CloudinaryService
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    public function signedVideoUploadParams(?string $publicId = null): array
+    {
+        if ($this->cloudinary === null || $this->cloudName === null || $this->cloudName === '') {
+            throw new \RuntimeException('Cloudinary is not configured.');
+        }
+
+        $apiKey = trim((string) config('services.cloudinary.api_key'));
+        $apiSecret = trim((string) config('services.cloudinary.api_secret'));
+
+        if ($apiKey === '' || $apiSecret === '') {
+            throw new \RuntimeException('Cloudinary is not configured.');
+        }
+
+        $timestamp = time();
+        $folder = 'ai-video-commerce';
+
+        $paramsToSign = [
+            'folder' => $folder,
+            'timestamp' => $timestamp,
+        ];
+
+        if (is_string($publicId) && $publicId !== '') {
+            $paramsToSign['public_id'] = $publicId;
+        }
+
+        ksort($paramsToSign);
+
+        $signaturePayload = implode('&', array_map(
+            fn (string $key, mixed $value): string => $key.'='.$value,
+            array_keys($paramsToSign),
+            array_values($paramsToSign),
+        ));
+
+        return [
+            'direct_upload' => true,
+            'cloud_name' => $this->cloudName,
+            'api_key' => $apiKey,
+            'timestamp' => $timestamp,
+            'signature' => sha1($signaturePayload.$apiSecret),
+            'folder' => $folder,
+            'public_id' => $publicId,
+            'upload_url' => "https://api.cloudinary.com/v1_1/{$this->cloudName}/video/upload",
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     * @return array<string, mixed>
+     */
+    public function normalizeClientUploadResult(array $result): array
+    {
+        $publicId = (string) Arr::get($result, 'public_id', '');
+
+        return [
+            'cloudinary_public_id' => $publicId,
+            'playback_url' => $this->withVideoDeliveryTransform((string) Arr::get($result, 'secure_url', '')),
+            'thumbnail_url' => $this->videoThumbnailUrl($publicId, $result),
+            'duration_seconds' => (int) Arr::get($result, 'duration', 0),
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */

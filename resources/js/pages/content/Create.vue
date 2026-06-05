@@ -43,7 +43,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useAdminApi } from '@/composables/useAdminApi';
+import { useAdminApi, videoUploadFields } from '@/composables/useAdminApi';
 defineOptions({
     layout: {
         breadcrumbs: [
@@ -105,7 +105,7 @@ type HeyGenOptions = {
     message?: string | null;
 };
 
-const { teamId, apiFetch, getList, postJson, uploadFile, ensureTeam } = useAdminApi();
+const { teamId, apiFetch, getList, postJson, uploadVideoFile, ensureTeam } = useAdminApi();
 
 type CreateMode = 'upload' | 'ai';
 const createMode = ref<CreateMode | null>(null);
@@ -673,15 +673,15 @@ async function submitUpload() {
 
     try {
         await ensureTeam();
-        const upload = await uploadFile('/api/v1/admin/videos/upload', selectedFile.value);
+        const upload = await uploadVideoFile(selectedFile.value);
 
         const payload = await postJson<unknown>('/api/v1/admin/videos', {
             title: uploadForm.value.title || selectedFile.value.name.replace(/\.[^.]+$/, ''),
             description: uploadForm.value.description || null,
             source: 'uploaded',
             visibility: uploadForm.value.visibility,
-            thumbnail_url: uploadForm.value.thumbnail_url || null,
-            local_file_path: upload.local_file_path,
+            thumbnail_url: uploadForm.value.thumbnail_url || upload.thumbnail_url || null,
+            ...videoUploadFields(upload),
             metadata: viewerSim.value.enabled ? {
                 viewer_sim_enabled: true,
                 viewer_sim_min: viewerSim.value.min,

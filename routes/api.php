@@ -94,6 +94,7 @@ Route::prefix('v1')->group(function (): void {
         ->name('admin.')
         ->group(function (): void {
             Route::get('overview', [OverviewController::class, 'show']);
+            Route::post('videos/upload-params', [VideoController::class, 'uploadParams']);
             Route::post('videos/upload', [VideoController::class, 'upload']);
             Route::post('videos/{video}/retry-processing', [VideoController::class, 'retryProcessing']);
             Route::get('ai/heygen-options', [AiContentController::class, 'heygenOptions']);
