@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('invites/{token}', [TeamInvitePageController::class, 'show'])->name('invites.show');
 
-Route::inertia('/', 'Welcome')->name('home');
+Route::redirect('/', '/login')->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('tutorial', [TutorialController::class, 'index'])->name('tutorial.index');
