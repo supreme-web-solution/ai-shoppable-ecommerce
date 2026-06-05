@@ -23,13 +23,15 @@ class ReverbClientConfig
         }
 
         $options = is_array($reverb['options'] ?? null) ? $reverb['options'] : [];
+        $scheme = self::resolveClientScheme($options['scheme'] ?? null);
+        $port = self::resolveClientPort((int) ($options['port'] ?? 0), $scheme);
 
         return [
             'enabled' => true,
             'key' => $key,
             'host' => self::resolveClientHost($options['host'] ?? null),
-            'port' => (int) ($options['port'] ?? 443),
-            'scheme' => ($options['scheme'] ?? 'https') === 'http' ? 'http' : 'https',
+            'port' => $port,
+            'scheme' => $scheme,
         ];
     }
 
@@ -46,5 +48,44 @@ class ReverbClientConfig
         }
 
         return $host !== '' ? $host : 'localhost';
+    }
+
+    protected static function resolveClientScheme(mixed $scheme): string
+    {
+        $scheme = ($scheme ?? 'https') === 'http' ? 'http' : 'https';
+
+        if ($scheme === 'http') {
+            $appScheme = parse_url((string) config('app.url'), PHP_URL_SCHEME);
+
+            if ($appScheme === 'https') {
+                return 'https';
+            }
+        }
+
+        return $scheme;
+    }
+
+    protected static function resolveClientPort(int $port, string $scheme): int
+    {
+        $clientPort = env('REVERB_CLIENT_PORT');
+
+        if ($clientPort !== null && $clientPort !== '') {
+            return (int) $clientPort;
+        }
+
+        $serverPort = (int) config('reverb.servers.reverb.port', 8080);
+        $appPort = parse_url((string) config('app.url'), PHP_URL_PORT);
+        $appPort = is_numeric($appPort) ? (int) $appPort : ($scheme === 'https' ? 443 : 80);
+
+        // REVERB_PORT is often mistakenly set to the daemon port (8080/8081). Browsers reach Reverb via nginx on 443.
+        if ($scheme === 'https' && ($port === $serverPort || in_array($port, [8080, 8081], true))) {
+            return 443;
+        }
+
+        if ($port > 0) {
+            return $port;
+        }
+
+        return $appPort > 0 ? $appPort : ($scheme === 'https' ? 443 : 80);
     }
 }

@@ -56,4 +56,26 @@ class ReverbClientConfigTest extends TestCase
 
         $this->assertSame('ws.example.com', $config['host']);
     }
+
+    public function test_maps_daemon_port_to_https_client_port(): void
+    {
+        config([
+            'app.url' => 'https://ai-shoppable-ecommerce-ztxhczxs.on-forge.com',
+            'broadcasting.default' => 'reverb',
+            'reverb.servers.reverb.port' => 8081,
+            'broadcasting.connections.reverb' => [
+                'key' => 'giw85ggkxxcanvgrtnum',
+                'options' => [
+                    'host' => 'localhost',
+                    'port' => 8081,
+                    'scheme' => 'http',
+                ],
+            ],
+        ]);
+
+        $config = ReverbClientConfig::forClient();
+
+        $this->assertSame('https', $config['scheme']);
+        $this->assertSame(443, $config['port']);
+    }
 }
