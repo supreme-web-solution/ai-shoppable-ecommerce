@@ -413,7 +413,22 @@ function toggleTargetLanguage(code: string) {
 
 /* ── voice audio preview ── */
 const playingVoiceId = ref('');
+const loadingVoiceId = ref('');
 let audioInstance: HTMLAudioElement | null = null;
+
+function clearVoicePreview() {
+    if (audioInstance) {
+        audioInstance.pause();
+        audioInstance.onended = null;
+        audioInstance.oncanplay = null;
+        audioInstance.onplaying = null;
+        audioInstance.onerror = null;
+        audioInstance = null;
+    }
+
+    playingVoiceId.value = '';
+    loadingVoiceId.value = '';
+}
 
 /* ── Step 3 inner tab ── */
 const presenterTab = ref<'avatars' | 'voices'>('avatars');
@@ -450,26 +465,48 @@ const filteredHeyGenAvatars = computed(() => {
 
 function toggleVoicePreview(voice: HeyGenVoiceOption) {
     if (!voice.preview_audio_url) {
-return;
-}
+        return;
+    }
 
-    if (playingVoiceId.value === voice.voice_id) {
-        audioInstance?.pause();
-        playingVoiceId.value = '';
+    if (playingVoiceId.value === voice.voice_id || loadingVoiceId.value === voice.voice_id) {
+        clearVoicePreview();
 
         return;
     }
 
-    if (audioInstance) {
-        audioInstance.pause();
-    }
+    clearVoicePreview();
 
-    audioInstance = new Audio(voice.preview_audio_url);
-    playingVoiceId.value = voice.voice_id;
-    audioInstance.play().catch(() => {});
-    audioInstance.onended = () => {
-        playingVoiceId.value = '';
+    loadingVoiceId.value = voice.voice_id;
+    const audio = new Audio(voice.preview_audio_url);
+    audioInstance = audio;
+
+    const markPlaying = () => {
+        if (loadingVoiceId.value !== voice.voice_id) {
+            return;
+        }
+
+        loadingVoiceId.value = '';
+        playingVoiceId.value = voice.voice_id;
     };
+
+    audio.oncanplay = markPlaying;
+    audio.onplaying = markPlaying;
+    audio.onended = () => {
+        if (playingVoiceId.value === voice.voice_id) {
+            clearVoicePreview();
+        }
+    };
+    audio.onerror = () => {
+        if (loadingVoiceId.value === voice.voice_id || playingVoiceId.value === voice.voice_id) {
+            clearVoicePreview();
+        }
+    };
+
+    void audio.play().catch(() => {
+        if (loadingVoiceId.value === voice.voice_id) {
+            clearVoicePreview();
+        }
+    });
 }
 
 /* ── product modal ── */
@@ -617,7 +654,7 @@ URL.revokeObjectURL(previewVideoUrl.value);
 URL.revokeObjectURL(thumbnailPreviewUrl.value);
 }
 
-    audioInstance?.pause();
+    clearVoicePreview();
 });
 
 function unwrapVideo(payload: unknown): VideoItem | null {
@@ -1811,13 +1848,31 @@ onMounted(() => {
                                             type="button"
                                             :class="[
                                                 'flex size-9 shrink-0 items-center justify-center rounded-full border-2 transition-all',
-                                                playingVoiceId === voice.voice_id
+                                                playingVoiceId === voice.voice_id || loadingVoiceId === voice.voice_id
                                                     ? 'border-[#E8563A] bg-[#E8563A] text-white shadow-md shadow-[#E8563A]/30'
                                                     : 'border-border bg-background text-muted-foreground hover:border-[#E8563A]/50 hover:text-[#E8563A]',
                                             ]"
+                                            :title="
+                                                loadingVoiceId === voice.voice_id
+                                                    ? 'Loading voice preview…'
+                                                    : playingVoiceId === voice.voice_id
+                                                      ? 'Stop preview'
+                                                      : 'Play voice preview'
+                                            "
+                                            :aria-label="
+                                                loadingVoiceId === voice.voice_id
+                                                    ? 'Loading voice preview'
+                                                    : playingVoiceId === voice.voice_id
+                                                      ? 'Stop voice preview'
+                                                      : 'Play voice preview'
+                                            "
                                             @click.stop="toggleVoicePreview(voice)"
                                         >
-                                            <Pause v-if="playingVoiceId === voice.voice_id" class="size-3.5" />
+                                            <Loader2
+                                                v-if="loadingVoiceId === voice.voice_id"
+                                                class="size-3.5 animate-spin"
+                                            />
+                                            <Pause v-else-if="playingVoiceId === voice.voice_id" class="size-3.5" />
                                             <Play v-else class="ml-0.5 size-3.5" />
                                         </button>
                                         <div v-else class="flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-muted-foreground/20 text-muted-foreground/30">

@@ -182,4 +182,27 @@ class WebinarRoomTest extends TestCase
             ->assertCreated()
             ->assertJsonPath('data.0.message', 'Hello host');
     }
+
+    public function test_messages_poll_accepts_after_id_zero_when_chat_is_empty(): void
+    {
+        $team = Team::query()->create([
+            'owner_user_id' => User::factory()->create()->id,
+            'name' => 'Poll Team',
+            'slug' => 'poll-team',
+            'checkout_mode' => 'native',
+            'external_provider' => 'none',
+        ]);
+
+        $liveShow = LiveShow::query()->create([
+            'team_id' => $team->id,
+            'title' => 'Empty Chat Webinar',
+            'status' => 'live',
+            'starts_at' => now()->subMinute(),
+            'settings' => ['chat_enabled' => true],
+        ]);
+
+        $this->getJson("/api/v1/player/webinars/{$liveShow->id}/messages?after_id=0")
+            ->assertOk()
+            ->assertJsonPath('data', []);
+    }
 }

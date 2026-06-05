@@ -585,14 +585,18 @@ async function loadRoom() {
     }
 }
 
+function messagesPollUrl(lastId: number): string {
+    const base = `/api/v1/player/webinars/${webinarId}/messages`;
+
+    return lastId > 0 ? `${base}?after_id=${lastId}` : base;
+}
+
 async function pollMessages() {
     const lastId =
         messages.value.length > 0 ? messages.value[messages.value.length - 1].id : 0;
 
     try {
-        const payload = await apiFetch<{ data: RoomMessage[] }>(
-            `/api/v1/player/webinars/${webinarId}/messages?after_id=${lastId}`,
-        );
+        const payload = await apiFetch<{ data: RoomMessage[] }>(messagesPollUrl(lastId));
 
         if (payload.data?.length) {
             messages.value = [...messages.value, ...payload.data];

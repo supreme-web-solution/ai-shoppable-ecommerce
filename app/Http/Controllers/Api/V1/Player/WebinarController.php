@@ -218,7 +218,7 @@ class WebinarController extends Controller
         abort_if($liveShow->status === 'cancelled', 404);
 
         $validated = $request->validate([
-            'after_id' => ['nullable', 'integer', 'min:1'],
+            'after_id' => ['nullable', 'integer', 'min:0'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:200'],
         ]);
 
