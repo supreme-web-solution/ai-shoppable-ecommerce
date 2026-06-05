@@ -96,6 +96,8 @@ Route::prefix('v1')->group(function (): void {
             Route::get('overview', [OverviewController::class, 'show']);
             Route::post('videos/upload-params', [VideoController::class, 'uploadParams']);
             Route::post('videos/upload', [VideoController::class, 'upload']);
+            Route::post('videos/{video}/prepare-upload', [VideoController::class, 'prepareUpload']);
+            Route::post('videos/{video}/upload-chunk', [VideoController::class, 'uploadChunk']);
             Route::post('videos/{video}/retry-processing', [VideoController::class, 'retryProcessing']);
             Route::get('ai/heygen-options', [AiContentController::class, 'heygenOptions']);
             Route::get('ai/generations', [AiContentController::class, 'index']);

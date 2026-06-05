@@ -10,6 +10,7 @@ use App\Jobs\RefreshKnowledgeEmbeddingsJob;
 use App\Models\Video;
 use App\Services\CloudinaryService;
 use App\Services\Media\LocalVideoStagingService;
+use App\Services\Media\VideoChunkUploadService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -107,7 +108,17 @@ class VideoController extends Controller
             $data['status'] = 'processing';
         } elseif (! empty($data['cloudinary_public_id']) && ! empty($data['playback_url'])) {
             $data['status'] = 'ready';
+        } elseif ($request->boolean('awaiting_upload')) {
+            $data['status'] = 'processing';
+            $metadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
+            $metadata['pending_upload'] = [
+                'token' => Str::uuid()->toString(),
+                'created_at' => now()->toIso8601String(),
+            ];
+            $data['metadata'] = $metadata;
         }
+
+        unset($data['awaiting_upload']);
 
         $video = Video::query()->create([
             ...$data,
@@ -130,6 +141,104 @@ class VideoController extends Controller
         $this->authorize('view', $video);
 
         return new VideoResource($video->load('productTags.product'));
+    }
+
+    public function prepareUpload(Request $request, Video $video)
+    {
+        $this->authorize('update', $video);
+
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+        ]);
+
+        $this->assertBelongsToCurrentTeam($request, (int) $validated['team_id']);
+
+        $token = Str::uuid()->toString();
+        $metadata = (array) ($video->metadata ?? []);
+        $metadata['pending_upload'] = [
+            'token' => $token,
+            'created_at' => now()->toIso8601String(),
+        ];
+
+        $video->update([
+            'status' => 'processing',
+            'playback_url' => null,
+            'cloudinary_public_id' => null,
+            'metadata' => $metadata,
+        ]);
+
+        return response()->json([
+            'upload_token' => $token,
+        ]);
+    }
+
+    public function uploadChunk(
+        Request $request,
+        Video $video,
+        VideoChunkUploadService $chunkUploadService,
+        LocalVideoStagingService $staging,
+    ) {
+        $this->authorize('update', $video);
+
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+            'upload_token' => ['required', 'uuid'],
+            'chunk_index' => ['required', 'integer', 'min:0'],
+            'total_chunks' => ['required', 'integer', 'min:1', 'max:500'],
+            'original_name' => ['required', 'string', 'max:255'],
+            'file' => ['required', 'file', 'max:8192'],
+        ]);
+
+        $this->assertBelongsToCurrentTeam($request, (int) $validated['team_id']);
+
+        $expectedToken = (string) data_get($video->metadata, 'pending_upload.token', '');
+
+        if ($expectedToken === '' || $expectedToken !== $validated['upload_token']) {
+            abort(403, 'Invalid upload token.');
+        }
+
+        $token = (string) $validated['upload_token'];
+        $chunkIndex = (int) $validated['chunk_index'];
+        $totalChunks = (int) $validated['total_chunks'];
+
+        $chunkUploadService->storeChunk(
+            $token,
+            $chunkIndex,
+            $request->file('file')->get(),
+        );
+
+        if ($chunkIndex + 1 < $totalChunks) {
+            return response()->json([
+                'complete' => false,
+                'chunk_index' => $chunkIndex,
+            ]);
+        }
+
+        $extension = pathinfo((string) $validated['original_name'], PATHINFO_EXTENSION) ?: 'mp4';
+        $finalRelative = LocalVideoStagingService::STAGING_DIR.'/video_'.$video->id.'_'.Str::random(8).'.'.$extension;
+
+        $absolutePath = $chunkUploadService->mergeChunks($token, $totalChunks, $finalRelative);
+
+        $metadata = (array) ($video->metadata ?? []);
+        unset($metadata['pending_upload']);
+
+        $video->update([
+            'metadata' => $metadata,
+            'status' => 'processing',
+        ]);
+
+        $staging->rememberForVideo($video->fresh(), $finalRelative);
+        $this->dispatchVideoProcessing($video->id, $absolutePath);
+
+        Log::info('Video chunked upload complete', [
+            'video_id' => $video->id,
+            'path' => $absolutePath,
+            'size_bytes' => filesize($absolutePath),
+        ]);
+
+        return response()->json([
+            'complete' => true,
+        ]);
     }
 
     public function retryProcessing(Video $video)

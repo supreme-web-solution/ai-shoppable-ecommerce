@@ -51,7 +51,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAdminApi, videoUploadFields } from '@/composables/useAdminApi';
+import { extractUploadToken, useAdminApi } from '@/composables/useAdminApi';
+import { setPendingVideoUpload } from '@/lib/pendingVideoUpload';
 import { isEmbedPlayback, parseExternalVideoUrl } from '@/lib/externalVideoUrl';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -61,6 +62,7 @@ type VideoOption = {
     title: string;
     thumbnail_url?: string | null;
     playback_url?: string | null;
+    metadata?: Record<string, unknown> | null;
 };
 
 type OfferAppearance = 'pin' | 'in_chat' | 'popup';
@@ -232,7 +234,7 @@ defineOptions({
 
 // ── Composables ────────────────────────────────────────────────────────────
 
-const { teamId, getList, postJson, putJson, apiFetch, uploadVideoFile, deleteResource, ensureTeam } = useAdminApi();
+const { teamId, getList, postJson, putJson, apiFetch, uploadVideoChunks, deleteResource, ensureTeam } = useAdminApi();
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -569,7 +571,6 @@ async function uploadWebinarVideo() {
 
     try {
         await ensureTeam();
-        const upload = await uploadVideoFile(selectedVideoFile.value);
         const title =
             form.value.title.trim() ||
             selectedVideoFile.value.name.replace(/\.[^.]+$/, '');
@@ -578,22 +579,30 @@ async function uploadWebinarVideo() {
             description: form.value.description.trim() || null,
             source: 'uploaded',
             visibility: 'public',
-            ...videoUploadFields(upload),
+            awaiting_upload: true,
         });
         const created = unwrapVideo(payload);
 
         if (!created?.id) {
-            throw new Error('Video was uploaded but could not be linked.');
+            throw new Error('Video record could not be created.');
         }
+
+        const uploadToken = extractUploadToken(created.metadata);
+
+        if (!uploadToken) {
+            throw new Error('Upload token missing for background video upload.');
+        }
+
+        setPendingVideoUpload(created.id, selectedVideoFile.value);
 
         const videoPayload = await getList<VideoOption>('/api/v1/admin/videos');
         videos.value = videoPayload.data ?? [];
         form.value.video_id = created.id;
         form.value.settings.source_type = 'upload';
 
-        if (created.playback_url) {
-            form.value.settings.video_url = created.playback_url;
-        }
+        void uploadVideoChunks(created.id, selectedVideoFile.value, uploadToken).catch((error: unknown) => {
+            videoUploadError.value = error instanceof Error ? error.message : 'Background video upload failed.';
+        });
 
         selectedVideoFile.value = null;
     } catch (error) {

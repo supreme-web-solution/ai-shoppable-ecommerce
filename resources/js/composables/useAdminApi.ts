@@ -11,26 +11,22 @@ type PaginatedResponse<T> = {
     };
 };
 
-export type VideoUploadResult = {
-    local_file_path?: string;
-    cloudinary_public_id?: string;
-    playback_url?: string;
-    thumbnail_url?: string | null;
-    duration_seconds?: number;
-};
+const VIDEO_CHUNK_SIZE_BYTES = 4 * 1024 * 1024;
 
-export function videoUploadFields(upload: VideoUploadResult): Record<string, unknown> {
-    if (upload.local_file_path) {
-        return { local_file_path: upload.local_file_path };
+export function extractUploadToken(metadata: unknown): string | null {
+    if (!metadata || typeof metadata !== 'object') {
+        return null;
     }
 
-    return {
-        cloudinary_public_id: upload.cloudinary_public_id,
-        playback_url: upload.playback_url,
-        thumbnail_url: upload.thumbnail_url,
-        duration_seconds: upload.duration_seconds,
-        status: 'ready',
-    };
+    const pending = (metadata as Record<string, unknown>).pending_upload;
+
+    if (!pending || typeof pending !== 'object') {
+        return null;
+    }
+
+    const token = (pending as Record<string, unknown>).token;
+
+    return typeof token === 'string' && token !== '' ? token : null;
 }
 
 function readCookie(name: string): string | null {
@@ -184,120 +180,48 @@ export function useAdminApi() {
         });
     }
 
-    type VideoUploadParams = {
-        direct_upload?: boolean;
-        upload_url?: string;
-        api_key?: string;
-        timestamp?: number;
-        signature?: string;
-        folder?: string;
-        public_id?: string | null;
-        cloud_name?: string;
-    };
+    async function prepareVideoUpload(videoId: number): Promise<string> {
+        const response = await postJson<{ upload_token: string }>(
+            `/api/v1/admin/videos/${videoId}/prepare-upload`,
+            {},
+        );
 
-    type CloudinaryUploadResponse = {
-        public_id?: string;
-        secure_url?: string;
-        duration?: number;
-        error?: { message?: string };
-    };
-
-    function withVideoDeliveryTransform(url: string): string {
-        if (!url || !url.includes('/video/upload/') || url.includes('/video/upload/f_auto')) {
-            return url;
-        }
-
-        return url.replace('/video/upload/', '/video/upload/f_auto,q_auto/');
+        return response.upload_token;
     }
 
-    function cloudinaryVideoThumbnail(cloudName: string, publicId: string): string {
-        const escapedId = publicId.replace(/\//g, '%2F');
-
-        return `https://res.cloudinary.com/${cloudName}/video/upload/so_0,w_400,h_711,c_fill/f_auto,q_auto/${escapedId}.jpg`;
-    }
-
-    function uploadWithProgress(
-        url: string,
-        formData: FormData,
-        onProgress?: (percent: number) => void,
-    ): Promise<CloudinaryUploadResponse> {
-        return new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', url);
-            xhr.responseType = 'json';
-
-            xhr.upload.onprogress = (event) => {
-                if (!onProgress || !event.lengthComputable) {
-                    return;
-                }
-
-                onProgress(Math.round((event.loaded / event.total) * 100));
-            };
-
-            xhr.onload = () => {
-                let response = xhr.response as CloudinaryUploadResponse | null;
-
-                if (!response && typeof xhr.responseText === 'string' && xhr.responseText !== '') {
-                    try {
-                        response = JSON.parse(xhr.responseText) as CloudinaryUploadResponse;
-                    } catch {
-                        response = null;
-                    }
-                }
-
-                if (xhr.status >= 200 && xhr.status < 300 && response?.public_id) {
-                    resolve(response);
-
-                    return;
-                }
-
-                const message = response?.error?.message
-                    ?? `Cloudinary upload failed (${xhr.status})`;
-
-                reject(new Error(message));
-            };
-
-            xhr.onerror = () => {
-                reject(new Error('Cloudinary upload failed. Check your connection and try again.'));
-            };
-
-            xhr.send(formData);
-        });
-    }
-
-    async function uploadVideoFile(
+    async function uploadVideoChunks(
+        videoId: number,
         file: File,
+        uploadToken: string,
         onProgress?: (percent: number) => void,
-    ): Promise<VideoUploadResult> {
-        const params = await postJson<VideoUploadParams>('/api/v1/admin/videos/upload-params', {});
+    ): Promise<void> {
+        const totalChunks = Math.max(1, Math.ceil(file.size / VIDEO_CHUNK_SIZE_BYTES));
 
-        if (!params.direct_upload || !params.upload_url || !params.api_key || !params.signature || !params.folder) {
-            const legacy = await uploadFile('/api/v1/admin/videos/upload', file);
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * VIDEO_CHUNK_SIZE_BYTES;
+            const end = Math.min(file.size, start + VIDEO_CHUNK_SIZE_BYTES);
+            const chunk = file.slice(start, end);
 
-            return { local_file_path: legacy.local_file_path };
+            const formData = new FormData();
+            formData.append('team_id', String(teamId.value));
+            formData.append('upload_token', uploadToken);
+            formData.append('chunk_index', String(chunkIndex));
+            formData.append('total_chunks', String(totalChunks));
+            formData.append('original_name', file.name);
+            formData.append('file', chunk, file.name);
+
+            const headers = buildHeaders();
+
+            await apiFetch<{ complete: boolean }>(`/api/v1/admin/videos/${videoId}/upload-chunk`, {
+                method: 'POST',
+                headers,
+                body: formData,
+            });
+
+            if (onProgress) {
+                onProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
+            }
         }
-
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('api_key', params.api_key);
-        formData.append('timestamp', String(params.timestamp));
-        formData.append('signature', params.signature);
-        formData.append('folder', params.folder);
-
-        if (params.public_id) {
-            formData.append('public_id', params.public_id);
-        }
-
-        const response = await uploadWithProgress(params.upload_url, formData, onProgress);
-        const publicId = String(response.public_id ?? '');
-        const cloudName = String(params.cloud_name ?? '');
-
-        return {
-            cloudinary_public_id: publicId,
-            playback_url: withVideoDeliveryTransform(String(response.secure_url ?? '')),
-            thumbnail_url: cloudName !== '' ? cloudinaryVideoThumbnail(cloudName, publicId) : null,
-            duration_seconds: Math.round(Number(response.duration ?? 0)),
-        };
     }
 
     async function uploadFile(path: string, file: File, extra: Record<string, string> = {}): Promise<{ local_file_path: string }> {
@@ -342,7 +266,8 @@ export function useAdminApi() {
         patchJson,
         deleteResource,
         uploadFile,
-        uploadVideoFile,
+        prepareVideoUpload,
+        uploadVideoChunks,
         uploadProductImage,
         ensureTeam,
     };

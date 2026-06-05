@@ -38,7 +38,8 @@ import {
 import ScrollableDialogContent from '@/components/ui/dialog/ScrollableDialogContent.vue';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAdminApi, videoUploadFields } from '@/composables/useAdminApi';
+import { extractUploadToken, useAdminApi } from '@/composables/useAdminApi';
+import { takePendingVideoUpload } from '@/lib/pendingVideoUpload';
 import {
     
     
@@ -154,11 +155,12 @@ function onTagPinnedChange(tag: TagDraft) {
     }
 }
 
-const { getList, postJson, patchJson, apiFetch, uploadVideoFile, ensureTeam } = useAdminApi();
+const { getList, postJson, patchJson, apiFetch, prepareVideoUpload, uploadVideoChunks, ensureTeam } = useAdminApi();
 
 const videoLoading = ref(true);
 const saving = ref(false);
 const replacingVideo = ref(false);
+const fileUploadProgress = ref<number | null>(null);
 const retryingProcessing = ref(false);
 const errorText = ref('');
 const infoText = ref('');
@@ -634,6 +636,32 @@ async function retryVideoProcessing() {
     }
 }
 
+async function runBackgroundVideoUpload(file: File, uploadToken: string): Promise<void> {
+    replacingVideo.value = true;
+    fileUploadProgress.value = 0;
+    errorText.value = '';
+    form.value.status = 'processing';
+    setPlaybackUrl(null);
+    cloudinaryPublicId.value = null;
+    infoText.value = 'Uploading video file…';
+    startPollingIfNeeded();
+
+    try {
+        await ensureTeam();
+        await uploadVideoChunks(props.videoId, file, uploadToken, (percent) => {
+            fileUploadProgress.value = percent;
+            infoText.value = `Uploading video file… ${percent}%`;
+        });
+        infoText.value = 'Upload complete. Processing video in the background…';
+    } catch (err) {
+        errorText.value = err instanceof Error ? err.message : 'Could not upload video.';
+        infoText.value = 'Video upload failed. Try replacing the file below.';
+    } finally {
+        replacingVideo.value = false;
+        fileUploadProgress.value = null;
+    }
+}
+
 async function replaceVideoFile(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
@@ -642,32 +670,14 @@ async function replaceVideoFile(event: Event) {
 return;
 }
 
-    replacingVideo.value = true;
-    errorText.value = '';
-    infoText.value = 'Uploading video and sending to Server…';
-
     try {
         await ensureTeam();
-        const upload = await uploadVideoFile(file);
-        await patchJson(`/api/v1/admin/videos/${props.videoId}`, videoUploadFields(upload));
-
-        if (upload.local_file_path) {
-            form.value.status = 'processing';
-            setPlaybackUrl(null);
-            cloudinaryPublicId.value = null;
-            infoText.value = 'Video processing. This page will update automatically.';
-            startPollingIfNeeded();
-        } else {
-            form.value.status = 'ready';
-            setPlaybackUrl(upload.playback_url ?? null);
-            cloudinaryPublicId.value = upload.cloudinary_public_id ?? null;
-            infoText.value = 'Video replaced successfully.';
-        }
+        const uploadToken = await prepareVideoUpload(props.videoId);
+        await runBackgroundVideoUpload(file, uploadToken);
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not replace video.';
         infoText.value = '';
     } finally {
-        replacingVideo.value = false;
         input.value = '';
     }
 }
@@ -761,8 +771,13 @@ async function onShareEmbedTypeChange(type: EmbedDisplayType) {
 onMounted(async () => {
     await Promise.all([loadVideo(), loadProducts()]);
 
-    if (isProcessing.value) {
-        infoText.value = 'Uploading to Cloudinary (large files can take several minutes).';
+    const pendingFile = takePendingVideoUpload(props.videoId);
+    const uploadToken = extractUploadToken(videoMetadata.value);
+
+    if (pendingFile && uploadToken) {
+        void runBackgroundVideoUpload(pendingFile, uploadToken);
+    } else if (isProcessing.value) {
+        infoText.value = 'Processing video in the background. This page will update automatically.';
         startPollingIfNeeded();
     } else if (!hasPlayback.value && form.value.status !== 'failed') {
         infoText.value = 'No playback URL yet. Re-upload the video.';
@@ -865,7 +880,10 @@ onUnmounted(stopPolling);
             <AlertCircle v-else class="mt-0.5 size-4 shrink-0" />
             <div class="flex-1">
                 <p v-if="infoText">{{ infoText }}</p>
-                <p v-else-if="isProcessing">Processing on Cloudinary…</p>
+                <p v-else-if="isProcessing">Processing video in the background…</p>
+                <p v-if="fileUploadProgress !== null" class="mt-1 text-xs opacity-80">
+                    File upload progress: {{ fileUploadProgress }}%
+                </p>
                 <p v-else-if="isFailed">Upload failed. Try replacing the video file below.</p>
                 <!-- <p v-if="cloudinaryPublicId" class="mt-0.5 text-xs opacity-70">Cloudinary: {{ cloudinaryPublicId }}</p> -->
             </div>

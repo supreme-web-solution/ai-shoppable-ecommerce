@@ -48,6 +48,7 @@ class StoreVideoRequest extends FormRequest
             'metadata.knowledge_sources.*.title' => ['required_with:metadata.knowledge_sources', 'string', 'max:255'],
             'metadata.knowledge_sources.*.content' => ['required_with:metadata.knowledge_sources', 'string'],
             'local_file_path' => ['nullable', 'string', 'max:1000'],
+            'awaiting_upload' => ['sometimes', 'boolean'],
         ];
     }
 }

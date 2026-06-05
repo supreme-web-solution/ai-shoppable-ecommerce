@@ -43,7 +43,8 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useAdminApi, videoUploadFields } from '@/composables/useAdminApi';
+import { useAdminApi } from '@/composables/useAdminApi';
+import { setPendingVideoUpload } from '@/lib/pendingVideoUpload';
 defineOptions({
     layout: {
         breadcrumbs: [
@@ -105,7 +106,7 @@ type HeyGenOptions = {
     message?: string | null;
 };
 
-const { teamId, apiFetch, getList, postJson, uploadVideoFile, ensureTeam } = useAdminApi();
+const { teamId, apiFetch, getList, postJson, ensureTeam } = useAdminApi();
 
 type CreateMode = 'upload' | 'ai';
 const createMode = ref<CreateMode | null>(null);
@@ -673,15 +674,14 @@ async function submitUpload() {
 
     try {
         await ensureTeam();
-        const upload = await uploadVideoFile(selectedFile.value);
 
         const payload = await postJson<unknown>('/api/v1/admin/videos', {
             title: uploadForm.value.title || selectedFile.value.name.replace(/\.[^.]+$/, ''),
             description: uploadForm.value.description || null,
             source: 'uploaded',
             visibility: uploadForm.value.visibility,
-            thumbnail_url: uploadForm.value.thumbnail_url || upload.thumbnail_url || null,
-            ...videoUploadFields(upload),
+            thumbnail_url: uploadForm.value.thumbnail_url || null,
+            awaiting_upload: true,
             metadata: viewerSim.value.enabled ? {
                 viewer_sim_enabled: true,
                 viewer_sim_min: viewerSim.value.min,
@@ -692,10 +692,8 @@ async function submitUpload() {
         const created = unwrapVideo(payload);
 
         if (created?.id) {
-await attachProducts(created.id, uploadForm.value.product_ids);
-}
-
-        if (created?.id) {
+            await attachProducts(created.id, uploadForm.value.product_ids);
+            setPendingVideoUpload(created.id, selectedFile.value);
             router.visit(`/content/${created.id}/edit`);
         } else {
             router.visit('/content');
@@ -1392,7 +1390,7 @@ onMounted(() => {
                         >
                             <Loader2 v-if="uploading" class="mr-2 size-5 animate-spin" />
                             <Upload v-else class="mr-2 size-5" />
-                            {{ uploading ? 'Uploading…' : 'Publish shoppable video' }}
+                            {{ uploading ? 'Publishing…' : 'Publish shoppable video' }}
                         </Button>
 
                         <div class="flex justify-start">
