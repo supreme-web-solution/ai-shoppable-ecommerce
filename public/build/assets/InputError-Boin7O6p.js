@@ -1,0 +1,1 @@
+import{A as e,C as t,E as n,G as r,Ot as i,h as a,ot as o}from"./reverbConfig-D1x6aIDv.js";var s={class:`text-sm text-red-600 dark:text-red-500`},c=e({__name:`InputError`,props:{message:{}},setup(e){return(c,l)=>o((r(),n(`div`,null,[t(`p`,s,i(e.message),1)],512)),[[a,e.message]])}});export{c as t};
