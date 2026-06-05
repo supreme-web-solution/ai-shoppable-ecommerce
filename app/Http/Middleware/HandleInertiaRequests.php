@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Support\PlatformAdmin;
+use App\Support\ReverbClientConfig;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -46,6 +47,7 @@ class HandleInertiaRequests extends Middleware
             'zernioEnabled' => (bool) config('services.zernio.enabled', false)
                 && trim((string) config('services.zernio.api_key')) !== '',
             'isPlatformAdmin' => PlatformAdmin::isPlatformAdmin($request->user()),
+            'reverb' => ReverbClientConfig::forClient(),
         ];
     }
 }

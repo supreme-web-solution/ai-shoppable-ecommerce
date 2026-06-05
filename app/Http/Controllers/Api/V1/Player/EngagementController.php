@@ -14,6 +14,7 @@ use App\Models\Video;
 use App\Services\Ai\WebinarAssistantService;
 use App\Models\ViewerSession;
 use App\Support\CommentQuery;
+use App\Support\ReverbClientConfig;
 use App\Support\SafeBroadcast;
 use App\Support\TeamApiAuthorizer;
 use Illuminate\Http\JsonResponse;
@@ -24,19 +25,13 @@ class EngagementController extends Controller
 {
     public function broadcastConfig(): JsonResponse
     {
-        if (config('broadcasting.default') === 'null') {
+        $reverb = ReverbClientConfig::forClient();
+
+        if ($reverb === null) {
             return response()->json(['enabled' => false]);
         }
 
-        $reverb = config('broadcasting.connections.reverb');
-
-        return response()->json([
-            'enabled' => true,
-            'key' => $reverb['key'] ?? null,
-            'host' => $reverb['options']['host'] ?? null,
-            'port' => (int) ($reverb['options']['port'] ?? 8080),
-            'scheme' => $reverb['options']['scheme'] ?? 'https',
-        ]);
+        return response()->json($reverb);
     }
 
     public function comments(Request $request, TeamApiAuthorizer $authorizer): JsonResponse

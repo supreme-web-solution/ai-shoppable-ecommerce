@@ -4,6 +4,7 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{{ $embed->name }} — {{ config('app.name') }}</title>
+        @include('partials.reverb-config')
         @vite(['resources/css/app.css', 'resources/js/embed/main.ts'])
     </head>
     <body class="min-h-screen bg-background text-foreground">

@@ -5,6 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
         <meta name="theme-color" content="#000000">
         <title>{{ $embed->name }} — Shop</title>
+        @include('partials.reverb-config')
         @vite(['resources/css/app.css', 'resources/js/embed/main.ts'])
         <style>
             html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }

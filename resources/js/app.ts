@@ -7,11 +7,12 @@ import AppLayout from '@/layouts/AppLayout.vue';
 import AuthLayout from '@/layouts/AuthLayout.vue';
 import SettingsLayout from '@/layouts/settings/Layout.vue';
 import { initializeFlashToast } from '@/lib/flashToast';
+import { echoOptionsFromConfig, resolveReverbConfig } from '@/lib/reverbConfig';
 
-if (import.meta.env.VITE_REVERB_APP_KEY) {
-    configureEcho({
-        broadcaster: 'reverb',
-    });
+const reverb = resolveReverbConfig();
+
+if (reverb) {
+    configureEcho(echoOptionsFromConfig(reverb));
 }
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
