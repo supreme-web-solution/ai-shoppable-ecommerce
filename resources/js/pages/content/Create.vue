@@ -1029,7 +1029,7 @@ onMounted(() => {
                             </div>
                             <div>
                                 <p class="font-semibold text-foreground">Generate with AI</p>
-                                <p class="mt-1 text-sm text-muted-foreground">Pick products, write a script, choose a HeyGen presenter — we render the video for you.</p>
+                                <p class="mt-1 text-sm text-muted-foreground">Pick products, write a script, choose a presenter — we render the video for you.</p>
                             </div>
                         </button>
                     </div>

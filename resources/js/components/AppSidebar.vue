@@ -64,7 +64,7 @@ const baseNavSections: NavSection[] = [
     {
         label: 'Account',
         items: [
-            { title: 'Teams', href: '/teams', icon: Users },
+            { title: 'Stores', href: '/teams', icon: Users },
             { title: 'Integrations', href: '/settings/integrations', icon: Settings },
         ],
     },

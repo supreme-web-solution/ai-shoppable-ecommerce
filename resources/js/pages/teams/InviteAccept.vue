@@ -16,7 +16,7 @@ const props = defineProps<{
 
 defineOptions({
     layout: {
-        breadcrumbs: [{ title: 'Team invitation', href: '#' }],
+        breadcrumbs: [{ title: 'Store invitation', href: '#' }],
     },
 });
 
@@ -83,7 +83,7 @@ async function acceptInvite() {
                 <Users class="size-6 text-white" />
             </div>
 
-            <h1 class="text-center text-2xl font-black text-gray-900">Team invitation</h1>
+            <h1 class="text-center text-2xl font-black text-gray-900">Store invitation</h1>
             <p class="mt-2 text-center text-sm text-gray-500">
                 <span v-if="inviterName">{{ inviterName }} invited you to join</span>
                 <span v-else>You have been invited to join</span>
@@ -109,13 +109,13 @@ async function acceptInvite() {
                 <Check class="mx-auto size-8 text-emerald-500" />
                 <p class="mt-2 text-sm text-gray-600">This invitation has already been accepted.</p>
                 <Link href="/teams" class="mt-4 inline-block text-sm font-semibold text-[#E8563A] underline">
-                    Go to Teams
+                    Go to Stores
                 </Link>
             </div>
 
             <div v-else-if="status === 'expired'" class="mt-6 text-center">
                 <XCircle class="mx-auto size-8 text-red-400" />
-                <p class="mt-2 text-sm text-gray-600">This invitation has expired. Ask the team owner to send a new one.</p>
+                <p class="mt-2 text-sm text-gray-600">This invitation has expired. Ask the store owner to send a new one.</p>
             </div>
 
             <div v-else class="mt-6 space-y-3">
@@ -131,7 +131,7 @@ async function acceptInvite() {
                         @click="acceptInvite"
                     >
                         <Loader2 v-if="accepting" class="mr-2 size-4 animate-spin" />
-                        Accept & join team
+                        Accept & join store
                     </Button>
                 </template>
 

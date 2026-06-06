@@ -7,6 +7,7 @@ use App\Http\Resources\Api\V1\CartResource;
 use App\Models\Cart;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Services\Analytics\CommerceAttributionService;
 use App\Support\TeamApiAuthorizer;
 use Illuminate\Http\Request;
 
@@ -35,7 +36,7 @@ class CartController extends Controller
         return new CartResource($cart->load('items.product'));
     }
 
-    public function addItem(Request $request, TeamApiAuthorizer $authorizer): CartResource
+    public function addItem(Request $request, TeamApiAuthorizer $authorizer, CommerceAttributionService $attributionService): CartResource
     {
         $validated = $request->validate([
             'team_id' => ['required', 'integer', 'exists:teams,id'],
@@ -43,6 +44,9 @@ class CartController extends Controller
             'product_id' => ['required', 'integer', 'exists:products,id'],
             'product_variant_id' => ['nullable', 'integer', 'exists:product_variants,id'],
             'quantity' => ['nullable', 'integer', 'min:1'],
+            'video_id' => ['nullable', 'integer', 'exists:videos,id'],
+            'video_product_tag_id' => ['nullable', 'integer'],
+            'starts_at_ms' => ['nullable', 'integer', 'min:0'],
         ]);
         $authorizer->assertPlayerAccess($request, $validated['team_id']);
 
@@ -77,6 +81,13 @@ class CartController extends Controller
         $item->quantity = ($item->exists ? $item->quantity : 0) + $quantity;
         $item->unit_price = $unitPrice;
         $item->line_total = $item->unit_price * $item->quantity;
+
+        $incomingMetadata = $attributionService->itemMetadataFromInput($validated);
+
+        if ($incomingMetadata !== []) {
+            $item->metadata = array_merge((array) ($item->metadata ?? []), $incomingMetadata);
+        }
+
         $item->save();
 
         $cart->update(['total_amount' => $cart->items()->sum('line_total')]);

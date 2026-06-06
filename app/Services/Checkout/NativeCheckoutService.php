@@ -4,6 +4,7 @@ namespace App\Services\Checkout;
 
 use App\Models\Cart;
 use App\Models\Order;
+use App\Services\Analytics\CommerceAttributionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -21,6 +22,9 @@ class NativeCheckoutService
             $tax = (float) ($checkoutPayload['tax_amount'] ?? 0);
             $discount = (float) ($checkoutPayload['discount_amount'] ?? 0);
             $total = max($subtotal + $tax - $discount, 0);
+            $fallbackVideoId = isset($checkoutPayload['video_id']) ? (int) $checkoutPayload['video_id'] : null;
+
+            $attributionService = app(CommerceAttributionService::class);
 
             $order = Order::query()->create([
                 'team_id' => $cart->team_id,
@@ -35,13 +39,13 @@ class NativeCheckoutService
                 'tax_amount' => $tax,
                 'discount_amount' => $discount,
                 'total_amount' => $total,
-                'metadata' => [
+                'metadata' => $attributionService->mergeOrderMetadata($cart, [
                     'billing' => $checkoutPayload['billing'] ?? null,
                     'shipping' => $checkoutPayload['shipping'] ?? null,
                     'source' => 'native_checkout_service',
                     'payment_provider' => $provider,
                     'checkout_token' => Str::random(40),
-                ],
+                ], $fallbackVideoId),
                 'ordered_at' => now(),
             ]);
 
@@ -54,6 +58,7 @@ class NativeCheckoutService
                     'quantity' => $item->quantity,
                     'unit_price' => $item->unit_price,
                     'line_total' => $item->line_total,
+                    'metadata' => $item->metadata,
                 ]);
             }
 

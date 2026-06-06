@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { Head, Link } from '@inertiajs/vue3';
 import {
+    ArrowDownRight,
     ArrowUpRight,
+    DollarSign,
+    Download,
     Eye,
     Film,
     Heart,
     Layers3,
     RefreshCw,
     ShoppingBag,
+    ShoppingCart,
     Sparkles,
     TrendingUp,
     Users,
@@ -20,6 +24,72 @@ type MetricRow = { count: number; value: number };
 type DailyPoint = { date: string; total: number };
 type PlatformRow = { platform: string; total: number };
 type TopVideo = { video_id: number; title: string; total: number };
+type TopVideoRevenue = { video_id: number; title: string; revenue: number; orders: number };
+type VideoConversionRow = {
+    video_id: number;
+    title: string;
+    revenue: number;
+    orders: number;
+    views: number;
+    add_to_cart: number;
+    checkouts: number;
+    conversion_rate: number;
+};
+type CommerceRoi = {
+    total_revenue: number;
+    attributed_revenue: number;
+    event_revenue: number;
+    paid_orders: number;
+    funnel: {
+        video_views: number;
+        add_to_cart: number;
+        checkouts_completed: number;
+        view_to_cart_rate: number;
+        cart_to_checkout_rate: number;
+        view_to_checkout_rate: number;
+    };
+};
+
+type AbandonedCartRow = {
+    cart_id: number;
+    session_key: string;
+    total_amount: number;
+    currency: string;
+    items_count: number;
+    status: string;
+    updated_at?: string;
+    preview: string[];
+};
+
+type AbandonedCartsSummary = {
+    count: number;
+    recoverable_value: number;
+    items: number;
+    recent: AbandonedCartRow[];
+};
+
+type ExecutiveSnapshot = {
+    revenue: number;
+    orders: number;
+    views: number;
+    checkouts: number;
+    abandoned_carts: number;
+    abandoned_value: number;
+};
+
+type PeriodComparison = {
+    current: ExecutiveSnapshot;
+    previous: ExecutiveSnapshot;
+    previous_from: string;
+    previous_to: string;
+    changes: {
+        revenue_pct: number | null;
+        orders_pct: number | null;
+        views_pct: number | null;
+        checkouts_pct: number | null;
+        abandoned_carts_pct: number | null;
+    };
+};
 
 type SummaryResponse = {
     team_id: number;
@@ -32,6 +102,11 @@ type SummaryResponse = {
     daily_series?: DailyPoint[];
     platform_breakdown?: PlatformRow[];
     top_videos?: TopVideo[];
+    top_videos_by_revenue?: TopVideoRevenue[];
+    commerce_roi?: CommerceRoi;
+    video_conversion?: VideoConversionRow[];
+    abandoned_carts?: AbandonedCartsSummary;
+    period_comparison?: PeriodComparison;
     totals?: { events: number; unique_sessions: number };
     catalog?: {
         videos: number;
@@ -76,6 +151,14 @@ const engagementTotal = computed(() =>
 const commerceTotal = computed(() =>
     metric('add_to_cart') + metric('checkout_started') + metric('checkout_completed') + metric('checkout_external_redirect'),
 );
+const checkoutCompleted = computed(() => metric('checkout_completed'));
+const addToCartCount = computed(() => metric('add_to_cart'));
+const commerceRoi = computed(() => summary.value?.commerce_roi ?? null);
+const topVideosByRevenue = computed(() => summary.value?.top_videos_by_revenue ?? []);
+const videoConversion = computed(() => summary.value?.video_conversion ?? []);
+const topRevenueMax = computed(() => Math.max(...topVideosByRevenue.value.map((v) => v.revenue), 1));
+const abandonedCarts = computed(() => summary.value?.abandoned_carts ?? null);
+const periodComparison = computed(() => summary.value?.period_comparison ?? null);
 const engagementRate = computed(() =>
     videoViews.value > 0 ? Math.round((engagementTotal.value / videoViews.value) * 100) : 0,
 );
@@ -242,6 +325,89 @@ return (n / 1_000).toFixed(1) + 'K';
     return String(n);
 }
 
+function fmtMoney(amount: number, currency = 'USD'): string {
+    return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency,
+        maximumFractionDigits: 0,
+    }).format(amount);
+}
+
+function fmtPctChange(value: number | null | undefined): string {
+    if (value == null) {
+        return '—';
+    }
+
+    const prefix = value > 0 ? '+' : '';
+
+    return `${prefix}${value}%`;
+}
+
+function changeTone(value: number | null | undefined): string {
+    if (value == null || value === 0) {
+        return 'text-gray-500';
+    }
+
+    return value > 0 ? 'text-emerald-600' : 'text-red-600';
+}
+
+function exportReportCsv() {
+    if (!summary.value) {
+        return;
+    }
+
+    const rows: string[][] = [
+        ['Analytics export'],
+        ['Period', `${summary.value.from} to ${summary.value.to}`],
+        [],
+        ['Executive summary', 'Current', 'Previous period', 'Change %'],
+    ];
+
+    const pc = summary.value.period_comparison;
+
+    if (pc) {
+        rows.push(
+            ['Revenue', String(pc.current.revenue), String(pc.previous.revenue), fmtPctChange(pc.changes.revenue_pct)],
+            ['Paid orders', String(pc.current.orders), String(pc.previous.orders), fmtPctChange(pc.changes.orders_pct)],
+            ['Video views', String(pc.current.views), String(pc.previous.views), fmtPctChange(pc.changes.views_pct)],
+            ['Checkouts', String(pc.current.checkouts), String(pc.previous.checkouts), fmtPctChange(pc.changes.checkouts_pct)],
+            ['Abandoned carts', String(pc.current.abandoned_carts), String(pc.previous.abandoned_carts), fmtPctChange(pc.changes.abandoned_carts_pct)],
+        );
+    }
+
+    rows.push([], ['Top videos by revenue', 'Title', 'Revenue', 'Orders']);
+
+    for (const video of summary.value.top_videos_by_revenue ?? []) {
+        rows.push(['', video.title, String(video.revenue), String(video.orders)]);
+    }
+
+    rows.push([], ['Video conversion', 'Views', 'Cart', 'Checkouts', 'Revenue', 'Conversion %']);
+
+    for (const row of summary.value.video_conversion ?? []) {
+        rows.push([row.title, String(row.views), String(row.add_to_cart), String(row.checkouts), String(row.revenue), String(row.conversion_rate)]);
+    }
+
+    if (summary.value.abandoned_carts) {
+        rows.push(
+            [],
+            ['Abandoned carts', String(summary.value.abandoned_carts.count)],
+            ['Recoverable value', String(summary.value.abandoned_carts.recoverable_value)],
+        );
+    }
+
+    const csv = rows
+        .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `analytics-${summary.value.from}-to-${summary.value.to}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+}
+
 async function loadSummary() {
     loading.value = true;
     errorText.value = '';
@@ -302,6 +468,15 @@ onMounted(loadSummary);
                 <button
                     type="button"
                     class="flex items-center gap-1.5 rounded-xl bg-white px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:bg-gray-50 disabled:opacity-40"
+                    :disabled="!summary"
+                    @click="exportReportCsv"
+                >
+                    <Download class="size-3.5" />
+                    Export CSV
+                </button>
+                <button
+                    type="button"
+                    class="flex items-center gap-1.5 rounded-xl bg-white px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:bg-gray-50 disabled:opacity-40"
                     :disabled="loading"
                     @click="loadSummary"
                 >
@@ -330,6 +505,48 @@ onMounted(loadSummary);
                 <Sparkles class="size-4 shrink-0 text-amber-500" />
                 <span>No events yet. Embed a playlist on your store — player interactions will appear here in real time.</span>
                 <Link href="/playlists" class="ml-auto shrink-0 font-semibold text-[#E8563A] hover:underline">Manage embeds →</Link>
+            </div>
+
+            <!-- ── Executive ROI vs previous period ── -->
+            <div v-if="periodComparison" class="mb-3 card">
+                <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <p class="text-sm font-bold text-gray-900">Executive ROI report</p>
+                        <p class="text-[11px] text-gray-400">
+                            Compared with {{ periodComparison.previous_from }} — {{ periodComparison.previous_to }}
+                        </p>
+                    </div>
+                    <span class="rounded-full bg-gray-100 px-2.5 py-0.5 text-[10px] font-semibold text-gray-600">
+                        {{ daysWindow === 1 ? 'Today vs yesterday' : `Last ${daysWindow} days vs prior ${daysWindow} days` }}
+                    </span>
+                </div>
+
+                <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <div
+                        v-for="item in [
+                            { label: 'Revenue', current: periodComparison.current.revenue, previous: periodComparison.previous.revenue, change: periodComparison.changes.revenue_pct, format: 'money' },
+                            { label: 'Paid orders', current: periodComparison.current.orders, previous: periodComparison.previous.orders, change: periodComparison.changes.orders_pct, format: 'number' },
+                            { label: 'Video views', current: periodComparison.current.views, previous: periodComparison.previous.views, change: periodComparison.changes.views_pct, format: 'number' },
+                            { label: 'Checkouts', current: periodComparison.current.checkouts, previous: periodComparison.previous.checkouts, change: periodComparison.changes.checkouts_pct, format: 'number' },
+                            { label: 'Abandoned carts', current: periodComparison.current.abandoned_carts, previous: periodComparison.previous.abandoned_carts, change: periodComparison.changes.abandoned_carts_pct, format: 'number' },
+                        ]"
+                        :key="item.label"
+                        class="rounded-xl border border-gray-100 bg-gray-50/80 p-3"
+                    >
+                        <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">{{ item.label }}</p>
+                        <p class="mt-1 text-lg font-black text-gray-900">
+                            {{ item.format === 'money' ? fmtMoney(Number(item.current)) : fmtN(Number(item.current)) }}
+                        </p>
+                        <p class="mt-0.5 text-[11px] text-gray-500">
+                            Was {{ item.format === 'money' ? fmtMoney(Number(item.previous)) : fmtN(Number(item.previous)) }}
+                        </p>
+                        <p class="mt-1 flex items-center gap-1 text-xs font-semibold" :class="changeTone(item.change)">
+                            <ArrowUpRight v-if="(item.change ?? 0) > 0" class="size-3.5" />
+                            <ArrowDownRight v-else-if="(item.change ?? 0) < 0" class="size-3.5" />
+                            {{ fmtPctChange(item.change) }}
+                        </p>
+                    </div>
+                </div>
             </div>
 
             <!-- ── KPI row ── -->
@@ -376,6 +593,98 @@ onMounted(loadSummary);
                     </div>
                     <p class="kpi text-emerald-600">{{ fmtN(commerceTotal) }}</p>
                     <p class="mt-auto text-[11px] text-gray-400">cart &amp; checkout actions</p>
+                </div>
+            </div>
+
+            <!-- ── Commerce ROI row ── -->
+            <div v-if="commerceRoi" class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div class="card group relative overflow-hidden">
+                    <div class="absolute right-0 top-0 h-full w-1 rounded-full bg-amber-500" />
+                    <div class="flex items-start justify-between">
+                        <p class="label">Revenue</p>
+                        <DollarSign class="size-4 text-amber-500" />
+                    </div>
+                    <p class="kpi text-amber-600">{{ fmtMoney(commerceRoi.total_revenue) }}</p>
+                    <p class="mt-auto text-[11px] text-gray-400">
+                        {{ commerceRoi.paid_orders }} paid order{{ commerceRoi.paid_orders === 1 ? '' : 's' }}
+                        · {{ fmtMoney(commerceRoi.attributed_revenue) }} attributed
+                    </p>
+                </div>
+
+                <div class="card group relative overflow-hidden">
+                    <div class="absolute right-0 top-0 h-full w-1 rounded-full bg-violet-500" />
+                    <div class="flex items-start justify-between">
+                        <p class="label">Checkouts</p>
+                        <ShoppingBag class="size-4 text-violet-400" />
+                    </div>
+                    <p class="kpi text-violet-600">{{ fmtN(checkoutCompleted) }}</p>
+                    <p class="mt-auto text-[11px] text-gray-400">checkout_completed events</p>
+                </div>
+
+                <div class="card group relative overflow-hidden">
+                    <div class="absolute right-0 top-0 h-full w-1 rounded-full bg-cyan-500" />
+                    <div class="flex items-start justify-between">
+                        <p class="label">View → Cart</p>
+                        <ShoppingCart class="size-4 text-cyan-400" />
+                    </div>
+                    <p class="kpi text-cyan-600">{{ commerceRoi.funnel.view_to_cart_rate }}%</p>
+                    <p class="mt-auto text-[11px] text-gray-400">
+                        {{ fmtN(addToCartCount) }} carts from {{ fmtN(commerceRoi.funnel.video_views) }} views
+                    </p>
+                </div>
+
+                <div class="card group relative overflow-hidden">
+                    <div class="absolute right-0 top-0 h-full w-1 rounded-full bg-indigo-500" />
+                    <div class="flex items-start justify-between">
+                        <p class="label">View → Checkout</p>
+                        <TrendingUp class="size-4 text-indigo-400" />
+                    </div>
+                    <p class="kpi text-indigo-600">{{ commerceRoi.funnel.view_to_checkout_rate }}%</p>
+                    <p class="mt-auto text-[11px] text-gray-400">
+                        Cart → checkout {{ commerceRoi.funnel.cart_to_checkout_rate }}%
+                    </p>
+                </div>
+            </div>
+
+            <!-- ── Abandoned carts ── -->
+            <div v-if="abandonedCarts" class="mt-3 card">
+                <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <p class="text-sm font-bold text-gray-900">Abandoned carts</p>
+                        <p class="text-[11px] text-gray-400">
+                            Shoppers who added products but did not checkout (idle 1+ hour or marked abandoned)
+                        </p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-lg font-black text-amber-600">{{ fmtMoney(abandonedCarts.recoverable_value) }}</p>
+                        <p class="text-[11px] text-gray-500">{{ abandonedCarts.count }} carts · {{ abandonedCarts.items }} items</p>
+                    </div>
+                </div>
+
+                <div v-if="abandonedCarts.recent.length === 0" class="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-gray-400">
+                    No abandoned carts in this period yet.
+                </div>
+
+                <div v-else class="space-y-2">
+                    <div
+                        v-for="cart in abandonedCarts.recent"
+                        :key="cart.cart_id"
+                        class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50/40 px-3 py-2.5"
+                    >
+                        <div class="min-w-0">
+                            <p class="truncate text-sm font-medium text-gray-800">
+                                {{ cart.preview.join(', ') || 'Cart items' }}
+                            </p>
+                            <p class="text-[11px] text-gray-500">
+                                {{ cart.items_count }} item{{ cart.items_count === 1 ? '' : 's' }}
+                                · {{ cart.status }}
+                                <span v-if="cart.updated_at"> · {{ shortDay(cart.updated_at.slice(0, 10)) }}</span>
+                            </p>
+                        </div>
+                        <p class="shrink-0 text-sm font-bold text-amber-700">
+                            {{ fmtMoney(cart.total_amount, cart.currency) }}
+                        </p>
+                    </div>
                 </div>
             </div>
 
@@ -594,6 +903,96 @@ onMounted(loadSummary);
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Revenue + conversion tables ── -->
+            <div class="mt-3 grid gap-3 xl:grid-cols-2">
+                <div class="card">
+                    <div class="mb-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-bold text-gray-900">Top Videos by Revenue</p>
+                            <p class="text-[11px] text-gray-400">Paid in-app orders attributed to a video</p>
+                        </div>
+                        <Link href="/content" class="text-[11px] font-semibold text-[#E8563A] hover:underline">
+                            All videos →
+                        </Link>
+                    </div>
+
+                    <div v-if="topVideosByRevenue.length === 0" class="flex h-24 flex-col items-center justify-center gap-1 text-xs text-gray-400">
+                        <DollarSign class="size-6 text-gray-200" />
+                        Revenue will rank videos here after paid checkouts
+                    </div>
+
+                    <div v-else class="space-y-2">
+                        <div
+                            v-for="(video, idx) in topVideosByRevenue"
+                            :key="`rev-${video.video_id}`"
+                            class="flex items-center gap-3 rounded-xl p-2 transition-colors hover:bg-gray-50"
+                        >
+                            <div
+                                class="flex size-7 shrink-0 items-center justify-center rounded-lg text-[11px] font-black"
+                                :style="idx === 0 ? 'background:#f59e0b; color:white' : 'background:#f3f4f6; color:#374151'"
+                            >
+                                {{ idx + 1 }}
+                            </div>
+                            <span class="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">
+                                {{ video.title }}
+                            </span>
+                            <div class="shrink-0 text-right">
+                                <p class="text-xs font-black text-amber-600">{{ fmtMoney(video.revenue) }}</p>
+                                <p class="text-[10px] text-gray-400">{{ video.orders }} order{{ video.orders === 1 ? '' : 's' }}</p>
+                                <div class="mt-0.5 h-1 w-16 overflow-hidden rounded-full bg-gray-100">
+                                    <div
+                                        class="h-full rounded-full bg-amber-500"
+                                        :style="{ width: `${Math.round((video.revenue / topRevenueMax) * 100)}%` }"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="mb-4">
+                        <p class="text-sm font-bold text-gray-900">Video Conversion Funnel</p>
+                        <p class="text-[11px] text-gray-400">Views → cart → checkout per video</p>
+                    </div>
+
+                    <div v-if="videoConversion.length === 0" class="flex h-24 flex-col items-center justify-center gap-1 text-xs text-gray-400">
+                        <TrendingUp class="size-6 text-gray-200" />
+                        Publish shoppable videos to see conversion stats
+                    </div>
+
+                    <div v-else class="overflow-x-auto">
+                        <table class="w-full min-w-[420px] text-left text-xs">
+                            <thead>
+                                <tr class="border-b text-[10px] uppercase tracking-wide text-gray-400">
+                                    <th class="pb-2 pr-3 font-semibold">Video</th>
+                                    <th class="pb-2 px-2 text-right font-semibold">Views</th>
+                                    <th class="pb-2 px-2 text-right font-semibold">Cart</th>
+                                    <th class="pb-2 px-2 text-right font-semibold">Paid</th>
+                                    <th class="pb-2 pl-2 text-right font-semibold">Revenue</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr
+                                    v-for="row in videoConversion.slice(0, 8)"
+                                    :key="`conv-${row.video_id}`"
+                                    class="border-b border-gray-50 last:border-0"
+                                >
+                                    <td class="py-2 pr-3">
+                                        <p class="truncate font-medium text-gray-800">{{ row.title }}</p>
+                                        <p class="text-[10px] text-gray-400">{{ row.conversion_rate }}% view → checkout</p>
+                                    </td>
+                                    <td class="px-2 py-2 text-right text-gray-600">{{ fmtN(row.views) }}</td>
+                                    <td class="px-2 py-2 text-right text-gray-600">{{ fmtN(row.add_to_cart) }}</td>
+                                    <td class="px-2 py-2 text-right font-semibold text-violet-600">{{ fmtN(row.checkouts) }}</td>
+                                    <td class="py-2 pl-2 text-right font-bold text-amber-600">{{ fmtMoney(row.revenue) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>

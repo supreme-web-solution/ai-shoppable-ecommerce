@@ -7,6 +7,7 @@ use App\Http\Requests\Api\V1\CheckoutRequest;
 use App\Http\Resources\Api\V1\OrderResource;
 use App\Models\Cart;
 use App\Models\Team;
+use App\Services\Analytics\CommerceAttributionService;
 use App\Services\Checkout\ExternalCheckoutService;
 use App\Services\Checkout\NativeCheckoutService;
 use App\Services\Checkout\TeamCheckoutResolver;
@@ -20,6 +21,7 @@ class CheckoutController extends Controller
         ExternalCheckoutService $externalCheckoutService,
         TeamCheckoutResolver $checkoutResolver,
         TeamApiAuthorizer $authorizer,
+        CommerceAttributionService $attributionService,
     ) {
         $validated = $request->validated();
         $authorizer->assertPlayerAccess($request, $validated['team_id']);
@@ -31,6 +33,10 @@ class CheckoutController extends Controller
 
         abort_if($cart->team_id !== $team->id, 422, 'Cart does not belong to team.');
         abort_if($cart->status !== 'active', 422, 'Cart is not active.');
+
+        $fallbackVideoId = isset($validated['video_id']) ? (int) $validated['video_id'] : null;
+
+        $attributionService->recordCheckoutStarted($cart, $team->id, $fallbackVideoId);
 
         $resolved = $checkoutResolver->resolve(
             $team,
@@ -91,6 +97,14 @@ class CheckoutController extends Controller
         }
 
         $session = $externalCheckoutService->createSession($cart, $team, $resolved['provider']);
+
+        $attributionService->recordCheckoutExternalRedirect(
+            $cart,
+            $team->id,
+            $resolved['provider'],
+            $session->checkout_url,
+            $fallbackVideoId,
+        );
 
         return response()->json([
             'mode' => 'external',

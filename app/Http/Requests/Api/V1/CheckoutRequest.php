@@ -27,6 +27,7 @@ class CheckoutRequest extends FormRequest
             'cart_id' => ['required', 'integer', 'exists:carts,id'],
             'checkout_mode' => ['required', 'in:native,external,hybrid'],
             'external_provider' => ['nullable', 'in:none,shopify,woocommerce'],
+            'video_id' => ['nullable', 'integer', 'exists:videos,id'],
             'billing' => ['nullable', 'array'],
             'shipping' => ['nullable', 'array'],
             'metadata' => ['nullable', 'array'],

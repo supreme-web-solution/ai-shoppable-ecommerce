@@ -3,6 +3,7 @@
 namespace App\Services\Checkout;
 
 use App\Models\Order;
+use App\Services\Analytics\CommerceAttributionService;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -59,6 +60,8 @@ class NativePaymentConfirmationService
             'order_number' => $order->order_number,
             'provider' => $provider,
         ]);
+
+        app(CommerceAttributionService::class)->recordCheckoutCompleted($order->refresh());
 
         return $order->refresh();
     }

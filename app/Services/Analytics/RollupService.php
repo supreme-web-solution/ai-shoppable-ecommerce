@@ -13,6 +13,7 @@ class RollupService
         string $metricDate,
         string $metricName,
         ?int $videoId = null,
+        float $revenueDelta = 0.0,
     ): AnalyticsRollup {
         $rollup = AnalyticsRollup::query()
             ->where('team_id', $teamId)
@@ -28,6 +29,10 @@ class RollupService
         if ($rollup) {
             $rollup->increment('value_unsigned');
 
+            if ($revenueDelta > 0) {
+                $rollup->increment('value_decimal', $revenueDelta);
+            }
+
             return $rollup->refresh();
         }
 
@@ -37,7 +42,7 @@ class RollupService
             'metric_date' => $metricDate,
             'metric_name' => $metricName,
             'value_unsigned' => 1,
-            'value_decimal' => 0,
+            'value_decimal' => max($revenueDelta, 0),
         ]);
     }
 

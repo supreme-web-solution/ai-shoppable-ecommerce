@@ -513,6 +513,26 @@ async function postAnalytics(
     }
 }
 
+function cartAttributionPayload(tag?: ProductTag | null): Record<string, number> {
+    if (!currentVideo.value) {
+        return {};
+    }
+
+    const payload: Record<string, number> = {
+        video_id: currentVideo.value.id,
+    };
+
+    if (tag?.id) {
+        payload.video_product_tag_id = tag.id;
+    }
+
+    if (tag?.starts_at_ms != null) {
+        payload.starts_at_ms = tag.starts_at_ms;
+    }
+
+    return payload;
+}
+
 async function sendViewerPing(teamId: number, videoId: number) {
     const p = await fetchJson<{ viewer_count?: number }>(
         '/api/v1/player/viewer-ping',
@@ -797,6 +817,7 @@ async function addToCart() {
                         ? { product_variant_id: variantId }
                         : {}),
                     quantity: 1,
+                    ...cartAttributionPayload(currentTag.value),
                 }),
             },
         );
@@ -868,6 +889,7 @@ async function addTagToCart(tag: ProductTag, options?: { openCart?: boolean }) {
                         ? { product_variant_id: variantId }
                         : {}),
                     quantity: 1,
+                    ...cartAttributionPayload(tag),
                 }),
             },
         );
@@ -965,7 +987,7 @@ async function checkoutCart() {
     try {
         const p = await fetchJson<
             | { mode?: string; checkout_url?: string; provider?: string }
-            | { data?: { order_number?: string }; order_number?: string }
+            | { data?: { order_number?: string; id?: number; total_amount?: string | number }; order_number?: string }
         >('/api/v1/player/checkout', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -973,6 +995,7 @@ async function checkoutCart() {
                 team_id: currentVideo.value.team_id,
                 cart_id: cart.value.id,
                 checkout_mode: 'hybrid',
+                video_id: currentVideo.value.id,
             }),
         });
 
@@ -985,12 +1008,17 @@ async function checkoutCart() {
         const orderPayload =
             'checkout_url' in p
                 ? null
-                : (p as { data?: { order_number?: string }; order_number?: string });
-        const order = asData<{ order_number?: string }>(orderPayload);
+                : (p as { data?: { order_number?: string; id?: number; total_amount?: string | number }; order_number?: string });
+        const order = asData<{ order_number?: string; id?: number; total_amount?: string | number }>(orderPayload);
 
         if (order?.order_number) {
             checkoutSuccessText.value = `Order ${order.order_number} confirmed. Thank you!`;
             cartOpen.value = false;
+            void postAnalytics('checkout_completed', {
+                order_id: order.id,
+                order_number: order.order_number,
+                total_amount: Number(order.total_amount ?? cart.value.total_amount ?? 0),
+            });
             await loadCart(currentVideo.value.team_id);
 
             return;

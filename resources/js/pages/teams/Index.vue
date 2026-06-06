@@ -71,7 +71,7 @@ defineOptions({
     layout: {
         breadcrumbs: [
             { title: 'Dashboard', href: '/dashboard' },
-            { title: 'Teams', href: '/teams' },
+            { title: 'Stores', href: '/teams' },
         ],
     },
 });
@@ -194,7 +194,7 @@ async function activateTeam(team: TeamItem) {
 
 async function createTeam() {
     if (!form.value.name.trim()) {
-        errorText.value = 'Team name is required.';
+        errorText.value = 'Store name is required.';
 
         return;
     }
@@ -340,7 +340,7 @@ onMounted(loadTeams);
 </script>
 
 <template>
-    <Head title="Teams" />
+    <Head title="Stores" />
 
     <div class="page-root min-h-screen px-4 py-6 sm:px-6 lg:px-8">
         <div class="mx-auto max-w-5xl">
@@ -349,15 +349,16 @@ onMounted(loadTeams);
                     <div class="page-icon mb-3 flex size-11 items-center justify-center rounded-2xl">
                         <Users class="size-5 text-white" />
                     </div>
-                    <h1 class="text-2xl font-black tracking-tight text-gray-900">Teams</h1>
+                    <h1 class="text-2xl font-black tracking-tight text-gray-900">Stores</h1>
                     <p class="mt-1 max-w-2xl text-sm text-gray-500">
-                        A team is your brand workspace. Videos, products, playlists, embeds, analytics, and
-                        integrations all belong to the <strong>active team</strong> shown below.
+                        Each store is your brand workspace. Videos, products, playlists, embeds, analytics, checkout,
+                        and integrations belong to the <strong>active store</strong> shown below. Invite teammates to
+                        help manage a store.
                     </p>
                 </div>
                 <Button class="cta-btn" @click="createModalOpen = true">
                     <PlusCircle class="mr-2 size-4" />
-                    New team
+                    Add store
                 </Button>
             </div>
 
@@ -365,18 +366,18 @@ onMounted(loadTeams);
                 v-if="currentTeam"
                 class="mb-6 rounded-2xl border border-[#E8563A]/25 bg-[#E8563A]/5 p-4 sm:p-5"
             >
-                <p class="text-xs font-bold uppercase tracking-wide text-[#E8563A]">Active workspace</p>
+                <p class="text-xs font-bold uppercase tracking-wide text-[#E8563A]">Active store</p>
                 <p class="mt-1 text-lg font-bold text-gray-900">{{ currentTeam.name }}</p>
                 <p class="mt-0.5 font-mono text-xs text-gray-500">{{ currentTeam.slug }}</p>
                 <p class="mt-2 text-sm text-gray-600">
-                    Dashboard, content, and checkout settings use this team until you switch.
+                    Dashboard, content, and checkout settings use this store until you switch.
                 </p>
                 <Link
                     href="/settings/integrations"
                     class="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#E8563A] underline"
                 >
                     <Settings class="size-3.5" />
-                    Team integrations (Shopify, Stripe, PayPal, etc.)
+                    Store integrations (Shopify, Stripe, PayPal, etc.)
                 </Link>
             </div>
 
@@ -396,9 +397,9 @@ onMounted(loadTeams);
 
             <div v-else-if="teams.length === 0" class="rounded-2xl border bg-white p-10 text-center">
                 <Users class="mx-auto size-10 text-gray-300" />
-                <p class="mt-3 font-semibold text-gray-800">No teams yet</p>
-                <p class="mt-1 text-sm text-gray-500">Create a workspace for your first brand or store.</p>
-                <Button class="cta-btn mt-4" @click="createModalOpen = true">Create team</Button>
+                <p class="mt-3 font-semibold text-gray-800">No stores yet</p>
+                <p class="mt-1 text-sm text-gray-500">Create a workspace for your first brand or storefront.</p>
+                <Button class="cta-btn mt-4" @click="createModalOpen = true">Add store</Button>
             </div>
 
             <div v-else class="space-y-3">
@@ -490,12 +491,12 @@ onMounted(loadTeams);
             </div>
 
             <div class="mt-8 rounded-2xl border border-dashed border-gray-200 bg-white/80 p-5 text-sm text-gray-600">
-                <p class="font-semibold text-gray-800">What teams do</p>
+                <p class="font-semibold text-gray-800">What stores do</p>
                 <ul class="mt-2 list-inside list-disc space-y-1">
-                    <li>Isolate content and commerce per brand or client.</li>
-                    <li>Invite collaborators as admins or members to help manage content.</li>
-                    <li>Keep Shopify, Stripe, PayPal, and Zernio settings separate per team.</li>
-                    <li>Scope analytics and embed players to the active team only.</li>
+                    <li>Isolate content and commerce per brand or client storefront.</li>
+                    <li>Invite teammates as admins or members to help manage a store.</li>
+                    <li>Keep Shopify, Stripe, PayPal, and Zernio settings separate per store.</li>
+                    <li>Scope analytics and embed players to the active store only.</li>
                 </ul>
             </div>
         </div>
@@ -504,14 +505,14 @@ onMounted(loadTeams);
     <Dialog v-model:open="createModalOpen">
         <DialogContent class="sm:max-w-md">
             <DialogHeader>
-                <DialogTitle>Create team</DialogTitle>
+                <DialogTitle>Add store</DialogTitle>
                 <DialogDescription>
-                    Add another brand workspace. You will be switched to it immediately after creation.
+                    Create another brand storefront. You will be switched to it immediately after creation.
                 </DialogDescription>
             </DialogHeader>
             <div class="space-y-3 py-2">
                 <div class="space-y-1.5">
-                    <Label for="team-name">Team name</Label>
+                    <Label for="team-name">Store name</Label>
                     <Input
                         id="team-name"
                         v-model="form.name"
@@ -537,14 +538,14 @@ onMounted(loadTeams);
     <Dialog v-model:open="membersModalOpen">
         <DialogContent class="members-modal flex max-h-[min(85dvh,calc(100vh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
             <DialogHeader class="shrink-0 border-b px-6 pt-6 pb-4">
-                <DialogTitle>Team members</DialogTitle>
+                <DialogTitle>Store members</DialogTitle>
                 <DialogDescription v-if="selectedTeam">
-                    Manage collaborators for <strong>{{ selectedTeam.name }}</strong>.
+                    Manage teammates for <strong>{{ selectedTeam.name }}</strong>.
                 </DialogDescription>
             </DialogHeader>
 
             <div v-if="canManageMembers && !membersLoading" class="shrink-0 border-b bg-gray-50 px-6 py-4">
-                <p class="text-sm font-semibold text-gray-800">Invite collaborator</p>
+                <p class="text-sm font-semibold text-gray-800">Invite teammate</p>
                 <p class="mt-1 text-xs text-gray-500">
                     Existing users are added instantly. New emails receive an invite link.
                 </p>
