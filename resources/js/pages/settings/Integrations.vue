@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, usePage } from '@inertiajs/vue3';
 import { CircleHelp, Loader2 } from 'lucide-vue-next';
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import ShopifySetupGuideDialog from '@/components/integrations/ShopifySetupGuideDialog.vue';
 import WooSetupGuideDialog from '@/components/integrations/WooSetupGuideDialog.vue';
 import ZernioConnectPanel from '@/components/integrations/ZernioConnectPanel.vue';
@@ -232,6 +232,13 @@ async function loadTeam() {
             activeSection.value = 'native';
         } else if (externalCheckoutReady.value) {
             activeSection.value = 'external';
+        }
+
+        if (new URLSearchParams(window.location.search).get('section') === 'store') {
+            activeSection.value = 'external';
+
+            await nextTick();
+            document.getElementById('connect-store-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not load team settings.';
@@ -653,7 +660,7 @@ onMounted(loadTeam);
 
             <!-- Step 2: External store -->
             <Transition name="slide">
-                <div v-if="activeSection === 'external'" class="space-y-4">
+                <div v-if="activeSection === 'external'" id="connect-store-section" class="space-y-4 scroll-mt-6">
                     <div class="flex items-center gap-3">
                         <div class="step-dot flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold">2</div>
                         <h3 class="font-bold text-gray-900">Connect your store</h3>

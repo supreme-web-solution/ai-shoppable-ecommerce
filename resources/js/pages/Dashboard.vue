@@ -9,6 +9,7 @@ import {
     Package,
     PlusCircle,
     Sparkles,
+    Store,
     TrendingUp,
     Upload,
 } from 'lucide-vue-next';
@@ -234,7 +235,21 @@ onMounted(loadOverview);
                 </div>
             </div>
 
-            <div class="flex items-center gap-2">
+            <div class="flex flex-wrap items-center justify-end gap-2">
+                <Link
+                    href="/settings/integrations?section=store"
+                    class="flex items-center gap-2 rounded-full border border-[#E8563A]/25 bg-white px-4 py-2 text-sm font-bold text-[#E8563A] shadow-card transition hover:bg-[#E8563A]/5"
+                >
+                    <Store class="size-4" />
+                    Add store
+                </Link>
+                <Link
+                    href="/products?add=1"
+                    class="flex items-center gap-2 rounded-full border border-[#E8563A]/25 bg-white px-4 py-2 text-sm font-bold text-[#E8563A] shadow-card transition hover:bg-[#E8563A]/5"
+                >
+                    <Package class="size-4" />
+                    Add product
+                </Link>
                 <Link href="/content/create" class="cta-pill flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold text-white shadow-coral">
                     <PlusCircle class="size-4" />
                     Create New Video

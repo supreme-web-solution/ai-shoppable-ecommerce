@@ -63,6 +63,8 @@ defineOptions({
 
 const { getList, postJson, patchJson, deleteResource, ensureTeam, uploadProductImage } = useAdminApi();
 
+const PRODUCTS_PER_PAGE = 12;
+
 const loading = ref(false);
 const saving = ref(false);
 const duplicatingId = ref<number | null>(null);
@@ -73,6 +75,7 @@ const createModalOpen = ref(false);
 const editingProductId = ref<number | null>(null);
 const errorText = ref('');
 const products = ref<ProductItem[]>([]);
+const pagination = ref({ current_page: 1, last_page: 1, total: 0 });
 
 const form = ref({
     title: '',
@@ -125,19 +128,37 @@ return '—';
 }
 
 
-async function loadProducts() {
+async function loadProducts(page = pagination.value.current_page) {
     loading.value = true;
     errorText.value = '';
 
     try {
         await ensureTeam();
-        const payload = await getList<ProductItem>('/api/v1/admin/products');
+        const payload = await getList<ProductItem>('/api/v1/admin/products', {
+            per_page: PRODUCTS_PER_PAGE,
+            page,
+        });
         products.value = payload.data ?? [];
+        pagination.value = {
+            current_page: payload.meta?.current_page ?? page,
+            last_page: payload.meta?.last_page ?? 1,
+            total: payload.meta?.total ?? products.value.length,
+        };
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not load products.';
     } finally {
         loading.value = false;
     }
+}
+
+async function reloadProductsAfterChange() {
+    let page = pagination.value.current_page;
+
+    if (products.value.length <= 1 && page > 1) {
+        page -= 1;
+    }
+
+    await loadProducts(page);
 }
 
 async function resolveProductImageUrl(): Promise<string | null> {
@@ -185,7 +206,7 @@ async function createProduct() {
 
         resetForm();
         createModalOpen.value = false;
-        await loadProducts();
+        await reloadProductsAfterChange();
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not create product.';
     } finally {
@@ -225,7 +246,7 @@ return;
         resetForm();
         createModalOpen.value = false;
         editingProductId.value = null;
-        await loadProducts();
+        await reloadProductsAfterChange();
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not update product.';
     } finally {
@@ -236,7 +257,7 @@ return;
 async function toggleActive(product: ProductItem) {
     try {
         await patchJson(`/api/v1/admin/products/${product.id}`, { is_active: !product.is_active });
-        await loadProducts();
+        await reloadProductsAfterChange();
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not update product.';
     }
@@ -249,7 +270,7 @@ return;
 
     try {
         await deleteResource(`/api/v1/admin/products/${product.id}`);
-        await loadProducts();
+        await reloadProductsAfterChange();
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not delete product.';
     }
@@ -262,7 +283,7 @@ async function duplicateProduct(product: ProductItem) {
     try {
         await ensureTeam();
         await postJson(`/api/v1/admin/products/${product.id}/duplicate`, {});
-        await loadProducts();
+        await reloadProductsAfterChange();
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not duplicate product.';
     } finally {
@@ -370,7 +391,15 @@ function openEditModal(product: ProductItem) {
     createModalOpen.value = true;
 }
 
-onMounted(loadProducts);
+onMounted(async () => {
+    const shouldOpenAdd = new URLSearchParams(window.location.search).get('add') === '1';
+
+    await loadProducts(1);
+
+    if (shouldOpenAdd) {
+        openCreateModal();
+    }
+});
 
 onUnmounted(clearSelectedImageFile);
 </script>
@@ -415,7 +444,7 @@ onUnmounted(clearSelectedImageFile);
 
         <!-- Empty state -->
         <div
-            v-else-if="products.length === 0"
+            v-else-if="pagination.total === 0"
             class="flex flex-col items-center justify-center gap-5 rounded-2xl border border-dashed bg-white py-16 text-center shadow-card"
         >
             <div class="page-icon flex size-14 items-center justify-center rounded-2xl">
@@ -436,7 +465,7 @@ onUnmounted(clearSelectedImageFile);
         <!-- Product list -->
         <div v-else-if="products.length > 0" class="space-y-3">
             <h2 class="text-xs font-bold uppercase tracking-widest text-gray-400">
-                Catalogue · {{ products.length }}
+                Catalogue · {{ pagination.total }}
             </h2>
             <div
                 v-for="product in products"
@@ -517,6 +546,34 @@ onUnmounted(clearSelectedImageFile);
                     </button>
                     <button type="button" class="delete-btn" @click="removeProduct(product)">
                         <Trash2 class="size-4" />
+                    </button>
+                </div>
+            </div>
+
+            <div
+                v-if="pagination.last_page > 1"
+                class="flex flex-wrap items-center justify-between gap-3 pt-2 text-sm text-muted-foreground"
+            >
+                <span>
+                    Page {{ pagination.current_page }} of {{ pagination.last_page }}
+                    · {{ pagination.total }} products
+                </span>
+                <div class="flex gap-2">
+                    <button
+                        type="button"
+                        class="action-btn"
+                        :disabled="pagination.current_page <= 1 || loading"
+                        @click="loadProducts(pagination.current_page - 1)"
+                    >
+                        Previous
+                    </button>
+                    <button
+                        type="button"
+                        class="action-btn"
+                        :disabled="pagination.current_page >= pagination.last_page || loading"
+                        @click="loadProducts(pagination.current_page + 1)"
+                    >
+                        Next
                     </button>
                 </div>
             </div>

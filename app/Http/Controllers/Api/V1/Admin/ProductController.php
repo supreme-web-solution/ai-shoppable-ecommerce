@@ -46,12 +46,13 @@ class ProductController extends Controller
     public function index(Request $request)
     {
         $teamId = $this->resolveTeamId($request);
+        $perPage = min(max((int) $request->input('per_page', 12), 1), 100);
 
         $products = Product::query()
             ->where('team_id', $teamId)
             ->with('variants')
             ->latest()
-            ->paginate(15);
+            ->paginate($perPage);
 
         return ProductResource::collection($products);
     }
