@@ -37,15 +37,17 @@ const props = defineProps<{
 }>();
 
 const loading = ref(false);
+const quantityUpdatingId = ref<number | null>(null);
 const errorText = ref('');
+const order = ref<CheckoutOrder>({ ...props.order, items: props.order.items ? [...props.order.items] : [] });
 
-const provider = computed(() => props.order.metadata?.payment_provider ?? 'payment');
+const provider = computed(() => order.value.metadata?.payment_provider ?? 'payment');
 const providerLabel = computed(() => provider.value === 'paypal' ? 'PayPal' : 'Stripe');
-const isPaid = computed(() => props.order.status === 'paid');
-const isPending = computed(() => props.order.status === 'pending');
+const isPaid = computed(() => order.value.status === 'paid');
+const isPending = computed(() => order.value.status === 'pending');
 const showSuccessScreen = computed(() => isPaid.value && !props.confirmationError);
 const paidAtLabel = computed(() => {
-    const raw = props.order.metadata?.paid_confirmed_at;
+    const raw = order.value.metadata?.paid_confirmed_at;
 
     if (!raw) {
         return null;
@@ -79,18 +81,9 @@ async function startPayment() {
     errorText.value = '';
 
     try {
-        const headers = new Headers({
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-        });
-        const csrfToken = readCookie('XSRF-TOKEN');
+        const headers = buildJsonHeaders();
 
-        if (csrfToken) {
-            headers.set('X-XSRF-TOKEN', csrfToken);
-        }
-
-        const response = await fetch(`/api/v1/player/checkout/orders/${props.order.id}/start-payment`, {
+        const response = await fetch(`/api/v1/player/checkout/orders/${order.value.id}/start-payment`, {
             method: 'POST',
             credentials: 'same-origin',
             headers,
@@ -107,6 +100,62 @@ async function startPayment() {
         errorText.value = error instanceof Error ? error.message : 'Could not start payment.';
     } finally {
         loading.value = false;
+    }
+}
+
+function buildJsonHeaders(): Headers {
+    const headers = new Headers({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+    });
+    const csrfToken = readCookie('XSRF-TOKEN');
+
+    if (csrfToken) {
+        headers.set('X-XSRF-TOKEN', csrfToken);
+    }
+
+    return headers;
+}
+
+async function updateItemQuantity(item: OrderItem, nextQuantity: number) {
+    if (!isPending.value || quantityUpdatingId.value !== null || nextQuantity < 1) {
+        return;
+    }
+
+    quantityUpdatingId.value = item.id;
+    errorText.value = '';
+
+    try {
+        const response = await fetch(`/api/v1/player/checkout/orders/${order.value.id}/items/${item.id}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: buildJsonHeaders(),
+            body: JSON.stringify({
+                token: props.token,
+                quantity: nextQuantity,
+            }),
+        });
+
+        const payload = await response.json().catch(() => null) as {
+            order?: CheckoutOrder;
+            message?: string;
+            errors?: { quantity?: string[] };
+        } | null;
+
+        if (!response.ok || !payload?.order) {
+            const validationMessage = payload?.errors?.quantity?.[0];
+            throw new Error(validationMessage ?? payload?.message ?? 'Could not update quantity.');
+        }
+
+        order.value = {
+            ...payload.order,
+            items: payload.order.items ?? [],
+        };
+    } catch (error) {
+        errorText.value = error instanceof Error ? error.message : 'Could not update quantity.';
+    } finally {
+        quantityUpdatingId.value = null;
     }
 }
 </script>
@@ -177,7 +226,7 @@ async function startPayment() {
                                 class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
                             >
                                 <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                                Download receipt
+                                Download PDF receipt
                             </a>
                             <a
                                 v-if="returnUrl"
@@ -260,10 +309,38 @@ async function startPayment() {
                                     </div>
                                     <div>
                                         <p class="font-medium text-slate-900">{{ item.title }}</p>
-                                        <p class="text-sm text-slate-500">Qty {{ item.quantity }} × {{ item.unit_price }}</p>
+                                        <p class="text-sm text-slate-500">{{ item.unit_price }} {{ order.currency }} each</p>
                                     </div>
                                 </div>
-                                <p class="font-semibold text-slate-900">{{ item.line_total }}</p>
+
+                                <div class="flex items-center gap-4">
+                                    <div
+                                        v-if="isPending"
+                                        class="flex items-center rounded-xl border bg-slate-50"
+                                    >
+                                        <button
+                                            type="button"
+                                            class="flex size-9 items-center justify-center text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                            :disabled="quantityUpdatingId !== null || item.quantity <= 1"
+                                            @click="updateItemQuantity(item, item.quantity - 1)"
+                                        >
+                                            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                        </button>
+                                        <span class="min-w-8 text-center text-sm font-semibold text-slate-900">
+                                            {{ quantityUpdatingId === item.id ? '…' : item.quantity }}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            class="flex size-9 items-center justify-center text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                            :disabled="quantityUpdatingId !== null || item.quantity >= 999"
+                                            @click="updateItemQuantity(item, item.quantity + 1)"
+                                        >
+                                            <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                        </button>
+                                    </div>
+                                    <p v-else class="text-sm text-slate-500">Qty {{ item.quantity }}</p>
+                                    <p class="min-w-16 text-right font-semibold text-slate-900">{{ item.line_total }}</p>
+                                </div>
                             </div>
 
                             <div v-if="!order.items?.length" class="px-5 py-8 text-center text-sm text-slate-400">
@@ -304,7 +381,7 @@ async function startPayment() {
                             <div v-if="isPending" class="pt-4">
                                 <button
                                     type="button"
-                                    :disabled="loading"
+                                    :disabled="loading || quantityUpdatingId !== null"
                                     class="relative flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3.5 text-sm font-semibold text-primary-foreground shadow-sm transition-all hover:bg-primary/90 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-60"
                                     @click="startPayment"
                                 >

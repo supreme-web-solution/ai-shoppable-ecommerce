@@ -120,9 +120,7 @@ class CheckoutSuccessPageTest extends TestCase
         $this->get("/checkout/{$order->id}/receipt-token/receipt")
             ->assertOk()
             ->assertHeader('content-disposition')
-            ->assertSee('Payment receipt')
-            ->assertSee('ORD-TESTRECEIPT')
-            ->assertSee('Checkout Product');
+            ->assertHeader('content-type', 'application/pdf');
     }
 
     public function test_stripe_return_marks_order_paid_and_shows_success_screen(): void
@@ -181,6 +179,41 @@ class CheckoutSuccessPageTest extends TestCase
             'id' => $order->id,
             'status' => 'paid',
         ]);
+    }
+
+    public function test_pending_checkout_can_update_item_quantity(): void
+    {
+        [$team, $cart, $embed, $video] = $this->createFixture();
+
+        $checkoutResponse = $this->postJson(
+            '/api/v1/player/checkout',
+            [
+                'team_id' => $team->id,
+                'cart_id' => $cart->id,
+                'checkout_mode' => 'hybrid',
+                'video_id' => $video->id,
+            ],
+            $this->embedHeaders($embed->slug),
+        );
+
+        $order = Order::query()->findOrFail($checkoutResponse->json('order.id'));
+        $item = $order->items()->firstOrFail();
+        $token = (string) data_get($order->metadata, 'checkout_token');
+
+        $this->patchJson("/api/v1/player/checkout/orders/{$order->id}/items/{$item->id}", [
+            'token' => $token,
+            'quantity' => 3,
+        ])
+            ->assertOk()
+            ->assertJsonPath('order.items.0.quantity', 3)
+            ->assertJsonPath('order.total_amount', '75.00');
+
+        $order->refresh();
+        $cart->refresh();
+
+        $this->assertSame('75.00', (string) $order->total_amount);
+        $this->assertSame('75.00', (string) $cart->total_amount);
+        $this->assertSame(3, (int) $cart->items()->firstOrFail()->quantity);
     }
 
     /**

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Order;
 use App\Services\Checkout\CheckoutReturnUrlResolver;
 use App\Services\Checkout\NativePaymentConfirmationService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
@@ -75,11 +76,10 @@ class CheckoutPageController extends Controller
             'paidAt' => $paidAt,
         ])->render();
 
-        $filename = 'receipt-'.$order->order_number.'.html';
+        $filename = 'receipt-'.$order->order_number.'.pdf';
 
-        return response($html, 200, [
-            'Content-Type' => 'text/html; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
-        ]);
+        return Pdf::loadHTML($html)
+            ->setPaper('a4')
+            ->download($filename);
     }
 }

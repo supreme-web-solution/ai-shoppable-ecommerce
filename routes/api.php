@@ -1,8 +1,8 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Admin\AiContentController;
-use App\Http\Controllers\Api\V1\Admin\EmbedController;
 use App\Http\Controllers\Api\V1\Admin\ChatHubController;
+use App\Http\Controllers\Api\V1\Admin\EmbedController;
 use App\Http\Controllers\Api\V1\Admin\LiveShowController;
 use App\Http\Controllers\Api\V1\Admin\LiveVideoChatController;
 use App\Http\Controllers\Api\V1\Admin\OverviewController;
@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\Integrations\ShopifyController;
 use App\Http\Controllers\Api\V1\Integrations\WooCommerceController;
 use App\Http\Controllers\Api\V1\Player\CartController;
 use App\Http\Controllers\Api\V1\Player\CheckoutController;
+use App\Http\Controllers\Api\V1\Player\CheckoutOrderController;
 use App\Http\Controllers\Api\V1\Player\EngagementController;
 use App\Http\Controllers\Api\V1\Player\FeedController;
 use App\Http\Controllers\Api\V1\Player\LinkPreviewController;
@@ -59,6 +60,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('cart/items', [CartController::class, 'addItem']);
         Route::delete('cart/items/{itemId}', [CartController::class, 'removeItem']);
         Route::post('checkout', [CheckoutController::class, 'checkout']);
+        Route::patch('checkout/orders/{order}/items/{item}', [CheckoutOrderController::class, 'updateItemQuantity']);
         Route::post('checkout/orders/{order}/start-payment', [NativePaymentController::class, 'start']);
         Route::post('checkout/orders/{order}/confirm-payment', [NativePaymentController::class, 'confirm']);
     });
