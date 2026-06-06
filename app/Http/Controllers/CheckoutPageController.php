@@ -3,9 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Order;
+use App\Services\Checkout\CheckoutReturnUrlResolver;
 use App\Services\Checkout\NativePaymentConfirmationService;
 use Illuminate\Http\Request;
-use Inertia\Response;
+use Illuminate\Http\Response;
+use Illuminate\Support\Carbon;
+use Inertia\Response as InertiaResponse;
 use Throwable;
 
 class CheckoutPageController extends Controller
@@ -15,7 +18,8 @@ class CheckoutPageController extends Controller
         Order $order,
         string $token,
         NativePaymentConfirmationService $confirmationService,
-    ): Response {
+        CheckoutReturnUrlResolver $returnUrlResolver,
+    ): InertiaResponse {
         abort_unless(hash_equals((string) data_get($order->metadata, 'checkout_token'), $token), 404);
         abort_unless($order->checkout_mode === 'native', 404);
 
@@ -45,6 +49,37 @@ class CheckoutPageController extends Controller
             'token' => $token,
             'paymentStatus' => $request->string('payment')->toString(),
             'confirmationError' => $confirmationError,
+            'returnUrl' => $returnUrlResolver->resolve($order),
+            'receiptUrl' => route('checkout.receipt', [
+                'order' => $order,
+                'token' => $token,
+            ]),
+        ]);
+    }
+
+    public function receipt(Request $request, Order $order, string $token): Response
+    {
+        abort_unless(hash_equals((string) data_get($order->metadata, 'checkout_token'), $token), 404);
+        abort_unless($order->checkout_mode === 'native', 404);
+        abort_unless($order->status === 'paid', 404);
+
+        $order->load('items', 'team');
+
+        $paidAtRaw = data_get($order->metadata, 'paid_confirmed_at');
+        $paidAt = is_string($paidAtRaw) && $paidAtRaw !== ''
+            ? Carbon::parse($paidAtRaw)
+            : $order->updated_at;
+
+        $html = view('checkout.receipt', [
+            'order' => $order,
+            'paidAt' => $paidAt,
+        ])->render();
+
+        $filename = 'receipt-'.$order->order_number.'.html';
+
+        return response($html, 200, [
+            'Content-Type' => 'text/html; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
         ]);
     }
 }

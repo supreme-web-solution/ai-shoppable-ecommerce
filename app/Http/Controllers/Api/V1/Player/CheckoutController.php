@@ -36,6 +36,11 @@ class CheckoutController extends Controller
 
         $fallbackVideoId = isset($validated['video_id']) ? (int) $validated['video_id'] : null;
 
+        $embedSlug = trim((string) ($request->header('X-Embed-Slug') ?: ($validated['embed_slug'] ?? '')));
+        if ($embedSlug !== '') {
+            $validated['embed_slug'] = $embedSlug;
+        }
+
         $attributionService->recordCheckoutStarted($cart, $team->id, $fallbackVideoId);
 
         $resolved = $checkoutResolver->resolve(

@@ -19,6 +19,7 @@ type CheckoutOrder = {
     subtotal_amount: string;
     metadata?: {
         payment_provider?: string;
+        paid_confirmed_at?: string;
     } | null;
     items?: OrderItem[];
     team?: {
@@ -31,6 +32,8 @@ const props = defineProps<{
     token: string;
     paymentStatus?: string;
     confirmationError?: string | null;
+    returnUrl?: string | null;
+    receiptUrl?: string | null;
 }>();
 
 const loading = ref(false);
@@ -40,6 +43,18 @@ const provider = computed(() => props.order.metadata?.payment_provider ?? 'payme
 const providerLabel = computed(() => provider.value === 'paypal' ? 'PayPal' : 'Stripe');
 const isPaid = computed(() => props.order.status === 'paid');
 const isPending = computed(() => props.order.status === 'pending');
+const showSuccessScreen = computed(() => isPaid.value && !props.confirmationError);
+const paidAtLabel = computed(() => {
+    const raw = props.order.metadata?.paid_confirmed_at;
+
+    if (!raw) {
+        return null;
+    }
+
+    const date = new Date(raw);
+
+    return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
+});
 
 const statusMessage = computed(() => {
     if (props.confirmationError) {
@@ -97,7 +112,7 @@ async function startPayment() {
 </script>
 
 <template>
-    <Head :title="`Checkout · ${order.order_number}`" />
+    <Head :title="showSuccessScreen ? `Order confirmed · ${order.order_number}` : `Checkout · ${order.order_number}`" />
 
     <div class="min-h-screen bg-linear-to-br from-slate-50 to-slate-100">
 
@@ -118,7 +133,70 @@ async function startPayment() {
         </header>
 
         <main class="mx-auto max-w-5xl px-4 py-8">
-            <div class="grid gap-6 lg:grid-cols-[1fr_380px]">
+            <!-- Paid success screen -->
+            <div v-if="showSuccessScreen" class="mx-auto max-w-2xl space-y-6">
+                <div class="overflow-hidden rounded-3xl border bg-white shadow-sm">
+                    <div class="border-b bg-linear-to-r from-emerald-500 to-teal-500 px-6 py-8 text-center text-white">
+                        <div class="mx-auto flex size-16 items-center justify-center rounded-full bg-white/20">
+                            <svg class="size-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                        </div>
+                        <h1 class="mt-4 text-2xl font-bold">Thank you for your purchase!</h1>
+                        <p class="mt-2 text-sm text-emerald-50">
+                            Order {{ order.order_number }} is confirmed
+                            <span v-if="paidAtLabel"> · {{ paidAtLabel }}</span>
+                        </p>
+                    </div>
+
+                    <div class="space-y-4 px-6 py-6">
+                        <div class="rounded-2xl border bg-slate-50 p-4">
+                            <div class="flex items-center justify-between text-sm">
+                                <span class="text-slate-600">Total paid</span>
+                                <span class="text-lg font-bold text-slate-900">{{ order.total_amount }} {{ order.currency }}</span>
+                            </div>
+                        </div>
+
+                        <div class="divide-y rounded-2xl border">
+                            <div
+                                v-for="item in order.items ?? []"
+                                :key="item.id"
+                                class="flex items-center justify-between gap-4 px-4 py-3 text-sm"
+                            >
+                                <div>
+                                    <p class="font-medium text-slate-900">{{ item.title }}</p>
+                                    <p class="text-slate-500">Qty {{ item.quantity }}</p>
+                                </div>
+                                <p class="font-semibold text-slate-900">{{ item.line_total }}</p>
+                            </div>
+                        </div>
+
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <a
+                                v-if="receiptUrl"
+                                :href="receiptUrl"
+                                download
+                                class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                            >
+                                <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                Download receipt
+                            </a>
+                            <a
+                                v-if="returnUrl"
+                                :href="returnUrl"
+                                class="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
+                            >
+                                <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                Continue watching
+                            </a>
+                        </div>
+
+                        <p v-if="returnUrl" class="text-center text-xs text-slate-500">
+                            You will return to the video where you started checkout.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div v-else class="grid gap-6 lg:grid-cols-[1fr_380px]">
 
                 <!-- Left: Order details -->
                 <div class="space-y-5">

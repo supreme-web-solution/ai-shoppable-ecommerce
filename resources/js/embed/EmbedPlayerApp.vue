@@ -996,6 +996,8 @@ async function checkoutCart() {
                 cart_id: cart.value.id,
                 checkout_mode: 'hybrid',
                 video_id: currentVideo.value.id,
+                embed_slug: props.embedSlug,
+                return_url: typeof window !== 'undefined' ? window.location.href : undefined,
             }),
         });
 

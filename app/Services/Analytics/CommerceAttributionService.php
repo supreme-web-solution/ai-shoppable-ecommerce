@@ -152,9 +152,10 @@ class CommerceAttributionService
 
     /**
      * @param  array<string, mixed>  $metadata
+     * @param  array<string, mixed>  $checkoutPayload
      * @return array<string, mixed>
      */
-    public function mergeOrderMetadata(Cart $cart, array $metadata = [], ?int $fallbackVideoId = null): array
+    public function mergeOrderMetadata(Cart $cart, array $metadata = [], ?int $fallbackVideoId = null, array $checkoutPayload = []): array
     {
         $attribution = $this->buildFromCart($cart);
 
@@ -162,8 +163,18 @@ class CommerceAttributionService
             $attribution['video_id'] = $fallbackVideoId;
         }
 
+        $embedSlug = trim((string) ($checkoutPayload['embed_slug'] ?? ''));
+        if ($embedSlug !== '') {
+            $attribution['embed_slug'] = $embedSlug;
+        }
+
+        $returnUrl = trim((string) ($checkoutPayload['return_url'] ?? ''));
+        if ($returnUrl !== '' && filter_var($returnUrl, FILTER_VALIDATE_URL)) {
+            $attribution['return_url'] = $returnUrl;
+        }
+
         return array_merge($metadata, [
-            'attribution' => Arr::only($attribution, ['video_id', 'lines', 'session_key']),
+            'attribution' => Arr::only($attribution, ['video_id', 'lines', 'session_key', 'embed_slug', 'return_url']),
         ]);
     }
 }

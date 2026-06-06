@@ -45,7 +45,7 @@ class NativeCheckoutService
                     'source' => 'native_checkout_service',
                     'payment_provider' => $provider,
                     'checkout_token' => Str::random(40),
-                ], $fallbackVideoId),
+                ], $fallbackVideoId, $checkoutPayload),
                 'ordered_at' => now(),
             ]);
 

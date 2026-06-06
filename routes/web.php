@@ -51,6 +51,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 Route::get('embed/{slug}', [EmbedPageController::class, 'show'])->name('embed.show');
 Route::get('shop/{slug}', [ShopPageController::class, 'show'])->name('shop.show');
 Route::get('checkout/{order}/{token}', [CheckoutPageController::class, 'show'])->name('checkout.show');
+Route::get('checkout/{order}/{token}/receipt', [CheckoutPageController::class, 'receipt'])->name('checkout.receipt');
 Route::get('webinars/{liveShow}/register', [WebinarPageController::class, 'register'])->name('webinars.register');
 Route::get('webinars/{liveShow}/room', [WebinarPageController::class, 'room'])->name('webinars.room');
 

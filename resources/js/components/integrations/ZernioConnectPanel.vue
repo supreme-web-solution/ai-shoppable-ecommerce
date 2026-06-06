@@ -110,7 +110,6 @@ onMounted(() => {
         <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
                 <p class="text-xs font-bold uppercase tracking-wider text-[#E8563A]">Social publishing</p>
-                <h3 class="text-lg font-bold text-gray-900">Zernio</h3>
                 <p class="mt-1 max-w-xl text-sm text-gray-500">
                     Connect Instagram, Facebook, TikTok, and more. Posts include a
                     <strong>shop link</strong> that opens your vertical player with product cards and checkout
