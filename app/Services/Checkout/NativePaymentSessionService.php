@@ -33,25 +33,31 @@ class NativePaymentSessionService
             abort(422, 'Stripe is not configured for this store.');
         }
 
+        $payload = [
+            'mode' => 'payment',
+            'success_url' => route('checkout.show', [
+                'order' => $order,
+                'token' => data_get($order->metadata, 'checkout_token'),
+            ]).'?payment=success&session_id={CHECKOUT_SESSION_ID}',
+            'cancel_url' => route('checkout.show', [
+                'order' => $order,
+                'token' => data_get($order->metadata, 'checkout_token'),
+            ]).'?payment=cancelled',
+            'client_reference_id' => $order->order_number,
+            'metadata[order_id]' => (string) $order->id,
+            'line_items[0][quantity]' => '1',
+            'line_items[0][price_data][currency]' => strtolower($order->currency),
+            'line_items[0][price_data][unit_amount]' => (string) (int) round(((float) $order->total_amount) * 100),
+            'line_items[0][price_data][product_data][name]' => 'Order '.$order->order_number,
+        ];
+
+        if ($order->customer_email) {
+            $payload['customer_email'] = $order->customer_email;
+        }
+
         $response = Http::asForm()
             ->withToken($secretKey)
-            ->post('https://api.stripe.com/v1/checkout/sessions', [
-                'mode' => 'payment',
-                'success_url' => route('checkout.show', [
-                    'order' => $order,
-                    'token' => data_get($order->metadata, 'checkout_token'),
-                ]).'?payment=success&session_id={CHECKOUT_SESSION_ID}',
-                'cancel_url' => route('checkout.show', [
-                    'order' => $order,
-                    'token' => data_get($order->metadata, 'checkout_token'),
-                ]).'?payment=cancelled',
-                'client_reference_id' => $order->order_number,
-                'metadata[order_id]' => (string) $order->id,
-                'line_items[0][quantity]' => '1',
-                'line_items[0][price_data][currency]' => strtolower($order->currency),
-                'line_items[0][price_data][unit_amount]' => (string) (int) round(((float) $order->total_amount) * 100),
-                'line_items[0][price_data][product_data][name]' => 'Order '.$order->order_number,
-            ]);
+            ->post('https://api.stripe.com/v1/checkout/sessions', $payload);
 
         if (! $response->successful()) {
             abort(422, 'Stripe could not start checkout: '.$response->json('error.message', 'Unknown Stripe error.'));

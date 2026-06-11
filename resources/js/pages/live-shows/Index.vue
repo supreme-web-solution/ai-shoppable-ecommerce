@@ -21,6 +21,7 @@ import {
     Package,
     Plus,
     PlusCircle,
+    Radio,
     Search,
     Trash2,
     Upload,
@@ -30,6 +31,7 @@ import {
 } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
+import DailyBroadcastPanel from '@/components/daily/DailyBroadcastPanel.vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -52,8 +54,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { extractUploadToken, useAdminApi } from '@/composables/useAdminApi';
-import { setPendingVideoUpload } from '@/lib/pendingVideoUpload';
 import { isEmbedPlayback, parseExternalVideoUrl } from '@/lib/externalVideoUrl';
+import { setPendingVideoUpload } from '@/lib/pendingVideoUpload';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +68,37 @@ type VideoOption = {
 };
 
 type OfferAppearance = 'pin' | 'in_chat' | 'popup';
+
+type RestreamTarget = {
+    name?: string;
+    url: string;
+    stream_key?: string;
+    profile?: string;
+    video_only?: boolean;
+};
+
+type RestreamConfig = {
+    mode?: 'go_live' | 'pull_video';
+    stream_id?: string | null;
+    stream_key?: string | null;
+    playback_id?: string | null;
+    ingest_url?: string | null;
+    hls_url?: string | null;
+    player_url?: string | null;
+    broadcast_url?: string | null;
+    multistream_targets?: RestreamTarget[];
+};
+
+type DailyConfig = {
+    room_name?: string | null;
+    room_url?: string | null;
+};
+
+type LiveSourceType = 'ai' | 'upload' | 'url' | 'restream' | 'daily';
+
+function isGoLiveSourceType(sourceType?: string | null): boolean {
+    return sourceType === 'daily';
+}
 
 type ProductOption = {
     id: number;
@@ -111,7 +144,7 @@ type WebinarSettings = {
     host_name?: string | null;
     thumbnail_url?: string | null;
     video_url?: string | null;
-    source_type?: 'ai' | 'upload' | 'url' | null;
+    source_type?: LiveSourceType | null;
     registration_title?: string | null;
     registration_description?: string | null;
     room_title?: string | null;
@@ -120,6 +153,8 @@ type WebinarSettings = {
     knowledge_base_text?: string | null;
     knowledge_sources?: KnowledgeSource[];
     video_duration_seconds?: number | null;
+    restream?: RestreamConfig | null;
+    daily?: DailyConfig | null;
 };
 
 type WebinarItem = {
@@ -131,10 +166,12 @@ type WebinarItem = {
     starts_at: string;
     ends_at?: string | null;
     settings?: WebinarSettings;
+    restream?: RestreamConfig | null;
+    daily?: DailyConfig | null;
     host_name?: string | null;
     thumbnail_url?: string | null;
     video_url?: string | null;
-    source_type?: 'ai' | 'upload' | 'url' | null;
+    source_type?: LiveSourceType | null;
     registration_title?: string | null;
     registration_description?: string | null;
     room_title?: string | null;
@@ -168,7 +205,7 @@ type WebinarFormSettings = {
     host_name: string;
     thumbnail_url: string;
     video_url: string;
-    source_type: 'ai' | 'upload' | 'url';
+    source_type: LiveSourceType;
     registration_title: string;
     registration_description: string;
     room_title: string;
@@ -176,6 +213,8 @@ type WebinarFormSettings = {
     ai_assistant_enabled: boolean;
     knowledge_sources: KnowledgeSource[];
     video_duration_seconds: number | null;
+    restream: RestreamConfig;
+    daily: DailyConfig;
 };
 
 type WebinarForm = {
@@ -197,9 +236,10 @@ type TabItem = {
 
 // ── Tab definitions ────────────────────────────────────────────────────────
 
+// CREATE: single "source" tab replaces separate video + streaming tabs.
 const CREATE_TABS: TabItem[] = [
     { id: 'basics', label: 'Basics', icon: Layers },
-    { id: 'video', label: 'Video', icon: Film },
+    { id: 'source', label: 'Video', icon: Film },
     { id: 'registration', label: 'Registration', icon: UserRound },
     { id: 'offers', label: 'Offers', icon: Package },
 ];
@@ -211,15 +251,22 @@ const WEBINAR_STATUS_OPTIONS: { value: WebinarForm['status']; label: string }[] 
     { value: 'cancelled', label: 'Cancelled' },
 ];
 
-const EDIT_TABS: TabItem[] = [
-    { id: 'basics', label: 'Basics', icon: Layers },
-    { id: 'video', label: 'Video', icon: Film },
-    { id: 'registration', label: 'Registration', icon: UserRound },
-    { id: 'attendees', label: 'Attendees', icon: Users },
-    { id: 'chat', label: 'Chat & Automation', icon: MessageSquare },
-    { id: 'offers', label: 'Offers', icon: Package },
-    { id: 'ai', label: 'AI Assistant', icon: Bot },
-];
+// EDIT: "streaming" tab for go-live casts, "video" tab for pre-recorded ones.
+const editTabs = computed<TabItem[]>(() => {
+    const isLive = isGoLiveSourceType(form.value.settings.source_type);
+
+    return [
+        { id: 'basics', label: 'Basics', icon: Layers },
+        isLive
+            ? { id: 'streaming', label: 'Go Live', icon: Radio }
+            : { id: 'video', label: 'Video', icon: Film },
+        { id: 'registration', label: 'Registration', icon: UserRound },
+        { id: 'attendees', label: 'Attendees', icon: Users },
+        { id: 'chat', label: 'Chat & Automation', icon: MessageSquare },
+        { id: 'offers', label: 'Offers', icon: Package },
+        { id: 'ai', label: 'AI Assistant', icon: Bot },
+    ];
+});
 
 // ── defineOptions ──────────────────────────────────────────────────────────
 
@@ -227,7 +274,7 @@ defineOptions({
     layout: {
         breadcrumbs: [
             { title: 'Dashboard', href: '/dashboard' },
-            { title: 'Webinars', href: '/live-shows' },
+            { title: 'Live Cast', href: '/live-shows' },
         ],
     },
 });
@@ -287,6 +334,22 @@ const selectedVideoFile = ref<File | null>(null);
 const previewVideoUrl = ref<string | null>(null);
 const uploadingVideo = ref(false);
 const videoUploadError = ref('');
+const creatingRestreamStream = ref(false);
+const addingRestreamTarget = ref(false);
+const broadcastLive = ref(false);
+const streamProviderActive = ref(false);
+const streamSegmentCount = ref(0);
+const broadcastPreviewStream = ref<MediaStream | null>(null);
+const dailyHostJoined = ref(false);
+let streamStatusPollRef: number | null = null;
+const simulcastOpen = ref(false);
+const restreamTargetForm = ref<RestreamTarget>({
+    name: '',
+    url: '',
+    stream_key: '',
+    profile: 'source',
+    video_only: false,
+});
 
 // Knowledge source state
 const addingSource = ref(false);
@@ -318,6 +381,21 @@ function newForm(): WebinarForm {
             ai_assistant_enabled: false,
             knowledge_sources: [],
             video_duration_seconds: null,
+            restream: {
+                mode: 'go_live',
+                stream_id: null,
+                stream_key: null,
+                playback_id: null,
+                ingest_url: null,
+                hls_url: null,
+                player_url: null,
+                broadcast_url: null,
+                multistream_targets: [],
+            },
+            daily: {
+                room_name: null,
+                room_url: null,
+            },
         },
     };
 }
@@ -364,7 +442,7 @@ const statusCounts = computed(() => ({
     total: webinars.value.length,
 }));
 
-const currentTabs = computed(() => (editModalOpen.value ? EDIT_TABS : CREATE_TABS));
+const currentTabs = computed(() => (editModalOpen.value ? editTabs.value : CREATE_TABS));
 
 const activeTabIndex = computed(() =>
     currentTabs.value.findIndex((t) => t.id === activeTab.value),
@@ -475,6 +553,94 @@ return form.value.settings.video_url.trim();
 }
 
 const selectedPlayback = computed(() => parseExternalVideoUrl(selectedVideoUrl() || null));
+
+const isDailyCast = computed(() => form.value.settings.source_type === 'daily');
+const isRestreamCast = computed(() => form.value.settings.source_type === 'restream');
+const dailySettings = computed<DailyConfig>(() => form.value.settings.daily ?? {});
+const hasDailyRoom = computed(() => Boolean((dailySettings.value.room_url ?? '').trim()));
+
+const restreamSettings = computed<RestreamConfig>(() => form.value.settings.restream ?? {});
+
+const hasRestreamStream = computed(() => {
+    const streamId = (restreamSettings.value.stream_id ?? '').trim();
+    const streamKey = (restreamSettings.value.stream_key ?? '').trim();
+
+    return Boolean(streamId && streamKey);
+});
+
+const livePreviewHlsUrl = computed((): string | null => {
+    const candidates = [
+        (restreamSettings.value.hls_url ?? '').trim(),
+        (restreamSettings.value.player_url ?? '').trim(),
+    ];
+
+    return candidates.find((url) => url.includes('.m3u8')) ?? null;
+});
+
+const streamReady = computed(() => streamProviderActive.value && streamSegmentCount.value > 0);
+const streamPublishing = computed(() => broadcastLive.value && !streamReady.value);
+const streamOnAir = computed(() => streamReady.value);
+const streamPublishingTooLong = ref(false);
+let streamPublishingTimeoutRef: number | null = null;
+
+const restreamTargets = computed<RestreamTarget[]>(() => restreamSettings.value.multistream_targets ?? []);
+
+function mergeRestreamConfig(
+    ...sources: Array<RestreamConfig | null | undefined>
+): RestreamConfig {
+    return sources.reduce<RestreamConfig>(
+        (merged, source) => ({ ...merged, ...(source ?? {}) }),
+        {},
+    );
+}
+
+function mergeDailyConfig(
+    ...sources: Array<DailyConfig | null | undefined>
+): DailyConfig {
+    return sources.reduce<DailyConfig>(
+        (merged, source) => ({ ...merged, ...(source ?? {}) }),
+        {},
+    );
+}
+
+function applyRestreamFromApi(data: WebinarItem): void {
+    form.value.settings.restream = mergeRestreamConfig(
+        form.value.settings.restream,
+        data.settings?.restream,
+        data.restream,
+    );
+
+    form.value.settings.daily = mergeDailyConfig(
+        form.value.settings.daily,
+        data.settings?.daily,
+        data.daily,
+    );
+
+    const sourceType = String(data.source_type ?? data.settings?.source_type ?? '');
+
+    if (sourceType === 'restream') {
+        form.value.settings.source_type = 'restream';
+    }
+
+    if (sourceType === 'daily') {
+        form.value.settings.source_type = 'daily';
+    }
+}
+
+function normalizedTargetUrl(target: RestreamTarget): string {
+    const base = target.url.trim().replace(/\/+$/, '');
+    const key = (target.stream_key ?? '').trim();
+
+    if (!base) {
+        return '';
+    }
+
+    if (!key) {
+        return base;
+    }
+
+    return `${base}/${key}`;
+}
 
 function chatsPageUrl(webinarId?: number | null): string {
     if (!webinarId) {
@@ -609,6 +775,135 @@ async function uploadWebinarVideo() {
         videoUploadError.value = error instanceof Error ? error.message : 'Video upload failed.';
     } finally {
         uploadingVideo.value = false;
+    }
+}
+
+function hasRestreamKeysFromItem(item?: WebinarItem | null): boolean {
+    if (!item) {
+        return false;
+    }
+
+    const streamId = (item.settings?.restream?.stream_id ?? item.restream?.stream_id ?? '').trim();
+    const streamKey = (item.settings?.restream?.stream_key ?? item.restream?.stream_key ?? '').trim();
+
+    return Boolean(streamId && streamKey);
+}
+
+async function ensureRestreamStreamKeys(options: { silent?: boolean } = {}): Promise<boolean> {
+    if (!editingWebinar.value || !hasRestreamStream.value) {
+        return hasRestreamStream.value;
+    }
+
+    if (!options.silent) {
+        creatingRestreamStream.value = true;
+    }
+
+    modalError.value = '';
+
+    try {
+        const mode = restreamSettings.value.mode ?? 'go_live';
+        const pullSource = selectedVideoUrl();
+        const targets = restreamTargets.value.filter((target) => target.url?.trim());
+
+        const payload = await postJson<{ data: WebinarItem }>(
+            `/api/v1/admin/live-shows/${editingWebinar.value.id}/restream/stream`,
+            {
+                mode,
+                pull_source: mode === 'pull_video' ? pullSource : null,
+                record: true,
+                multistream_targets: targets.map((target) => ({
+                    name: (target.name ?? '').trim(),
+                    url: normalizedTargetUrl(target),
+                    profile: (target.profile ?? 'source').trim() || 'source',
+                    video_only: Boolean(target.video_only),
+                })).filter((target) => Boolean(target.url)),
+            },
+        );
+
+        applyRestreamFromApi(payload.data);
+        await silentSaveWebinar();
+
+        if (!options.silent) {
+            toast.success('Stream keys generated and saved.');
+        }
+
+        return true;
+    } catch (error) {
+        if (!options.silent) {
+            modalError.value = error instanceof Error ? error.message : 'Could not create live stream.';
+        }
+
+        return false;
+    } finally {
+        if (!options.silent) {
+            creatingRestreamStream.value = false;
+        }
+    }
+}
+
+async function createRestreamStream() {
+    if (!editingWebinar.value) {
+        modalError.value = 'Create the live cast first, then configure streaming.';
+
+        return;
+    }
+
+    creatingRestreamStream.value = true;
+    modalError.value = '';
+
+    try {
+        await ensureRestreamStreamKeys();
+    } finally {
+        creatingRestreamStream.value = false;
+    }
+}
+
+async function addRestreamTarget() {
+    if (!editingWebinar.value) {
+        return;
+    }
+
+    const finalTargetUrl = normalizedTargetUrl(restreamTargetForm.value);
+
+    if (!finalTargetUrl) {
+        modalError.value = 'Enter a valid RTMP/RTMPS/SRT ingest URL.';
+
+        return;
+    }
+
+    addingRestreamTarget.value = true;
+    modalError.value = '';
+
+    try {
+        const payload = await postJson<{ data: WebinarItem }>(
+            `/api/v1/admin/live-shows/${editingWebinar.value.id}/restream/targets`,
+            {
+                name: (restreamTargetForm.value.name ?? '').trim() || null,
+                url: finalTargetUrl,
+                profile: (restreamTargetForm.value.profile ?? 'source').trim() || 'source',
+                video_only: Boolean(restreamTargetForm.value.video_only),
+            },
+        );
+
+        const settings = payload.data.settings ?? {};
+        form.value.settings.restream = {
+            ...(form.value.settings.restream ?? {}),
+            ...(settings.restream ?? {}),
+        };
+
+        restreamTargetForm.value = {
+            name: '',
+            url: '',
+            stream_key: '',
+            profile: 'source',
+            video_only: false,
+        };
+
+        toast.success('Multistream target added.');
+    } catch (error) {
+        modalError.value = error instanceof Error ? error.message : 'Could not add multistream target.';
+    } finally {
+        addingRestreamTarget.value = false;
     }
 }
 
@@ -764,6 +1059,8 @@ function buildPayload(forCreate = false) {
             ai_assistant_enabled: forCreate ? false : form.value.settings.ai_assistant_enabled,
             knowledge_sources: forCreate ? [] : form.value.settings.knowledge_sources,
             video_duration_seconds: videoDurationSeconds.value,
+            restream: form.value.settings.restream,
+            daily: form.value.settings.daily,
         },
     };
 }
@@ -999,6 +1296,110 @@ function clearSearch() {
     search.value = '';
 }
 
+// ── Edit modal close guard (prevents accidental close while broadcasting) ──
+
+function handleEditModalClose(open: boolean) {
+    if (!open && dailyHostJoined.value) {
+        if (!window.confirm('You are currently live in the host room. Close this panel anyway? Use Leave in the room to end your broadcast.')) {
+            return;
+        }
+    }
+
+    if (!open) {
+        stopStreamStatusPolling();
+    }
+
+    editModalOpen.value = open;
+}
+
+async function pollStreamStatus(): Promise<void> {
+    if (!editingWebinar.value?.id) {
+        return;
+    }
+
+    try {
+        const payload = await apiFetch<{ data: { is_active: boolean; source_segments: number } }>(
+            `/api/v1/admin/live-shows/${editingWebinar.value.id}/restream/status`,
+        );
+        streamProviderActive.value = Boolean(payload.data?.is_active);
+        streamSegmentCount.value = Number(payload.data?.source_segments ?? 0);
+    } catch {
+        // Status polling is best-effort.
+    }
+}
+
+function startStreamStatusPolling(): void {
+    stopStreamStatusPolling();
+    void pollStreamStatus();
+    const intervalMs = broadcastLive.value ? 3000 : 10000;
+    streamStatusPollRef = window.setInterval(() => void pollStreamStatus(), intervalMs);
+}
+
+function stopStreamStatusPolling(): void {
+    if (streamStatusPollRef !== null) {
+        window.clearInterval(streamStatusPollRef);
+        streamStatusPollRef = null;
+    }
+
+    streamProviderActive.value = false;
+    streamSegmentCount.value = 0;
+}
+
+function clearStreamPublishingTimeout(): void {
+    if (streamPublishingTimeoutRef !== null) {
+        window.clearTimeout(streamPublishingTimeoutRef);
+        streamPublishingTimeoutRef = null;
+    }
+
+    streamPublishingTooLong.value = false;
+}
+
+function handleBroadcastLiveChange(isLive: boolean): void {
+    broadcastLive.value = isLive;
+
+    if (isLive) {
+        clearStreamPublishingTimeout();
+        streamPublishingTimeoutRef = window.setTimeout(() => {
+            if (broadcastLive.value && !streamReady.value) {
+                streamPublishingTooLong.value = true;
+            }
+        }, 20000);
+        startStreamStatusPolling();
+    } else {
+        clearStreamPublishingTimeout();
+    }
+}
+
+// ── Silent save (persists keys without closing modal) ──────────────────────
+
+async function silentSaveWebinar() {
+    if (!editingWebinar.value) {
+        return;
+    }
+
+    try {
+        await putJson(`/api/v1/admin/live-shows/${editingWebinar.value.id}`, buildPayload());
+        await loadData();
+
+        const updated = webinars.value.find((item) => item.id === editingWebinar.value?.id);
+
+        if (updated) {
+            editingWebinar.value = updated;
+        }
+    } catch {
+        // silent — keys are already shown; user can save manually
+    }
+}
+
+// ── Fullscreen ESC handler ─────────────────────────────────────────────────
+
+function handleKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && document.fullscreenElement) {
+        void document.exitFullscreen();
+        event.stopPropagation();
+    }
+}
+
 function openCreateModal() {
     form.value = newForm();
     modalError.value = '';
@@ -1022,13 +1423,21 @@ async function createWebinar() {
     }
 
     saving.value = true;
+    const isGoLive = form.value.settings.source_type === 'daily';
 
     try {
-        await postJson('/api/v1/admin/live-shows', buildPayload(true));
+        const result = await postJson<{ data: WebinarItem }>('/api/v1/admin/live-shows', buildPayload(true));
         createModalOpen.value = false;
         await loadData();
+
+        if (isGoLive && result?.data?.id) {
+            const created = webinars.value.find((item) => item.id === result.data.id) ?? result.data;
+            await openEditModal(created);
+            activeTab.value = 'streaming';
+            toast.success('Live cast created. Click Join as host on the Go Live tab to start broadcasting.');
+        }
     } catch (error) {
-        modalError.value = error instanceof Error ? error.message : 'Could not create webinar.';
+        modalError.value = error instanceof Error ? error.message : 'Could not create live cast.';
     } finally {
         saving.value = false;
     }
@@ -1037,6 +1446,8 @@ async function createWebinar() {
 async function openEditModal(item: WebinarItem) {
     editingWebinar.value = item;
     const s = item.settings ?? {};
+    const restreamConfig = mergeRestreamConfig(item.restream, s.restream);
+    const dailyConfig = mergeDailyConfig(item.daily, s.daily);
     form.value = {
         title: item.title ?? '',
         description: item.description ?? '',
@@ -1050,7 +1461,7 @@ async function openEditModal(item: WebinarItem) {
             thumbnail_url: item.thumbnail_url ?? s.thumbnail_url ?? '',
             video_url: item.video_url ?? s.video_url ?? '',
             source_type: item.source_type ?? s.source_type ?? 'upload',
-            registration_title: item.registration_title ?? s.registration_title ?? 'Join Webinar',
+            registration_title: item.registration_title ?? s.registration_title ?? 'Join Live Cast',
             registration_description:
                 item.registration_description ??
                 s.registration_description ??
@@ -1061,6 +1472,23 @@ async function openEditModal(item: WebinarItem) {
             knowledge_sources: Array.isArray(s.knowledge_sources) ? [...s.knowledge_sources] : [],
             video_duration_seconds:
                 item.video_duration_seconds ?? s.video_duration_seconds ?? null,
+            restream: {
+                mode: restreamConfig.mode ?? 'go_live',
+                stream_id: restreamConfig.stream_id ?? null,
+                stream_key: restreamConfig.stream_key ?? null,
+                playback_id: restreamConfig.playback_id ?? null,
+                ingest_url: restreamConfig.ingest_url ?? null,
+                hls_url: restreamConfig.hls_url ?? null,
+                player_url: restreamConfig.player_url ?? null,
+                broadcast_url: restreamConfig.broadcast_url ?? null,
+                multistream_targets: Array.isArray(restreamConfig.multistream_targets)
+                    ? [...restreamConfig.multistream_targets]
+                    : [],
+            },
+            daily: {
+                room_name: dailyConfig.room_name ?? null,
+                room_url: dailyConfig.room_url ?? null,
+            },
         },
     };
     modalError.value = '';
@@ -1068,11 +1496,25 @@ async function openEditModal(item: WebinarItem) {
     addingSource.value = false;
     sourceForm.value = { title: '', content: '' };
     expandedSourceIndex.value = null;
+    broadcastLive.value = false;
+    dailyHostJoined.value = false;
+    stopStreamStatusPolling();
+    broadcastPreviewStream.value = null;
+    simulcastOpen.value = false;
     clearSelectedVideoFile();
-    activeTab.value = 'basics';
+    // Default go-live casts to the streaming tab so keys are immediately visible.
+    activeTab.value = isGoLiveSourceType(item.source_type ?? item.settings?.source_type)
+        ? 'streaming'
+        : 'basics';
     resetAttendeePagination();
     editModalOpen.value = true;
     await Promise.all([loadAttendees(item.id, 1), refreshEditingWebinarStats(item.id)]);
+
+    const isRestreamCast = (item.source_type ?? item.settings?.source_type) === 'restream';
+
+    if (isRestreamCast && !hasRestreamKeysFromItem(item) && !hasRestreamStream.value) {
+        await ensureRestreamStreamKeys({ silent: true });
+    }
 }
 
 async function saveWebinar() {
@@ -1096,14 +1538,14 @@ return;
         editModalOpen.value = false;
         await loadData();
     } catch (error) {
-        modalError.value = error instanceof Error ? error.message : 'Could not update webinar.';
+        modalError.value = error instanceof Error ? error.message : 'Could not update live cast.';
     } finally {
         saving.value = false;
     }
 }
 
 async function removeWebinar(item: WebinarItem) {
-    if (!window.confirm(`Delete webinar "${item.title}"?`)) {
+    if (!window.confirm(`Delete live cast "${item.title}"?`)) {
 return;
 }
 
@@ -1113,7 +1555,7 @@ return;
         await deleteResource(`/api/v1/admin/live-shows/${item.id}`);
         await loadData();
     } catch (error) {
-        errorText.value = error instanceof Error ? error.message : 'Could not delete webinar.';
+        errorText.value = error instanceof Error ? error.message : 'Could not delete live cast.';
     } finally {
         deleting.value = null;
     }
@@ -1138,9 +1580,26 @@ return;
     }
 }
 
-onMounted(loadData);
+watch(
+    [() => activeTab.value, () => editModalOpen.value, hasRestreamStream, isRestreamCast],
+    ([tab, open, hasStream, restreamCast]) => {
+        if (open && tab === 'streaming' && hasStream && restreamCast) {
+            startStreamStatusPolling();
+        } else {
+            stopStreamStatusPolling();
+        }
+    },
+);
+
+onMounted(() => {
+    void loadData();
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+});
 
 onBeforeUnmount(() => {
+    window.removeEventListener('keydown', handleKeyDown, { capture: true });
+    stopStreamStatusPolling();
+
     if (previewVideoUrl.value?.startsWith('blob:')) {
         URL.revokeObjectURL(previewVideoUrl.value);
     }
@@ -1152,7 +1611,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <Head title="Webinars" />
+    <Head title="Live Cast" />
 
     <!-- ═══════════════════════════════════════ Main list page ══════════════════════════════════════ -->
     <div class="live-root flex h-full flex-1 flex-col gap-5 p-4 md:p-5">
@@ -1161,13 +1620,13 @@ onBeforeUnmount(() => {
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="flex items-start gap-3">
                 <div class="page-icon flex size-10 shrink-0 items-center justify-center rounded-xl">
-                    <Video class="size-5 text-white" />
+                    <Radio class="size-5 text-white" />
                 </div>
                 <div>
                     <p class="text-xs font-bold uppercase tracking-wider text-[#E8563A]">Live Commerce</p>
-                    <h1 class="text-2xl font-black tracking-tight text-gray-900">Webinars</h1>
+                    <h1 class="text-2xl font-black tracking-tight text-gray-900">Live Cast</h1>
                     <p class="mt-0.5 text-sm text-gray-500">
-                    Manage on-demand webinar funnels, registration flows, room chat, and offer assignments.
+                    Manage live and prerecorded shows, registration flows, room chat, and offer assignments.
                     </p>
                 </div>
             </div>
@@ -1177,7 +1636,7 @@ onBeforeUnmount(() => {
                 </Button>
                 <Button size="sm" class="cta-btn" @click="openCreateModal">
                     <PlusCircle class="mr-1.5 size-4" />
-                    New Webinar
+                    New Live Cast
                 </Button>
             </div>
         </div>
@@ -1233,14 +1692,14 @@ onBeforeUnmount(() => {
         <div class="table-card rounded-2xl">
             <div class="flex flex-col gap-3 border-b border-[#F0EDE8] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <p class="font-bold text-gray-900">All Webinars</p>
+                    <p class="font-bold text-gray-900">All Live Casts</p>
                     <p class="text-xs text-gray-500">
                         {{ filteredWebinars.length }} shown / {{ webinars.length }} total
                     </p>
                 </div>
                 <div class="relative w-full max-w-xs">
                     <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
-                    <Input v-model="search" placeholder="Search webinars..." class="search-input pl-9" />
+                    <Input v-model="search" placeholder="Search live casts..." class="search-input pl-9" />
                 </div>
             </div>
 
@@ -1257,7 +1716,7 @@ onBeforeUnmount(() => {
                     <Search class="size-8 text-gray-400" />
                 </div>
                 <div class="max-w-sm">
-                    <p class="text-base font-bold text-gray-900">No webinars match your search</p>
+                    <p class="text-base font-bold text-gray-900">No live casts match your search</p>
                     <p class="mt-1.5 text-sm text-gray-500">
                         Nothing found for
                         <span class="font-medium text-gray-700">“{{ search.trim() }}”</span>.
@@ -1278,14 +1737,14 @@ onBeforeUnmount(() => {
                     <Film class="size-8 text-white" />
                 </div>
                 <div class="max-w-md">
-                    <p class="text-base font-bold text-gray-900">No webinars yet</p>
+                    <p class="text-base font-bold text-gray-900">No live casts yet</p>
                     <p class="mt-1.5 text-sm text-gray-500">
-                        Create your first on-demand webinar funnel — registration page, viewer room, offers, and optional AI chat after publish.
+                        Create your first live cast funnel — registration page, viewer room, offers, and optional AI chat after publish.
                     </p>
                 </div>
                 <Button size="sm" class="cta-btn" @click="openCreateModal">
                     <PlusCircle class="mr-1.5 size-4" />
-                    Create your first webinar
+                    Create your first live cast
                 </Button>
             </div>
 
@@ -1293,7 +1752,7 @@ onBeforeUnmount(() => {
                 <table class="min-w-full text-sm">
                     <thead class="bg-[#FAF8F5] text-xs uppercase tracking-wide text-gray-500">
                         <tr>
-                            <th class="px-4 py-3 text-left">Webinar</th>
+                            <th class="px-4 py-3 text-left">Live cast</th>
                             <th class="px-4 py-3 text-left">Host</th>
                             <th class="px-4 py-3 text-left">Status</th>
                             <th class="px-4 py-3 text-left">Registrants</th>
@@ -1342,7 +1801,7 @@ onBeforeUnmount(() => {
                                         variant="ghost"
                                         size="icon"
                                         class="action-icon"
-                                        title="Edit webinar"
+                                        title="Edit live cast"
                                         @click="openEditModal(item)"
                                     >
                                         <Edit3 class="size-4" />
@@ -1354,13 +1813,13 @@ onBeforeUnmount(() => {
                                                 variant="ghost"
                                                 size="icon"
                                                 class="action-icon"
-                                                title="Webinar links"
+                                                title="Live cast links"
                                             >
                                                 <Link2 class="size-4" />
                                             </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end" class="w-56">
-                                            <DropdownMenuLabel>Webinar links</DropdownMenuLabel>
+                                            <DropdownMenuLabel>Live cast links</DropdownMenuLabel>
                                             <DropdownMenuItem
                                                 class="cursor-pointer gap-2"
                                                 @click="copyWebinarLink('register', registerUrl(item))"
@@ -1395,7 +1854,7 @@ onBeforeUnmount(() => {
                                                     class="flex cursor-pointer items-center gap-2"
                                                 >
                                                     <ExternalLink class="size-4 shrink-0" />
-                                                    Open webinar room
+                                                    Open live room
                                                 </a>
                                             </DropdownMenuItem>
                                         </DropdownMenuContent>
@@ -1405,7 +1864,7 @@ onBeforeUnmount(() => {
                                         variant="ghost"
                                         size="icon"
                                         class="text-red-400 hover:bg-red-50 hover:text-red-600"
-                                        title="Delete webinar"
+                                        title="Delete live cast"
                                         :disabled="deleting === item.id"
                                         @click="removeWebinar(item)"
                                     >
@@ -1426,9 +1885,9 @@ onBeforeUnmount(() => {
         <DialogContent class="flex max-h-[min(92dvh,calc(100vh-2rem))] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
             <!-- Header -->
             <DialogHeader class="shrink-0 border-b px-6 py-4">
-                <DialogTitle>Create Webinar</DialogTitle>
+            <DialogTitle>Create Live Cast</DialogTitle>
                 <DialogDescription>
-                    Set up host, video, registration page, and offers. Enable AI assistant, chat, and knowledge sources after the webinar is created.
+                    Set up host, video, registration page, and offers. Enable AI assistant, chat, and knowledge sources after the live cast is created.
                 </DialogDescription>
             </DialogHeader>
 
@@ -1475,10 +1934,10 @@ onBeforeUnmount(() => {
                 <!-- ── Basics ── -->
                 <div v-show="activeTab === 'basics'" class="space-y-4">
                     <div class="rounded-lg border p-4">
-                        <p class="mb-3 text-sm font-semibold">Basics <span class="font-normal text-muted-foreground">— Configure the core webinar details</span></p>
+                        <p class="mb-3 text-sm font-semibold">Basics <span class="font-normal text-muted-foreground">— Configure the core live cast details</span></p>
                         <div class="grid gap-4 md:grid-cols-2">
                             <div class="space-y-1.5">
-                                <Label>Webinar Title <span class="text-destructive">*</span></Label>
+                                <Label>Live Cast Title <span class="text-destructive">*</span></Label>
                                 <Input v-model="form.title" placeholder="How to Scale Your Agency in 2026" />
                             </div>
                             <div class="space-y-1.5">
@@ -1492,7 +1951,7 @@ onBeforeUnmount(() => {
                                 v-model="form.description"
                                 rows="3"
                                 class="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                                placeholder="Tell attendees what this webinar covers..."
+                                placeholder="Tell attendees what this live cast covers..."
                             />
                         </div>
                         <div class="mt-4 grid gap-4 sm:grid-cols-3">
@@ -1537,14 +1996,78 @@ onBeforeUnmount(() => {
                     </div>
                 </div>
 
-                <!-- ── Video ── -->
-                <div v-show="activeTab === 'video'" class="space-y-4">
-                    <div class="rounded-lg border p-4">
-                        <p class="mb-3 text-sm font-semibold">Video <span class="font-normal text-muted-foreground">— Upload or link the webinar video</span></p>
+                <!-- ── Source (CREATE only) ── -->
+                <div v-show="activeTab === 'source'" class="space-y-4">
 
-                        <div class="mb-4 rounded-xl border-2 border-dashed border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
+                    <!-- Mode selector cards -->
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <button
+                            type="button"
+                            :class="[
+                                'group flex flex-col items-start gap-3 rounded-xl border-2 p-5 text-left transition-all',
+                                !isGoLiveSourceType(form.settings.source_type)
+                                    ? 'border-[#E8563A] bg-[#E8563A]/5 shadow-sm'
+                                    : 'border-border bg-white hover:border-[#E8563A]/40 hover:bg-[#E8563A]/5',
+                            ]"
+                            @click="form.settings.source_type = 'upload'"
+                        >
+                            <div :class="['flex size-10 items-center justify-center rounded-xl', !isGoLiveSourceType(form.settings.source_type) ? 'bg-[#E8563A]' : 'bg-gray-100 group-hover:bg-[#E8563A]/10']">
+                                <Film :class="['size-5', !isGoLiveSourceType(form.settings.source_type) ? 'text-white' : 'text-gray-500']" />
+                            </div>
+                            <div>
+                                <p class="font-semibold text-gray-900">Pre-recorded Video</p>
+                                <p class="mt-1 text-xs text-gray-500">Upload a video file or pick one from your library. Perfect for scheduled or evergreen content.</p>
+                            </div>
+                            <div :class="['mt-auto flex h-5 w-5 items-center justify-center rounded-full border-2', !isGoLiveSourceType(form.settings.source_type) ? 'border-[#E8563A] bg-[#E8563A]' : 'border-gray-300']">
+                                <div v-if="!isGoLiveSourceType(form.settings.source_type)" class="size-2 rounded-full bg-white" />
+                            </div>
+                        </button>
+
+                        <button
+                            type="button"
+                            :class="[
+                                'group flex flex-col items-start gap-3 rounded-xl border-2 p-5 text-left transition-all',
+                                form.settings.source_type === 'daily'
+                                    ? 'border-[#E8563A] bg-[#E8563A]/5 shadow-sm'
+                                    : 'border-border bg-white hover:border-[#E8563A]/40 hover:bg-[#E8563A]/5',
+                            ]"
+                            @click="form.settings.source_type = 'daily'"
+                        >
+                            <div :class="['flex size-10 items-center justify-center rounded-xl', form.settings.source_type === 'daily' ? 'bg-[#E8563A]' : 'bg-gray-100 group-hover:bg-[#E8563A]/10']">
+                                <Radio :class="['size-5', form.settings.source_type === 'daily' ? 'text-white' : 'text-gray-500']" />
+                            </div>
+                            <div>
+                                <p class="font-semibold text-gray-900">Go Live</p>
+                                <p class="mt-1 text-xs text-gray-500">Broadcast in real-time from your browser. No OBS or stream keys required.</p>
+                            </div>
+                            <div :class="['mt-auto flex h-5 w-5 items-center justify-center rounded-full border-2', form.settings.source_type === 'daily' ? 'border-[#E8563A] bg-[#E8563A]' : 'border-gray-300']">
+                                <div v-if="form.settings.source_type === 'daily'" class="size-2 rounded-full bg-white" />
+                            </div>
+                        </button>
+                    </div>
+
+                    <!-- Go Live notice -->
+                    <div v-if="form.settings.source_type === 'daily'" class="rounded-xl border border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
+                        <div class="flex items-start gap-3">
+                            <Radio class="mt-0.5 size-4 shrink-0 text-[#E8563A]" />
+                            <div class="text-sm">
+                                <p class="font-semibold text-gray-900">Your live room is created when you save</p>
+                                <p class="mt-1 text-xs text-gray-500">
+                                    After you click <strong>Create</strong>, a private live room is provisioned automatically.
+                                    The edit modal opens on the <strong>Go Live</strong> tab where you can enable your camera and start broadcasting.
+                                    Viewers watch inside your webinar room in real time.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pre-recorded video options -->
+                    <div v-if="!isGoLiveSourceType(form.settings.source_type)" class="space-y-4 rounded-xl border p-4">
+                        <p class="text-sm font-semibold text-gray-900">Video source</p>
+
+                        <div class="rounded-xl border-2 border-dashed border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
                             <p class="mb-1 text-sm font-semibold">Upload video file</p>
-                            <p class="mb-3 text-xs text-muted-foreground">MP4, MOV, or WebM. File is saved to your video library and linked to this webinar.</p>
+                            <p class="mb-3 text-xs text-muted-foreground">MP4, MOV, or WebM. File is saved to your video library and linked automatically.</p>
                             <input
                                 type="file"
                                 accept="video/mp4,video/quicktime,video/webm,video/*"
@@ -1556,73 +2079,55 @@ onBeforeUnmount(() => {
                             </p>
                             <p v-if="videoUploadError" class="mt-2 text-xs text-destructive">{{ videoUploadError }}</p>
                             <div class="mt-3 flex flex-wrap gap-2">
-                                <Button
-                                    size="sm"
-                                    :disabled="uploadingVideo || !selectedVideoFile"
-                                    @click="uploadWebinarVideo"
-                                >
+                                <Button size="sm" :disabled="uploadingVideo || !selectedVideoFile" @click="uploadWebinarVideo">
                                     <Loader2 v-if="uploadingVideo" class="mr-2 size-4 animate-spin" />
                                     <Upload v-else class="mr-2 size-4" />
                                     {{ uploadingVideo ? 'Uploading...' : 'Upload & link video' }}
                                 </Button>
-                                <Button
-                                    v-if="selectedVideoFile"
-                                    size="sm"
-                                    variant="ghost"
-                                    @click="clearSelectedVideoFile"
-                                >
-                                    Clear file
+                                <Button v-if="selectedVideoFile" size="sm" variant="ghost" @click="clearSelectedVideoFile">
+                                    Clear
                                 </Button>
                             </div>
-                            <p v-if="form.video_id" class="mt-2 text-xs font-medium text-green-600 dark:text-green-400">
+                            <p v-if="form.video_id" class="mt-2 text-xs font-medium text-green-600">
                                 ✓ Linked to library video #{{ form.video_id }}
                             </p>
                         </div>
 
-                        <div class="grid gap-4 sm:grid-cols-2">
+                        <div class="grid gap-3 sm:grid-cols-2">
                             <div class="space-y-1.5">
-                                <Label>Video Source Type</Label>
-                                <select v-model="form.settings.source_type" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
-                                    <option value="upload">Uploaded Video</option>
-                                    <option value="ai">AI Generated Video</option>
-                                    <option value="url">Direct URL</option>
-                                </select>
-                            </div>
-                            <div class="space-y-1.5">
-                                <Label>Linked Library Video</Label>
+                                <Label>Or pick from library</Label>
                                 <select v-model="form.video_id" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
                                     <option :value="null">No linked video</option>
                                     <option v-for="video in videos" :key="video.id" :value="video.id">{{ video.title }}</option>
                                 </select>
                             </div>
                             <div class="space-y-1.5">
-                                <Label>Thumbnail URL / PNG Path</Label>
+                                <Label>Or paste a video URL</Label>
+                                <Input v-model="form.settings.video_url" placeholder="YouTube, Vimeo, or direct MP4 URL" />
+                                <p class="text-xs text-muted-foreground">Paste a YouTube/Vimeo link to embed, or a direct .mp4 URL.</p>
+                            </div>
+                            <div class="space-y-1.5">
+                                <Label>Thumbnail URL</Label>
                                 <Input v-model="form.settings.thumbnail_url" placeholder="https://.../thumb.png" />
                             </div>
                             <div class="space-y-1.5">
-                                <Label>Video URL Override</Label>
-                                <Input
-                                    v-model="form.settings.video_url"
-                                    placeholder="YouTube, Vimeo, Cloudinary, or direct MP4 URL"
-                                />
-                            </div>
-                            <div class="space-y-1.5 sm:col-span-2">
                                 <Label>Video duration (seconds)</Label>
                                 <Input
-                                    v-model.number="form.settings.video_duration_seconds"
+                                    :model-value="form.settings.video_duration_seconds ?? ''"
                                     type="number"
                                     min="1"
-                                    placeholder="e.g. 120"
+                                    placeholder="e.g. 3600"
+                                    @update:model-value="(v) => { form.settings.video_duration_seconds = v === '' ? null : Number(v); }"
                                 />
-                                <p class="text-xs text-muted-foreground">
-                                    How long the room video runs. Offer timers and watch tracking (50% / watched to end) use this duration.
-                                </p>
+                                <p class="text-xs text-muted-foreground">Used for offer timers and watch-tracking.</p>
                             </div>
                         </div>
-                        <div class="mt-4 grid gap-4 sm:grid-cols-2">
+
+                        <!-- Previews -->
+                        <div class="grid gap-4 sm:grid-cols-2">
                             <div class="rounded-md border bg-muted/30 p-3">
-                                <p class="mb-2 text-xs font-medium text-muted-foreground">Thumbnail Preview</p>
-                                <div class="flex h-32 items-center justify-center overflow-hidden rounded-md border bg-muted">
+                                <p class="mb-2 text-xs font-medium text-muted-foreground">Thumbnail preview</p>
+                                <div class="flex h-28 items-center justify-center overflow-hidden rounded-md border bg-muted">
                                     <img v-if="selectedThumbnailUrl()" :src="selectedThumbnailUrl()" class="h-full w-full object-cover">
                                     <ImageOff v-else class="size-5 text-muted-foreground" />
                                 </div>
@@ -1675,7 +2180,7 @@ onBeforeUnmount(() => {
                             />
                         </div>
                         <div class="mt-4 rounded-lg border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">
-                            Registration and room URLs will be generated after the webinar is created.
+                                Registration and room URLs will be generated after the live cast is created.
                         </div>
                     </div>
                 </div>
@@ -1685,7 +2190,7 @@ onBeforeUnmount(() => {
                     <div class="rounded-lg border p-4">
                         <p class="mb-1 text-sm font-semibold">Offers</p>
                         <p class="mb-3 text-xs text-muted-foreground">
-                            Assign products and schedule when each offer appears in the webinar room (requires video duration on the Video tab).
+                            Assign products and schedule when each offer appears in the live room (requires video duration on the Video tab).
                         </p>
                         <div class="relative mb-3">
                             <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -1828,7 +2333,7 @@ onBeforeUnmount(() => {
                         <Button variant="ghost" @click="createModalOpen = false">Cancel</Button>
                 <Button class="cta-btn" :disabled="saving" @click="createWebinar">
                             <Loader2 v-if="saving" class="mr-2 size-4 animate-spin" />
-                            {{ saving ? 'Creating...' : 'Create Webinar' }}
+                            {{ saving ? 'Creating...' : 'Create Live Cast' }}
                         </Button>
                     </div>
                 </div>
@@ -1837,14 +2342,14 @@ onBeforeUnmount(() => {
     </Dialog>
 
     <!-- ═══════════════════════════════════════ Edit Dialog ══════════════════════════════════════ -->
-    <Dialog v-model:open="editModalOpen">
+    <Dialog :open="editModalOpen" @update:open="handleEditModalClose">
         <DialogContent class="flex max-h-[min(92dvh,calc(100vh-2rem))] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
 
             <!-- Header -->
             <div class="shrink-0 border-b px-6 py-4">
                 <p v-if="editingWebinar" class="truncate text-xs text-muted-foreground">{{ editingWebinar.title }}</p>
-                <h2 class="text-lg font-semibold">Edit Webinar</h2>
-                <p class="text-sm text-muted-foreground">Update settings, automation, and publishing options.</p>
+                <DialogTitle class="text-lg font-semibold">Edit Webinar</DialogTitle>
+                <DialogDescription>Update settings, automation, and publishing options.</DialogDescription>
             </div>
 
             <!-- Stats row -->
@@ -1887,7 +2392,7 @@ onBeforeUnmount(() => {
             <div class="shrink-0 overflow-x-auto border-b border-[#F0EDE8] bg-[#FAF8F5]">
                 <div class="flex min-w-max">
                     <button
-                        v-for="tab in EDIT_TABS"
+                        v-for="tab in editTabs"
                         :key="tab.id"
                         type="button"
                         :class="[
@@ -1906,9 +2411,9 @@ onBeforeUnmount(() => {
 
             <!-- Step indicator -->
             <div class="flex shrink-0 items-center justify-between border-b border-[#F0EDE8] bg-white px-6 py-2 text-xs text-gray-500">
-                <span>Step {{ activeTabIndex + 1 }} of {{ EDIT_TABS.length }}</span>
-                <span class="font-semibold text-foreground">{{ EDIT_TABS[activeTabIndex]?.label }}</span>
-                <span>{{ activeTabIndex + 1 }} / {{ EDIT_TABS.length }} completed</span>
+                <span>Step {{ activeTabIndex + 1 }} of {{ editTabs.length }}</span>
+                <span class="font-semibold text-foreground">{{ editTabs[activeTabIndex]?.label }}</span>
+                <span>{{ activeTabIndex + 1 }} / {{ editTabs.length }} completed</span>
             </div>
 
             <!-- Tab content -->
@@ -1987,7 +2492,71 @@ onBeforeUnmount(() => {
                     </div>
                 </div>
 
-                <!-- ── Video ── -->
+                <!-- ── Streaming (Go Live) ── -->
+                <div v-show="activeTab === 'streaming'" class="space-y-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E8563A]/30 bg-[#E8563A]/5 px-4 py-3">
+                        <div class="flex items-start gap-3">
+                            <Radio class="mt-0.5 size-4 shrink-0 text-[#E8563A]" />
+                            <div class="text-sm">
+                                <p class="font-semibold text-gray-900">How to go live with Daily</p>
+                                <p class="mt-1 text-xs text-gray-600">
+                                    Click <strong>Join as host</strong>, allow camera and microphone, then present.
+                                    When the badge shows <strong>On air</strong>, share the viewer room link below.
+                                </p>
+                            </div>
+                        </div>
+                        <Badge :variant="dailyHostJoined ? 'default' : 'secondary'" class="shrink-0">
+                            {{ dailyHostJoined ? 'On air' : 'Not joined' }}
+                        </Badge>
+                    </div>
+
+                    <div v-if="isDailyCast" class="space-y-4">
+                        <DailyBroadcastPanel
+                            v-if="editingWebinar?.id"
+                            :live-show-id="editingWebinar.id"
+                            :room-url="dailySettings.room_url"
+                            :host-name="form.settings.host_name"
+                            :active="editModalOpen && activeTab === 'streaming'"
+                            @joined-change="dailyHostJoined = $event"
+                        />
+
+                        <div v-if="editingWebinar?.room_url" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3">
+                            <div>
+                                <p class="text-sm font-semibold text-gray-900">Viewer room</p>
+                                <p class="text-xs text-muted-foreground">Share this link with attendees or open it to preview as a viewer.</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <Button size="sm" variant="outline" as-child>
+                                    <a :href="editingWebinar.room_url" target="_blank" rel="noopener noreferrer">
+                                        <ExternalLink class="mr-1.5 size-4" />
+                                        Open viewer room
+                                    </a>
+                                </Button>
+                                <Button size="sm" variant="ghost" @click="copyToClipboard(editingWebinar.room_url)">
+                                    <Copy class="mr-1.5 size-4" />
+                                    Copy link
+                                </Button>
+                            </div>
+                        </div>
+
+                        <div
+                            v-if="!hasDailyRoom"
+                            class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                        >
+                            Live room is still provisioning. Save the cast again or contact your administrator if this persists.
+                        </div>
+                    </div>
+
+                    <div
+                        v-else
+                        class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                    >
+                        This cast is not set up for browser go-live. Create a new live cast and choose
+                        <strong>Go Live</strong> as the source type.
+                    </div>
+                </div>
+
+                <!-- ── Video (Pre-recorded) ── -->
                 <div v-show="activeTab === 'video'" class="space-y-4">
                     <div class="rounded-lg border p-4">
                         <p class="mb-3 text-sm font-semibold">Video</p>
@@ -2031,41 +2600,42 @@ onBeforeUnmount(() => {
 
                         <div class="grid gap-4 sm:grid-cols-2">
                             <div class="space-y-1.5">
-                                <Label>Video Source Type</Label>
+                                <Label>Video source</Label>
                                 <select v-model="form.settings.source_type" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
                                     <option value="upload">Uploaded Video</option>
+                                    <option value="url">Direct URL / Embed</option>
                                     <option value="ai">AI Generated Video</option>
-                                    <option value="url">Direct URL</option>
                                 </select>
                             </div>
                             <div class="space-y-1.5">
-                                <Label>Linked Library Video</Label>
+                                <Label>Linked library video</Label>
                                 <select v-model="form.video_id" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
                                     <option :value="null">No linked video</option>
                                     <option v-for="video in videos" :key="video.id" :value="video.id">{{ video.title }}</option>
                                 </select>
                             </div>
                             <div class="space-y-1.5">
-                                <Label>Thumbnail URL / PNG Path</Label>
+                                <Label>Thumbnail URL</Label>
                                 <Input v-model="form.settings.thumbnail_url" placeholder="https://.../thumb.png" />
                             </div>
                             <div class="space-y-1.5">
-                                <Label>Video URL Override</Label>
+                                <Label>Video URL override</Label>
                                 <Input
                                     v-model="form.settings.video_url"
-                                    placeholder="YouTube, Vimeo, Cloudinary, or direct MP4 URL"
+                                    placeholder="YouTube, Vimeo, or direct MP4 URL"
                                 />
                             </div>
                             <div class="space-y-1.5 sm:col-span-2">
                                 <Label>Video duration (seconds)</Label>
                                 <Input
-                                    v-model.number="form.settings.video_duration_seconds"
+                                    :model-value="form.settings.video_duration_seconds ?? ''"
                                     type="number"
                                     min="1"
-                                    placeholder="e.g. 120"
+                                    placeholder="e.g. 3600"
+                                    @update:model-value="(v) => { form.settings.video_duration_seconds = v === '' ? null : Number(v); }"
                                 />
                                 <p class="text-xs text-muted-foreground">
-                                    How long the room video runs. Offer timers and watch tracking (50% / watched to end) use this duration.
+                                    Used for offer timers and 50%/watched-to-end tracking.
                                 </p>
                             </div>
                         </div>
@@ -2099,6 +2669,7 @@ onBeforeUnmount(() => {
                                 </div>
                             </div>
                         </div>
+
                     </div>
                 </div>
 
@@ -2555,7 +3126,7 @@ onBeforeUnmount(() => {
                         </Button>
                     </div>
                     <div class="flex gap-2">
-                        <Button variant="ghost" @click="editModalOpen = false">Cancel</Button>
+                        <Button variant="ghost" @click="handleEditModalClose(false)">Cancel</Button>
                         <Button class="cta-btn" :disabled="saving" @click="saveWebinar">
                             <Loader2 v-if="saving" class="mr-2 size-4 animate-spin" />
                             {{ saving ? 'Saving...' : 'Save Changes' }}
@@ -2565,6 +3136,7 @@ onBeforeUnmount(() => {
             </DialogFooter>
         </DialogContent>
     </Dialog>
+
 </template>
 
 <style scoped>

@@ -49,7 +49,7 @@ export const EMBED_DISPLAY_OPTIONS: Array<{
 type EmbedCreateResponse = { data?: EmbedItem } & Partial<EmbedItem>;
 
 export type EmbedApiClient = {
-    getList: <T>(path: string) => Promise<{ data?: T[] }>;
+    getList: <T>(path: string, query?: Record<string, string | number>) => Promise<{ data?: T[] }>;
     postJson: <T>(path: string, body: Record<string, unknown>) => Promise<T>;
     patchJson: <T>(path: string, body: Record<string, unknown>) => Promise<T>;
 };

@@ -240,6 +240,7 @@ async function loadTeam() {
             await nextTick();
             document.getElementById('connect-store-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
+
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not load team settings.';
     } finally {
@@ -734,7 +735,7 @@ onMounted(loadTeam);
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        class="min-w-[10.5rem]"
+                                        class="min-w-42"
                                         :disabled="shopifySyncBusy"
                                         @click="syncProvider('shopify')"
                                     >

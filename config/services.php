@@ -79,6 +79,38 @@ return [
         'base_url' => env('ZERNIO_BASE_URL', 'https://zernio.com/api/v1'),
     ],
 
+    'live_broadcast' => [
+        'ffmpeg_path' => env('LIVE_BROADCAST_FFMPEG_PATH', 'ffmpeg'),
+    ],
+
+    'daily' => [
+        'enabled' => filter_var(env('DAILY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        'api_key' => env('DAILY_API_KEY'),
+        'base_url' => env('DAILY_BASE_URL', 'https://api.daily.co/v1'),
+        'max_participants' => (int) env('DAILY_MAX_PARTICIPANTS', 200),
+        'timeout' => (int) env('DAILY_TIMEOUT', 30),
+    ],
+
+    'restream' => [
+        'enabled' => filter_var(env('RESTREAM_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        'client_id' => env('RESTREAM_CLIENT_ID'),
+        'client_secret' => env('RESTREAM_CLIENT_SECRET'),
+        'redirect_uri' => env('RESTREAM_REDIRECT_URI'),
+        // Platform account stream key — one key for all go-live casts (copy from your Restream dashboard).
+        'stream_key' => env('RESTREAM_STREAM_KEY'),
+        'ingest_url' => env('RESTREAM_INGEST_URL', 'rtmp://live.restream.io/live'),
+        'srt_url' => env('RESTREAM_SRT_URL'),
+        'player_url' => env('RESTREAM_PLAYER_URL'),
+        // Embed token from Restream → Embed Stream (used when RESTREAM_PLAYER_URL is empty).
+        'player_token' => env('RESTREAM_PLAYER_TOKEN'),
+        'access_token' => env('RESTREAM_ACCESS_TOKEN'),
+        'refresh_token' => env('RESTREAM_REFRESH_TOKEN'),
+        'access_token_expires_at' => env('RESTREAM_ACCESS_TOKEN_EXPIRES_AT'),
+        'refresh_token_expires_at' => env('RESTREAM_REFRESH_TOKEN_EXPIRES_AT'),
+        'base_url' => env('RESTREAM_BASE_URL', 'https://api.restream.io'),
+        'oauth_base_url' => env('RESTREAM_OAUTH_BASE_URL', 'https://api.restream.io'),
+    ],
+
     'ai' => [
         'default_avatar_duration' => (int) env('AI_DEFAULT_AVATAR_DURATION', 45),
         'avatar_poll_attempts' => (int) env('AI_AVATAR_POLL_ATTEMPTS', 60),

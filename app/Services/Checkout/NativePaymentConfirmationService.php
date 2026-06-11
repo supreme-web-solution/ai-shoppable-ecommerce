@@ -2,8 +2,10 @@
 
 namespace App\Services\Checkout;
 
+use App\Jobs\SendOrderReceiptJob;
 use App\Models\Order;
 use App\Services\Analytics\CommerceAttributionService;
+use App\Services\Leads\LeadCaptureService;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -61,7 +63,25 @@ class NativePaymentConfirmationService
             'provider' => $provider,
         ]);
 
-        app(CommerceAttributionService::class)->recordCheckoutCompleted($order->refresh());
+        $order = $order->refresh();
+
+        app(CommerceAttributionService::class)->recordCheckoutCompleted($order);
+        app(LeadCaptureService::class)->markOrderPaid($order);
+
+        if ($order->customer_email && ! data_get($order->metadata, 'receipt_email_sent_at')) {
+            $token = (string) data_get($order->metadata, 'checkout_token', '');
+            $receiptUrl = $token !== ''
+                ? route('checkout.receipt', ['order' => $order, 'token' => $token])
+                : null;
+
+            SendOrderReceiptJob::dispatch($order->id, $receiptUrl);
+
+            $order->update([
+                'metadata' => array_merge((array) ($order->metadata ?? []), [
+                    'receipt_email_sent_at' => now()->toIso8601String(),
+                ]),
+            ]);
+        }
 
         return $order->refresh();
     }
@@ -102,7 +122,13 @@ class NativePaymentConfirmationService
             abort(422, 'Stripe session does not match this order.');
         }
 
-        return $this->markOrderPaid($order, 'stripe', $sessionId);
+        $customerEmail = trim((string) $response->json('customer_details.email', ''));
+
+        if ($customerEmail !== '' && ! $order->customer_email) {
+            $order->update(['customer_email' => mb_strtolower($customerEmail)]);
+        }
+
+        return $this->markOrderPaid($order->refresh(), 'stripe', $sessionId);
     }
 
     protected function confirmPayPal(Order $order, ?string $paypalOrderId): Order

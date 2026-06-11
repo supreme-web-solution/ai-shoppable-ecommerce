@@ -13,9 +13,11 @@ use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\Team;
 use App\Services\Ai\WebinarAssistantService;
+use App\Services\Integrations\DailyService;
 use App\Services\Checkout\ExternalCheckoutService;
 use App\Services\Checkout\NativeCheckoutService;
 use App\Services\Checkout\TeamCheckoutResolver;
+use App\Services\Leads\LeadCaptureService;
 use App\Services\Webinars\WebinarOfferService;
 use App\Services\Webinars\WebinarWatchProgressService;
 use Illuminate\Http\JsonResponse;
@@ -23,6 +25,25 @@ use Illuminate\Http\Request;
 
 class WebinarController extends Controller
 {
+    public function dailyViewerToken(Request $request, LiveShow $liveShow, DailyService $daily): JsonResponse
+    {
+        abort_if($liveShow->status === 'cancelled', 404);
+        abort_if(data_get($liveShow->settings, 'source_type') !== 'daily', 404);
+
+        $roomName = trim((string) data_get($liveShow->settings, 'daily.room_name', ''));
+        abort_if($roomName === '', 404, 'Live room is not ready yet.');
+
+        abort_unless($daily->ready(), 503, 'Live room is temporarily unavailable.');
+
+        $userName = trim((string) $request->input('user_name', 'Viewer'));
+
+        return response()->json([
+            'token' => $daily->createViewerToken($liveShow, $userName !== '' ? $userName : 'Viewer'),
+            'room_url' => data_get($liveShow->settings, 'daily.room_url'),
+            'room_name' => $roomName,
+        ]);
+    }
+
     public function show(LiveShow $liveShow): JsonResponse
     {
         abort_if($liveShow->status === 'cancelled', 404);
@@ -204,6 +225,15 @@ class WebinarController extends Controller
                 'join_count' => (int) $registration->join_count + 1,
             ]);
         }
+
+        app(LeadCaptureService::class)->captureFromWebinar(
+            teamId: (int) $liveShow->team_id,
+            email: $registration->email,
+            fullName: $registration->full_name,
+            registrationId: $registration->id,
+            liveShowId: $liveShow->id,
+            liveShowTitle: $liveShow->title,
+        );
 
         return response()->json([
             'data' => [

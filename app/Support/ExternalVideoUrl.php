@@ -10,6 +10,8 @@ class ExternalVideoUrl
 
     public const PROVIDER_VIMEO = 'vimeo';
 
+    public const PROVIDER_RESTREAM = 'restream';
+
     /**
      * @return array{
      *     provider: string,
@@ -25,6 +27,16 @@ class ExternalVideoUrl
 
         if ($url === '' || ! filter_var($url, FILTER_VALIDATE_URL)) {
             return null;
+        }
+
+        if (self::restreamUrl($url)) {
+            return [
+                'provider' => self::PROVIDER_RESTREAM,
+                'source_url' => $url,
+                'embed_url' => $url,
+                'direct_url' => null,
+                'thumbnail_url' => null,
+            ];
         }
 
         $youtubeId = self::youtubeId($url);
@@ -94,6 +106,19 @@ class ExternalVideoUrl
         $id = (string) ($query['v'] ?? '');
 
         return self::normalizeYoutubeId($id);
+    }
+
+    public static function restreamUrl(string $url): bool
+    {
+        $parts = parse_url($url);
+
+        if (! is_array($parts)) {
+            return false;
+        }
+
+        $host = strtolower((string) ($parts['host'] ?? ''));
+
+        return str_contains($host, 'restream.io');
     }
 
     public static function vimeoId(string $url): ?string

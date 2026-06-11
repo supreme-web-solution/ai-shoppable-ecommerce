@@ -36,6 +36,7 @@
         "vue-tsc": "^2.2.4"
     },
     "dependencies": {
+        "@daily-co/daily-js": "^0.91.0",
         "@inertiajs/vite": "^3.0.0",
         "@inertiajs/vue3": "^3.0.0",
         "@laravel/echo-vue": "^2.3.4",
@@ -43,6 +44,7 @@
         "@vueuse/core": "^12.8.2",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
+        "hls.js": "^1.6.16",
         "laravel-echo": "^2.3.4",
         "laravel-vite-plugin": "^3.0.0",
         "lucide-vue-next": "^0.468.0",

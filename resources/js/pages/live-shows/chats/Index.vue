@@ -38,7 +38,7 @@ defineOptions({
     layout: {
         breadcrumbs: [
             { title: 'Dashboard', href: '/dashboard' },
-            { title: 'Webinars', href: '/live-shows' },
+            { title: 'Live Cast', href: '/live-shows' },
             { title: 'Chats', href: '/live-shows/chats' },
         ],
     },
@@ -118,7 +118,7 @@ onMounted(loadIndexData);
             </div>
             <div class="flex flex-wrap items-center gap-2">
                 <Button variant="outline" size="sm" class="ghost-btn" as-child>
-                    <Link href="/live-shows">Back to webinars</Link>
+                    <Link href="/live-shows">Back to live casts</Link>
                 </Button>
                 <Button variant="outline" size="sm" class="ghost-btn" :disabled="loading" @click="loadIndexData">
                     <RefreshCw class="mr-1.5 size-3.5" :class="{ 'animate-spin': loading }" />
@@ -194,7 +194,7 @@ onMounted(loadIndexData);
                     </div>
                     <div
                         v-else-if="webinars.length === 0"
-                        class="flex min-h-[10rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#F0EDE8] px-4 py-10 text-center text-sm text-gray-500"
+                        class="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#F0EDE8] px-4 py-10 text-center text-sm text-gray-500"
                     >
                         <Film class="size-8 text-[#E8563A]/40" />
                         <p>No webinars yet.</p>
@@ -251,7 +251,7 @@ onMounted(loadIndexData);
                     </div>
                     <div
                         v-else-if="liveVideos.length === 0"
-                        class="flex min-h-[10rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#F0EDE8] px-4 py-10 text-center text-sm text-gray-500"
+                        class="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#F0EDE8] px-4 py-10 text-center text-sm text-gray-500"
                     >
                         <Video class="size-8 text-[#E8563A]/40" />
                         <p>No live video chat threads yet.</p>

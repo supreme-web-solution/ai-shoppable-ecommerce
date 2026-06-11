@@ -14,12 +14,14 @@ type CheckoutOrder = {
     id: number;
     order_number: string;
     status: string;
+    customer_email?: string | null;
     currency: string;
     total_amount: string;
     subtotal_amount: string;
     metadata?: {
         payment_provider?: string;
         paid_confirmed_at?: string;
+        receipt_email_sent_at?: string;
     } | null;
     items?: OrderItem[];
     team?: {
@@ -39,6 +41,8 @@ const props = defineProps<{
 const loading = ref(false);
 const quantityUpdatingId = ref<number | null>(null);
 const errorText = ref('');
+const customerEmail = ref(props.order.customer_email ?? '');
+const emailError = ref('');
 const order = ref<CheckoutOrder>({ ...props.order, items: props.order.items ? [...props.order.items] : [] });
 
 const provider = computed(() => order.value.metadata?.payment_provider ?? 'payment');
@@ -76,7 +80,28 @@ function readCookie(name: string): string | null {
     return match ? decodeURIComponent(match[1]) : null;
 }
 
+function validateEmail(): boolean {
+    const email = customerEmail.value.trim();
+
+    if (!email) {
+        emailError.value = 'Please enter your email to receive your receipt.';
+        return false;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        emailError.value = 'Please enter a valid email address.';
+        return false;
+    }
+
+    emailError.value = '';
+    return true;
+}
+
 async function startPayment() {
+    if (!validateEmail()) {
+        return;
+    }
+
     loading.value = true;
     errorText.value = '';
 
@@ -87,7 +112,10 @@ async function startPayment() {
             method: 'POST',
             credentials: 'same-origin',
             headers,
-            body: JSON.stringify({ token: props.token }),
+            body: JSON.stringify({
+                token: props.token,
+                customer_email: customerEmail.value.trim(),
+            }),
         });
         const payload = await response.json().catch(() => null) as { checkout_url?: string; message?: string } | null;
 
@@ -238,6 +266,10 @@ async function updateItemQuantity(item: OrderItem, nextQuantity: number) {
                             </a>
                         </div>
 
+                        <p v-if="order.customer_email" class="text-center text-sm text-slate-600">
+                            A receipt has been sent to <strong>{{ order.customer_email }}</strong>.
+                        </p>
+
                         <p v-if="returnUrl" class="text-center text-xs text-slate-500">
                             You will return to the video where you started checkout.
                         </p>
@@ -378,7 +410,29 @@ async function updateItemQuantity(item: OrderItem, nextQuantity: number) {
 
                         <div class="border-t px-5 pb-5">
                             <!-- Pending: show pay button -->
-                            <div v-if="isPending" class="pt-4">
+                            <div v-if="isPending" class="space-y-4 pt-4">
+                                <div>
+                                    <label for="customer-email" class="mb-1.5 block text-sm font-medium text-slate-700">
+                                        Email for receipt
+                                    </label>
+                                    <input
+                                        id="customer-email"
+                                        v-model="customerEmail"
+                                        type="email"
+                                        autocomplete="email"
+                                        placeholder="you@example.com"
+                                        class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none ring-primary/20 transition focus:border-primary focus:ring-2"
+                                        :disabled="loading || quantityUpdatingId !== null"
+                                        @input="emailError = ''"
+                                    >
+                                    <p v-if="emailError" class="mt-1.5 text-xs text-red-600">
+                                        {{ emailError }}
+                                    </p>
+                                    <p v-else class="mt-1.5 text-xs text-slate-500">
+                                        We will email your receipt after payment.
+                                    </p>
+                                </div>
+
                                 <button
                                     type="button"
                                     :disabled="loading || quantityUpdatingId !== null"
@@ -394,7 +448,7 @@ async function updateItemQuantity(item: OrderItem, nextQuantity: number) {
                                     </template>
                                     {{ loading ? 'Redirecting…' : `Pay with ${providerLabel}` }}
                                 </button>
-                                <p class="mt-3 text-center text-xs text-slate-500">
+                                <p class="text-center text-xs text-slate-500">
                                     You will be redirected securely to {{ providerLabel }} to enter your payment details.
                                 </p>
                             </div>

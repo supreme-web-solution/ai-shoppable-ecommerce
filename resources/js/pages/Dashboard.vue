@@ -177,7 +177,7 @@ const topVideoMax = computed(() => Math.max(...topVideos.value.map((v) => v.tota
 const quickActions = [
     { href: '/content/create?mode=upload', icon: Upload, label: 'Upload Video' },
     { href: '/content/create?mode=ai', icon: Sparkles, label: 'AI Video' },
-    { href: '/live-shows', icon: Clapperboard, label: 'Live Show' },
+    { href: '/live-shows', icon: Clapperboard, label: 'Live Cast' },
     { href: '/playlists', icon: Layers3, label: 'Playlist' },
     { href: '/products', icon: Package, label: 'Products' },
     { href: '/analytics', icon: BarChart3, label: 'Analytics' },

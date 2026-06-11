@@ -78,7 +78,7 @@ defineOptions({
     layout: {
         breadcrumbs: [
             { title: 'Dashboard', href: '/dashboard' },
-            { title: 'Webinars', href: '/live-shows' },
+            { title: 'Live Cast', href: '/live-shows' },
             { title: 'Chats', href: '/live-shows/chats' },
         ],
     },

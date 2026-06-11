@@ -1,4 +1,4 @@
-export type VideoPlaybackProvider = 'direct' | 'youtube' | 'vimeo';
+export type VideoPlaybackProvider = 'direct' | 'youtube' | 'vimeo' | 'restream';
 
 export type VideoPlayback = {
     provider: VideoPlaybackProvider;
@@ -59,6 +59,21 @@ export function vimeoId(url: string): string | null {
     }
 }
 
+export function restreamEmbedUrl(url: string): string | null {
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.toLowerCase();
+
+        if (host.includes('restream.io')) {
+            return parsed.toString();
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+}
+
 function normalizeYoutubeId(id: string): string | null {
     const trimmed = id.trim();
 
@@ -77,7 +92,7 @@ export function parseExternalVideoUrl(url: string | null | undefined): VideoPlay
     }
 
     try {
-        // eslint-disable-next-line no-new
+         
         new URL(trimmed);
     } catch {
         return null;
@@ -107,6 +122,18 @@ export function parseExternalVideoUrl(url: string | null | undefined): VideoPlay
         };
     }
 
+    const restreamUrl = restreamEmbedUrl(trimmed);
+
+    if (restreamUrl) {
+        return {
+            provider: 'restream',
+            source_url: trimmed,
+            embed_url: restreamUrl,
+            direct_url: null,
+            thumbnail_url: null,
+        };
+    }
+
     return {
         provider: 'direct',
         source_url: trimmed,
@@ -121,7 +148,7 @@ export function isEmbedPlayback(
 ): playback is VideoPlayback & { embed_url: string } {
     return (
         playback != null &&
-        (playback.provider === 'youtube' || playback.provider === 'vimeo') &&
+        (playback.provider === 'youtube' || playback.provider === 'vimeo' || playback.provider === 'restream') &&
         Boolean(playback.embed_url)
     );
 }
@@ -180,6 +207,10 @@ export function embedUrlForLiveWebinar(
         url.searchParams.set('badge', '0');
         url.searchParams.set('pip', '0');
         url.searchParams.set('dnt', '1');
+    }
+
+    if (provider === 'restream') {
+        url.searchParams.set('autoplay', '1');
     }
 
     return url.toString();

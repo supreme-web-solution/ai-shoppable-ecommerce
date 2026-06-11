@@ -7,6 +7,7 @@ use App\Http\Resources\Api\V1\OrderResource;
 use App\Models\Order;
 use App\Services\Checkout\NativePaymentConfirmationService;
 use App\Services\Checkout\NativePaymentSessionService;
+use App\Services\Leads\LeadCaptureService;
 use Illuminate\Http\Request;
 
 class NativePaymentController extends Controller
@@ -15,10 +16,16 @@ class NativePaymentController extends Controller
     {
         $validated = $request->validate([
             'token' => ['required', 'string'],
+            'customer_email' => ['required', 'email', 'max:255'],
         ]);
 
         abort_unless(hash_equals((string) data_get($order->metadata, 'checkout_token'), $validated['token']), 404);
         abort_if($order->status !== 'pending', 422, 'This order is not awaiting payment.');
+
+        $customerEmail = mb_strtolower(trim($validated['customer_email']));
+
+        $order->update(['customer_email' => $customerEmail]);
+        app(LeadCaptureService::class)->captureFromCheckout($order->refresh(), $customerEmail);
 
         $session = $paymentSessionService->createSession($order->load('team'));
 

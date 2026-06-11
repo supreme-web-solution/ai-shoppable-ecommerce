@@ -3,6 +3,7 @@
 use App\Http\Controllers\CheckoutPageController;
 use App\Http\Controllers\EmbedPageController;
 use App\Http\Controllers\ShopPageController;
+use App\Http\Controllers\StreamingCallbackController;
 use App\Http\Controllers\TeamInvitePageController;
 use App\Http\Controllers\TutorialController;
 use App\Http\Controllers\WebinarPageController;
@@ -38,6 +39,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
     })->name('live-shows.chats.live-video');
     Route::inertia('playlists', 'playlists/Index')->name('playlists.page');
     Route::inertia('products', 'products/Index')->name('products.page');
+    Route::inertia('orders', 'orders/Index')->name('orders.page');
+    Route::inertia('leads', 'leads/Index')->name('leads.page');
     Route::redirect('embeds', '/playlists')->name('embeds.page');
     Route::inertia('analytics', 'analytics/Index')->name('analytics.page');
     Route::inertia('teams', 'teams/Index')->name('teams.page');
@@ -54,5 +57,6 @@ Route::get('checkout/{order}/{token}', [CheckoutPageController::class, 'show'])-
 Route::get('checkout/{order}/{token}/receipt', [CheckoutPageController::class, 'receipt'])->name('checkout.receipt');
 Route::get('webinars/{liveShow}/register', [WebinarPageController::class, 'register'])->name('webinars.register');
 Route::get('webinars/{liveShow}/room', [WebinarPageController::class, 'room'])->name('webinars.room');
+Route::get('streaming/callback', StreamingCallbackController::class)->name('streaming.callback');
 
 require __DIR__.'/settings.php';

@@ -18,6 +18,7 @@ class OrderResource extends JsonResource
             'id' => $this->id,
             'team_id' => $this->team_id,
             'cart_id' => $this->cart_id,
+            'customer_email' => $this->customer_email,
             'order_number' => $this->order_number,
             'status' => $this->status,
             'checkout_mode' => $this->checkout_mode,
@@ -29,7 +30,7 @@ class OrderResource extends JsonResource
             'total_amount' => $this->total_amount,
             'ordered_at' => $this->ordered_at,
             'metadata' => $this->metadata,
-            'items' => $this->whenLoaded('items'),
+            'items' => OrderItemResource::collection($this->whenLoaded('items')),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

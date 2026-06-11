@@ -15,6 +15,7 @@ class Order extends Model
         'team_id',
         'cart_id',
         'user_id',
+        'customer_email',
         'order_number',
         'status',
         'checkout_mode',

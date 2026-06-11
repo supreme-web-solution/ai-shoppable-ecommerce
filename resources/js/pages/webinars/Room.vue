@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Head, usePage } from '@inertiajs/vue3';
+import Hls from 'hls.js';
 import {
     Bot,
     ExternalLink,
@@ -14,15 +15,17 @@ import {
     Video,
     X,
 } from 'lucide-vue-next';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue';
+import DailyViewerEmbed from '@/components/daily/DailyViewerEmbed.vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
     embedUrlForLiveWebinar,
     isEmbedPlayback,
-    parseExternalVideoUrl,
-    type VideoPlayback,
+    parseExternalVideoUrl
+    
 } from '@/lib/externalVideoUrl';
+import type {VideoPlayback} from '@/lib/externalVideoUrl';
 
 type OfferAppearance = 'pin' | 'in_chat' | 'popup';
 
@@ -51,6 +54,15 @@ type WebinarData = {
     chat_enabled?: boolean;
     video_duration_seconds?: number | null;
     featured_products?: WebinarOffer[];
+    source_type?: 'ai' | 'upload' | 'url' | 'restream' | 'daily' | null;
+    restream?: {
+        ingest_url?: string | null;
+        player_url?: string | null;
+    } | null;
+    daily?: {
+        room_name?: string | null;
+        room_url?: string | null;
+    } | null;
 };
 
 type RoomMessage = {
@@ -91,6 +103,11 @@ const watchHalfReported = ref(false);
 const watchEndReported = ref(false);
 const embedSessionKey = ref(0);
 const embedPlayStartedAt = ref<number | null>(null);
+const liveStreamWaiting = ref(true);
+const liveStreamPlaying = ref(false);
+const liveStreamMuted = ref(true);
+let hlsInstance: Hls | null = null;
+let liveHlsRetryRef: number | null = null;
 let embedTimelineRef: number | null = null;
 let offerMessageId = 1_000_000;
 
@@ -104,14 +121,71 @@ const videoPlayback = computed(() => {
     return parseExternalVideoUrl(webinar.value?.video_url ?? null);
 });
 
-const hasVideoSource = computed(() => Boolean(videoPlayback.value));
+/** Optional HLS manifest URL for low-latency direct streams. */
+const liveHlsUrl = computed((): string | null => {
+    const fromSettings = (webinar.value?.restream?.player_url ?? '').trim();
 
-const usesEmbedPlayer = computed(() => isEmbedPlayback(videoPlayback.value));
+    if (fromSettings.includes('.m3u8')) {
+        return fromSettings;
+    }
+
+    const direct = (videoPlayback.value?.direct_url ?? '').trim();
+
+    if (direct.includes('.m3u8')) {
+        return direct;
+    }
+
+    return null;
+});
+
+// True when the cast is configured as a live stream source.
+const isLiveStream = computed(
+    () =>
+        webinar.value?.source_type === 'daily' ||
+        webinar.value?.source_type === 'restream' ||
+        videoPlayback.value?.provider === 'restream',
+);
+
+const usesDailyPlayer = computed(
+    () =>
+        webinar.value?.source_type === 'daily' ||
+        Boolean((webinar.value?.daily?.room_url ?? '').trim()),
+);
+
+const hasVideoSource = computed(() => {
+    if (usesDailyPlayer.value) {
+        return true;
+    }
+
+    if (isLiveStream.value) {
+        const playerUrl = (webinar.value?.restream?.player_url ?? '').trim();
+
+        if (playerUrl !== '') {
+            return true;
+        }
+    }
+
+    return Boolean(videoPlayback.value);
+});
+
+// Live streams use HLS directly (more reliable than lvpr.tv iframe when stream is starting).
+const usesLiveHlsPlayer = computed(
+    () => !usesDailyPlayer.value && isLiveStream.value && Boolean(liveHlsUrl.value),
+);
+
+const usesEmbedPlayer = computed(
+    () => isEmbedPlayback(videoPlayback.value) && !usesLiveHlsPlayer.value,
+);
 
 const activeEmbedUrl = computed(() => {
     const playback = videoPlayback.value;
 
-    if (!isEmbedPlayback(playback) || !videoStarted.value) {
+    if (!isEmbedPlayback(playback)) {
+        return null;
+    }
+
+    // Live streams don't need the user to click play first — show immediately.
+    if (!videoStarted.value && !isLiveStream.value) {
         return null;
     }
 
@@ -714,6 +788,139 @@ function dismissPopup(offerId: number) {
     }
 }
 
+function destroyLiveHls() {
+    if (liveHlsRetryRef !== null) {
+        window.clearTimeout(liveHlsRetryRef);
+        liveHlsRetryRef = null;
+    }
+
+    if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+    }
+}
+
+function scheduleLiveHlsRetry(delayMs = 4000) {
+    if (liveHlsRetryRef !== null || !usesLiveHlsPlayer.value) {
+        return;
+    }
+
+    liveHlsRetryRef = window.setTimeout(() => {
+        liveHlsRetryRef = null;
+        void attachLiveHls();
+    }, delayMs);
+}
+
+async function attachLiveHls() {
+    const url = liveHlsUrl.value;
+    const video = videoRef.value;
+
+    if (!url || !video || !usesLiveHlsPlayer.value) {
+        return;
+    }
+
+    destroyLiveHls();
+    liveStreamWaiting.value = true;
+    liveStreamPlaying.value = false;
+
+    // Safari plays HLS natively.
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        video.muted = true;
+        liveStreamMuted.value = true;
+
+        try {
+            await video.play();
+            liveStreamWaiting.value = false;
+            liveStreamPlaying.value = true;
+            videoStarted.value = true;
+        } catch {
+            scheduleLiveHlsRetry();
+        }
+
+        return;
+    }
+
+    if (!Hls.isSupported()) {
+        scheduleLiveHlsRetry(8000);
+
+        return;
+    }
+
+    hlsInstance = new Hls({
+        lowLatencyMode: true,
+        liveSyncDurationCount: 3,
+        manifestLoadingTimeOut: 15000,
+        manifestLoadingMaxRetry: 4,
+        manifestLoadingRetryDelay: 3000,
+    });
+
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+        liveStreamWaiting.value = false;
+        video.muted = true;
+        liveStreamMuted.value = true;
+
+        void video.play().then(() => {
+            liveStreamPlaying.value = true;
+            videoStarted.value = true;
+        }).catch(() => {
+            scheduleLiveHlsRetry();
+        });
+    });
+
+    hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal) {
+            return;
+        }
+
+        liveStreamWaiting.value = true;
+        liveStreamPlaying.value = false;
+
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hlsInstance?.startLoad();
+            scheduleLiveHlsRetry(5000);
+        } else {
+            destroyLiveHls();
+            scheduleLiveHlsRetry(5000);
+        }
+    });
+
+    hlsInstance.loadSource(url);
+    hlsInstance.attachMedia(video);
+}
+
+function unmuteLiveStream() {
+    const video = videoRef.value;
+
+    if (!video) {
+        return;
+    }
+
+    video.muted = false;
+    liveStreamMuted.value = false;
+    void video.play().catch(() => {
+        // Ignore — user gesture already happened.
+    });
+}
+
+// When the webinar loads and is a live stream, auto-start playback immediately.
+watch(isLiveStream, async (live) => {
+    if (live && !videoStarted.value && !usesLiveHlsPlayer.value) {
+        await nextTick();
+        videoStarted.value = true;
+        videoEnded.value = false;
+    }
+}, { immediate: true });
+
+watch([usesLiveHlsPlayer, () => videoRef.value, () => webinar.value?.id], async () => {
+    if (usesLiveHlsPlayer.value) {
+        await nextTick();
+        void attachLiveHls();
+    } else {
+        destroyLiveHls();
+    }
+}, { immediate: true });
+
 onMounted(async () => {
     restoreRegistrationSession();
     await loadRoom();
@@ -726,6 +933,7 @@ onBeforeUnmount(() => {
     }
 
     stopEmbedTimeline();
+    destroyLiveHls();
 });
 </script>
 
@@ -768,14 +976,35 @@ onBeforeUnmount(() => {
             <div class="grid gap-4 lg:grid-cols-[1.75fr_1fr]">
                 <section class="video-card relative rounded-3xl p-3 md:p-4">
                     <div class="video-stage relative aspect-video overflow-hidden rounded-2xl bg-black">
+                        <DailyViewerEmbed
+                            v-if="usesDailyPlayer"
+                            :webinar-id="webinarId"
+                            :user-name="joinChatForm.full_name || webinar?.host_name || undefined"
+                            :active="!loading && Boolean(webinar)"
+                        />
+
+                        <!-- Thumbnail before play (pre-recorded embed only) -->
                         <img
                             v-if="usesEmbedPlayer && !videoStarted && webinar?.thumbnail_url"
                             :src="webinar.thumbnail_url"
                             alt=""
                             class="absolute inset-0 h-full w-full object-cover"
                         >
+
+                        <!-- Live HLS player -->
+                        <video
+                            v-if="usesLiveHlsPlayer"
+                            ref="videoRef"
+                            playsinline
+                            autoplay
+                            muted
+                            class="absolute inset-0 h-full w-full object-contain"
+                            :poster="webinar?.thumbnail_url || undefined"
+                        />
+
+                        <!-- Embed player (YouTube / Vimeo / pre-recorded embed) -->
                         <div
-                            v-if="usesEmbedPlayer && videoStarted && activeEmbedUrl && !videoEnded"
+                            v-else-if="usesEmbedPlayer && activeEmbedUrl && !videoEnded"
                             class="embed-player-shell"
                         >
                             <iframe
@@ -783,7 +1012,7 @@ onBeforeUnmount(() => {
                                 :src="activeEmbedUrl"
                                 title="Live webinar stream"
                                 class="embed-player-frame"
-                                allow="accelerometer; autoplay; encrypted-media; gyroscope"
+                                allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
                                 tabindex="-1"
                             />
                             <div class="embed-top-fade" aria-hidden="true" />
@@ -794,6 +1023,8 @@ onBeforeUnmount(() => {
                                 aria-hidden="true"
                             />
                         </div>
+
+                        <!-- Direct video element (uploaded / direct URL) -->
                         <video
                             v-else-if="videoPlayback?.direct_url"
                             ref="videoRef"
@@ -808,8 +1039,10 @@ onBeforeUnmount(() => {
                             @play="onVideoPlay"
                             @ended="onVideoEnded"
                         />
+
+                        <!-- No source (not used for Daily live rooms) -->
                         <div
-                            v-else
+                            v-else-if="!usesDailyPlayer"
                             class="empty-video absolute inset-0 flex items-center justify-center"
                         >
                             <div class="text-center">
@@ -820,10 +1053,24 @@ onBeforeUnmount(() => {
                             </div>
                         </div>
 
+                        <!-- Top-left badge -->
                         <div
                             class="pointer-events-none absolute inset-x-0 top-0 bg-linear-to-b from-black/70 to-transparent p-4"
                         >
+                            <!-- Live indicator -->
                             <div
+                                v-if="isLiveStream"
+                                class="inline-flex items-center gap-2 rounded-full bg-red-600 px-3 py-1.5 text-xs font-bold text-white shadow-lg"
+                            >
+                                <span class="relative flex size-2">
+                                    <span class="absolute inline-flex size-full animate-ping rounded-full bg-white opacity-75" />
+                                    <span class="relative inline-flex size-2 rounded-full bg-white" />
+                                </span>
+                                LIVE
+                            </div>
+                            <!-- Pre-recorded badge -->
+                            <div
+                                v-else
                                 class="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold text-white backdrop-blur-md"
                             >
                                 <Users class="size-3.5" />
@@ -831,8 +1078,38 @@ onBeforeUnmount(() => {
                             </div>
                         </div>
 
+                        <!-- Waiting for host (live stream not publishing yet) -->
                         <div
-                            v-if="hasVideoSource && !videoStarted"
+                            v-if="usesLiveHlsPlayer && liveStreamWaiting"
+                            class="absolute inset-0 z-20 flex items-center justify-center bg-black/80 p-6"
+                        >
+                            <div class="max-w-sm text-center text-white">
+                                <Loader2 class="mx-auto mb-3 size-10 animate-spin text-[#E8563A]" />
+                                <p class="text-lg font-bold">Waiting for host to go live</p>
+                                <p class="mt-2 text-sm text-white/70">
+                                    The stream will start automatically once the host begins broadcasting.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Unmute live stream -->
+                        <div
+                            v-if="usesLiveHlsPlayer && liveStreamPlaying && liveStreamMuted"
+                            class="absolute inset-x-0 bottom-0 z-20 flex justify-center p-4"
+                        >
+                            <Button
+                                type="button"
+                                class="bg-[#E8563A] hover:bg-[#D44A2F]"
+                                @click="unmuteLiveStream"
+                            >
+                                <Play class="mr-2 size-4 fill-current" />
+                                Tap to enable sound
+                            </Button>
+                        </div>
+
+                        <!-- Play button — only for pre-recorded, never for live -->
+                        <div
+                            v-if="hasVideoSource && !videoStarted && !isLiveStream"
                             class="absolute inset-0 z-10 flex items-center justify-center bg-black/45 p-4"
                         >
                             <button
@@ -851,8 +1128,9 @@ onBeforeUnmount(() => {
                             </button>
                         </div>
 
+                        <!-- Video ended screen — only for pre-recorded -->
                         <div
-                            v-if="hasVideoSource && videoStarted && videoEnded"
+                            v-if="!isLiveStream && hasVideoSource && videoStarted && videoEnded"
                             class="absolute inset-0 z-30 flex items-center justify-center bg-black/75 p-4"
                         >
                             <div
@@ -1207,6 +1485,16 @@ onBeforeUnmount(() => {
     border: 0;
     transform: translate(-50%, -50%) scale(1.14);
     pointer-events: none;
+}
+
+/* Live stream variant — full size, interactive controls enabled */
+.embed-player-shell--live {
+    background: #000;
+}
+
+.embed-player-frame--live {
+    transform: translate(-50%, -50%) scale(1);
+    pointer-events: auto;
 }
 
 .embed-top-fade {
