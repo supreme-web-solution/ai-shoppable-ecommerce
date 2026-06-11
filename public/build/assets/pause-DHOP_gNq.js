@@ -1,0 +1,1 @@
+import{F as e}from"./app-tk-rOC9o.js";var t=e(`PauseIcon`,[[`rect`,{x:`14`,y:`4`,width:`4`,height:`16`,rx:`1`,key:`zuxfzm`}],[`rect`,{x:`6`,y:`4`,width:`4`,height:`16`,rx:`1`,key:`1okwgv`}]]);export{t};
