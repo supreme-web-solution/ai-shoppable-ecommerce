@@ -10,6 +10,8 @@ cd "$FORGE_RELEASE_DIRECTORY"
 $FORGE_COMPOSER install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
 $FORGE_PHP artisan route:clear
+# Rebuild config cache so new Forge Environment vars (e.g. DAILY_API_KEY) are picked up.
+$FORGE_PHP artisan config:clear
 $FORGE_PHP artisan config:cache
 $FORGE_PHP artisan event:cache
 $FORGE_PHP artisan view:cache

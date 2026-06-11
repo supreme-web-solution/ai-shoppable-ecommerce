@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import {
     Bot,
     BookOpen,
@@ -69,32 +69,12 @@ type VideoOption = {
 
 type OfferAppearance = 'pin' | 'in_chat' | 'popup';
 
-type RestreamTarget = {
-    name?: string;
-    url: string;
-    stream_key?: string;
-    profile?: string;
-    video_only?: boolean;
-};
-
-type RestreamConfig = {
-    mode?: 'go_live' | 'pull_video';
-    stream_id?: string | null;
-    stream_key?: string | null;
-    playback_id?: string | null;
-    ingest_url?: string | null;
-    hls_url?: string | null;
-    player_url?: string | null;
-    broadcast_url?: string | null;
-    multistream_targets?: RestreamTarget[];
-};
-
 type DailyConfig = {
     room_name?: string | null;
     room_url?: string | null;
 };
 
-type LiveSourceType = 'ai' | 'upload' | 'url' | 'restream' | 'daily';
+type LiveSourceType = 'ai' | 'upload' | 'url' | 'daily';
 
 function isGoLiveSourceType(sourceType?: string | null): boolean {
     return sourceType === 'daily';
@@ -153,7 +133,6 @@ type WebinarSettings = {
     knowledge_base_text?: string | null;
     knowledge_sources?: KnowledgeSource[];
     video_duration_seconds?: number | null;
-    restream?: RestreamConfig | null;
     daily?: DailyConfig | null;
 };
 
@@ -166,7 +145,6 @@ type WebinarItem = {
     starts_at: string;
     ends_at?: string | null;
     settings?: WebinarSettings;
-    restream?: RestreamConfig | null;
     daily?: DailyConfig | null;
     host_name?: string | null;
     thumbnail_url?: string | null;
@@ -213,7 +191,6 @@ type WebinarFormSettings = {
     ai_assistant_enabled: boolean;
     knowledge_sources: KnowledgeSource[];
     video_duration_seconds: number | null;
-    restream: RestreamConfig;
     daily: DailyConfig;
 };
 
@@ -282,6 +259,10 @@ defineOptions({
 // ── Composables ────────────────────────────────────────────────────────────
 
 const { teamId, getList, postJson, putJson, apiFetch, uploadVideoChunks, deleteResource, ensureTeam } = useAdminApi();
+const page = usePage();
+const dailyLiveEnabled = computed(
+    () => Boolean((page.props as { dailyLiveEnabled?: boolean }).dailyLiveEnabled),
+);
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -334,22 +315,7 @@ const selectedVideoFile = ref<File | null>(null);
 const previewVideoUrl = ref<string | null>(null);
 const uploadingVideo = ref(false);
 const videoUploadError = ref('');
-const creatingRestreamStream = ref(false);
-const addingRestreamTarget = ref(false);
-const broadcastLive = ref(false);
-const streamProviderActive = ref(false);
-const streamSegmentCount = ref(0);
-const broadcastPreviewStream = ref<MediaStream | null>(null);
 const dailyHostJoined = ref(false);
-let streamStatusPollRef: number | null = null;
-const simulcastOpen = ref(false);
-const restreamTargetForm = ref<RestreamTarget>({
-    name: '',
-    url: '',
-    stream_key: '',
-    profile: 'source',
-    video_only: false,
-});
 
 // Knowledge source state
 const addingSource = ref(false);
@@ -381,17 +347,6 @@ function newForm(): WebinarForm {
             ai_assistant_enabled: false,
             knowledge_sources: [],
             video_duration_seconds: null,
-            restream: {
-                mode: 'go_live',
-                stream_id: null,
-                stream_key: null,
-                playback_id: null,
-                ingest_url: null,
-                hls_url: null,
-                player_url: null,
-                broadcast_url: null,
-                multistream_targets: [],
-            },
             daily: {
                 room_name: null,
                 room_url: null,
@@ -555,44 +510,8 @@ return form.value.settings.video_url.trim();
 const selectedPlayback = computed(() => parseExternalVideoUrl(selectedVideoUrl() || null));
 
 const isDailyCast = computed(() => form.value.settings.source_type === 'daily');
-const isRestreamCast = computed(() => form.value.settings.source_type === 'restream');
 const dailySettings = computed<DailyConfig>(() => form.value.settings.daily ?? {});
 const hasDailyRoom = computed(() => Boolean((dailySettings.value.room_url ?? '').trim()));
-
-const restreamSettings = computed<RestreamConfig>(() => form.value.settings.restream ?? {});
-
-const hasRestreamStream = computed(() => {
-    const streamId = (restreamSettings.value.stream_id ?? '').trim();
-    const streamKey = (restreamSettings.value.stream_key ?? '').trim();
-
-    return Boolean(streamId && streamKey);
-});
-
-const livePreviewHlsUrl = computed((): string | null => {
-    const candidates = [
-        (restreamSettings.value.hls_url ?? '').trim(),
-        (restreamSettings.value.player_url ?? '').trim(),
-    ];
-
-    return candidates.find((url) => url.includes('.m3u8')) ?? null;
-});
-
-const streamReady = computed(() => streamProviderActive.value && streamSegmentCount.value > 0);
-const streamPublishing = computed(() => broadcastLive.value && !streamReady.value);
-const streamOnAir = computed(() => streamReady.value);
-const streamPublishingTooLong = ref(false);
-let streamPublishingTimeoutRef: number | null = null;
-
-const restreamTargets = computed<RestreamTarget[]>(() => restreamSettings.value.multistream_targets ?? []);
-
-function mergeRestreamConfig(
-    ...sources: Array<RestreamConfig | null | undefined>
-): RestreamConfig {
-    return sources.reduce<RestreamConfig>(
-        (merged, source) => ({ ...merged, ...(source ?? {}) }),
-        {},
-    );
-}
 
 function mergeDailyConfig(
     ...sources: Array<DailyConfig | null | undefined>
@@ -601,45 +520,6 @@ function mergeDailyConfig(
         (merged, source) => ({ ...merged, ...(source ?? {}) }),
         {},
     );
-}
-
-function applyRestreamFromApi(data: WebinarItem): void {
-    form.value.settings.restream = mergeRestreamConfig(
-        form.value.settings.restream,
-        data.settings?.restream,
-        data.restream,
-    );
-
-    form.value.settings.daily = mergeDailyConfig(
-        form.value.settings.daily,
-        data.settings?.daily,
-        data.daily,
-    );
-
-    const sourceType = String(data.source_type ?? data.settings?.source_type ?? '');
-
-    if (sourceType === 'restream') {
-        form.value.settings.source_type = 'restream';
-    }
-
-    if (sourceType === 'daily') {
-        form.value.settings.source_type = 'daily';
-    }
-}
-
-function normalizedTargetUrl(target: RestreamTarget): string {
-    const base = target.url.trim().replace(/\/+$/, '');
-    const key = (target.stream_key ?? '').trim();
-
-    if (!base) {
-        return '';
-    }
-
-    if (!key) {
-        return base;
-    }
-
-    return `${base}/${key}`;
 }
 
 function chatsPageUrl(webinarId?: number | null): string {
@@ -775,135 +655,6 @@ async function uploadWebinarVideo() {
         videoUploadError.value = error instanceof Error ? error.message : 'Video upload failed.';
     } finally {
         uploadingVideo.value = false;
-    }
-}
-
-function hasRestreamKeysFromItem(item?: WebinarItem | null): boolean {
-    if (!item) {
-        return false;
-    }
-
-    const streamId = (item.settings?.restream?.stream_id ?? item.restream?.stream_id ?? '').trim();
-    const streamKey = (item.settings?.restream?.stream_key ?? item.restream?.stream_key ?? '').trim();
-
-    return Boolean(streamId && streamKey);
-}
-
-async function ensureRestreamStreamKeys(options: { silent?: boolean } = {}): Promise<boolean> {
-    if (!editingWebinar.value || !hasRestreamStream.value) {
-        return hasRestreamStream.value;
-    }
-
-    if (!options.silent) {
-        creatingRestreamStream.value = true;
-    }
-
-    modalError.value = '';
-
-    try {
-        const mode = restreamSettings.value.mode ?? 'go_live';
-        const pullSource = selectedVideoUrl();
-        const targets = restreamTargets.value.filter((target) => target.url?.trim());
-
-        const payload = await postJson<{ data: WebinarItem }>(
-            `/api/v1/admin/live-shows/${editingWebinar.value.id}/restream/stream`,
-            {
-                mode,
-                pull_source: mode === 'pull_video' ? pullSource : null,
-                record: true,
-                multistream_targets: targets.map((target) => ({
-                    name: (target.name ?? '').trim(),
-                    url: normalizedTargetUrl(target),
-                    profile: (target.profile ?? 'source').trim() || 'source',
-                    video_only: Boolean(target.video_only),
-                })).filter((target) => Boolean(target.url)),
-            },
-        );
-
-        applyRestreamFromApi(payload.data);
-        await silentSaveWebinar();
-
-        if (!options.silent) {
-            toast.success('Stream keys generated and saved.');
-        }
-
-        return true;
-    } catch (error) {
-        if (!options.silent) {
-            modalError.value = error instanceof Error ? error.message : 'Could not create live stream.';
-        }
-
-        return false;
-    } finally {
-        if (!options.silent) {
-            creatingRestreamStream.value = false;
-        }
-    }
-}
-
-async function createRestreamStream() {
-    if (!editingWebinar.value) {
-        modalError.value = 'Create the live cast first, then configure streaming.';
-
-        return;
-    }
-
-    creatingRestreamStream.value = true;
-    modalError.value = '';
-
-    try {
-        await ensureRestreamStreamKeys();
-    } finally {
-        creatingRestreamStream.value = false;
-    }
-}
-
-async function addRestreamTarget() {
-    if (!editingWebinar.value) {
-        return;
-    }
-
-    const finalTargetUrl = normalizedTargetUrl(restreamTargetForm.value);
-
-    if (!finalTargetUrl) {
-        modalError.value = 'Enter a valid RTMP/RTMPS/SRT ingest URL.';
-
-        return;
-    }
-
-    addingRestreamTarget.value = true;
-    modalError.value = '';
-
-    try {
-        const payload = await postJson<{ data: WebinarItem }>(
-            `/api/v1/admin/live-shows/${editingWebinar.value.id}/restream/targets`,
-            {
-                name: (restreamTargetForm.value.name ?? '').trim() || null,
-                url: finalTargetUrl,
-                profile: (restreamTargetForm.value.profile ?? 'source').trim() || 'source',
-                video_only: Boolean(restreamTargetForm.value.video_only),
-            },
-        );
-
-        const settings = payload.data.settings ?? {};
-        form.value.settings.restream = {
-            ...(form.value.settings.restream ?? {}),
-            ...(settings.restream ?? {}),
-        };
-
-        restreamTargetForm.value = {
-            name: '',
-            url: '',
-            stream_key: '',
-            profile: 'source',
-            video_only: false,
-        };
-
-        toast.success('Multistream target added.');
-    } catch (error) {
-        modalError.value = error instanceof Error ? error.message : 'Could not add multistream target.';
-    } finally {
-        addingRestreamTarget.value = false;
     }
 }
 
@@ -1059,7 +810,6 @@ function buildPayload(forCreate = false) {
             ai_assistant_enabled: forCreate ? false : form.value.settings.ai_assistant_enabled,
             knowledge_sources: forCreate ? [] : form.value.settings.knowledge_sources,
             video_duration_seconds: videoDurationSeconds.value,
-            restream: form.value.settings.restream,
             daily: form.value.settings.daily,
         },
     };
@@ -1305,90 +1055,7 @@ function handleEditModalClose(open: boolean) {
         }
     }
 
-    if (!open) {
-        stopStreamStatusPolling();
-    }
-
     editModalOpen.value = open;
-}
-
-async function pollStreamStatus(): Promise<void> {
-    if (!editingWebinar.value?.id) {
-        return;
-    }
-
-    try {
-        const payload = await apiFetch<{ data: { is_active: boolean; source_segments: number } }>(
-            `/api/v1/admin/live-shows/${editingWebinar.value.id}/restream/status`,
-        );
-        streamProviderActive.value = Boolean(payload.data?.is_active);
-        streamSegmentCount.value = Number(payload.data?.source_segments ?? 0);
-    } catch {
-        // Status polling is best-effort.
-    }
-}
-
-function startStreamStatusPolling(): void {
-    stopStreamStatusPolling();
-    void pollStreamStatus();
-    const intervalMs = broadcastLive.value ? 3000 : 10000;
-    streamStatusPollRef = window.setInterval(() => void pollStreamStatus(), intervalMs);
-}
-
-function stopStreamStatusPolling(): void {
-    if (streamStatusPollRef !== null) {
-        window.clearInterval(streamStatusPollRef);
-        streamStatusPollRef = null;
-    }
-
-    streamProviderActive.value = false;
-    streamSegmentCount.value = 0;
-}
-
-function clearStreamPublishingTimeout(): void {
-    if (streamPublishingTimeoutRef !== null) {
-        window.clearTimeout(streamPublishingTimeoutRef);
-        streamPublishingTimeoutRef = null;
-    }
-
-    streamPublishingTooLong.value = false;
-}
-
-function handleBroadcastLiveChange(isLive: boolean): void {
-    broadcastLive.value = isLive;
-
-    if (isLive) {
-        clearStreamPublishingTimeout();
-        streamPublishingTimeoutRef = window.setTimeout(() => {
-            if (broadcastLive.value && !streamReady.value) {
-                streamPublishingTooLong.value = true;
-            }
-        }, 20000);
-        startStreamStatusPolling();
-    } else {
-        clearStreamPublishingTimeout();
-    }
-}
-
-// ── Silent save (persists keys without closing modal) ──────────────────────
-
-async function silentSaveWebinar() {
-    if (!editingWebinar.value) {
-        return;
-    }
-
-    try {
-        await putJson(`/api/v1/admin/live-shows/${editingWebinar.value.id}`, buildPayload());
-        await loadData();
-
-        const updated = webinars.value.find((item) => item.id === editingWebinar.value?.id);
-
-        if (updated) {
-            editingWebinar.value = updated;
-        }
-    } catch {
-        // silent — keys are already shown; user can save manually
-    }
 }
 
 // ── Fullscreen ESC handler ─────────────────────────────────────────────────
@@ -1446,7 +1113,6 @@ async function createWebinar() {
 async function openEditModal(item: WebinarItem) {
     editingWebinar.value = item;
     const s = item.settings ?? {};
-    const restreamConfig = mergeRestreamConfig(item.restream, s.restream);
     const dailyConfig = mergeDailyConfig(item.daily, s.daily);
     form.value = {
         title: item.title ?? '',
@@ -1472,19 +1138,6 @@ async function openEditModal(item: WebinarItem) {
             knowledge_sources: Array.isArray(s.knowledge_sources) ? [...s.knowledge_sources] : [],
             video_duration_seconds:
                 item.video_duration_seconds ?? s.video_duration_seconds ?? null,
-            restream: {
-                mode: restreamConfig.mode ?? 'go_live',
-                stream_id: restreamConfig.stream_id ?? null,
-                stream_key: restreamConfig.stream_key ?? null,
-                playback_id: restreamConfig.playback_id ?? null,
-                ingest_url: restreamConfig.ingest_url ?? null,
-                hls_url: restreamConfig.hls_url ?? null,
-                player_url: restreamConfig.player_url ?? null,
-                broadcast_url: restreamConfig.broadcast_url ?? null,
-                multistream_targets: Array.isArray(restreamConfig.multistream_targets)
-                    ? [...restreamConfig.multistream_targets]
-                    : [],
-            },
             daily: {
                 room_name: dailyConfig.room_name ?? null,
                 room_url: dailyConfig.room_url ?? null,
@@ -1496,11 +1149,7 @@ async function openEditModal(item: WebinarItem) {
     addingSource.value = false;
     sourceForm.value = { title: '', content: '' };
     expandedSourceIndex.value = null;
-    broadcastLive.value = false;
     dailyHostJoined.value = false;
-    stopStreamStatusPolling();
-    broadcastPreviewStream.value = null;
-    simulcastOpen.value = false;
     clearSelectedVideoFile();
     // Default go-live casts to the streaming tab so keys are immediately visible.
     activeTab.value = isGoLiveSourceType(item.source_type ?? item.settings?.source_type)
@@ -1509,12 +1158,6 @@ async function openEditModal(item: WebinarItem) {
     resetAttendeePagination();
     editModalOpen.value = true;
     await Promise.all([loadAttendees(item.id, 1), refreshEditingWebinarStats(item.id)]);
-
-    const isRestreamCast = (item.source_type ?? item.settings?.source_type) === 'restream';
-
-    if (isRestreamCast && !hasRestreamKeysFromItem(item) && !hasRestreamStream.value) {
-        await ensureRestreamStreamKeys({ silent: true });
-    }
 }
 
 async function saveWebinar() {
@@ -1580,17 +1223,6 @@ return;
     }
 }
 
-watch(
-    [() => activeTab.value, () => editModalOpen.value, hasRestreamStream, isRestreamCast],
-    ([tab, open, hasStream, restreamCast]) => {
-        if (open && tab === 'streaming' && hasStream && restreamCast) {
-            startStreamStatusPolling();
-        } else {
-            stopStreamStatusPolling();
-        }
-    },
-);
-
 onMounted(() => {
     void loadData();
     window.addEventListener('keydown', handleKeyDown, { capture: true });
@@ -1598,7 +1230,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     window.removeEventListener('keydown', handleKeyDown, { capture: true });
-    stopStreamStatusPolling();
 
     if (previewVideoUrl.value?.startsWith('blob:')) {
         URL.revokeObjectURL(previewVideoUrl.value);
@@ -2047,16 +1678,28 @@ onBeforeUnmount(() => {
                     </div>
 
                     <!-- Go Live notice -->
-                    <div v-if="form.settings.source_type === 'daily'" class="rounded-xl border border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
-                        <div class="flex items-start gap-3">
-                            <Radio class="mt-0.5 size-4 shrink-0 text-[#E8563A]" />
-                            <div class="text-sm">
-                                <p class="font-semibold text-gray-900">Your live room is created when you save</p>
-                                <p class="mt-1 text-xs text-gray-500">
-                                    After you click <strong>Create</strong>, a private live room is provisioned automatically.
-                                    The edit modal opens on the <strong>Go Live</strong> tab where you can enable your camera and start broadcasting.
-                                    Viewers watch inside your webinar room in real time.
-                                </p>
+                    <div v-if="form.settings.source_type === 'daily'" class="space-y-3">
+                        <div
+                            v-if="!dailyLiveEnabled"
+                            class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+                        >
+                            <p class="font-semibold">Daily is not configured on this server</p>
+                            <p class="mt-1 text-xs text-red-800">
+                                Add <code class="rounded bg-red-100 px-1">DAILY_API_KEY</code> to your production
+                                environment before creating a go-live cast.
+                            </p>
+                        </div>
+                        <div class="rounded-xl border border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
+                            <div class="flex items-start gap-3">
+                                <Radio class="mt-0.5 size-4 shrink-0 text-[#E8563A]" />
+                                <div class="text-sm">
+                                    <p class="font-semibold text-gray-900">Your live room is created when you save</p>
+                                    <p class="mt-1 text-xs text-gray-500">
+                                        After you click <strong>Create</strong>, a private live room is provisioned automatically.
+                                        The edit modal opens on the <strong>Go Live</strong> tab where you can enable your camera and start broadcasting.
+                                        Viewers watch inside your webinar room in real time.
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2348,7 +1991,7 @@ onBeforeUnmount(() => {
             <!-- Header -->
             <div class="shrink-0 border-b px-6 py-4">
                 <p v-if="editingWebinar" class="truncate text-xs text-muted-foreground">{{ editingWebinar.title }}</p>
-                <DialogTitle class="text-lg font-semibold">Edit Webinar</DialogTitle>
+                <DialogTitle class="text-lg font-semibold">Edit Live Cast</DialogTitle>
                 <DialogDescription>Update settings, automation, and publishing options.</DialogDescription>
             </div>
 
@@ -2510,9 +2153,22 @@ onBeforeUnmount(() => {
                         </Badge>
                     </div>
 
+                    <div
+                        v-if="isDailyCast && !dailyLiveEnabled"
+                        class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+                    >
+                        <p class="font-semibold">Daily is not configured on this server</p>
+                        <p class="mt-1 text-xs text-red-800">
+                            Add <code class="rounded bg-red-100 px-1">DAILY_API_KEY</code> in your production environment
+                            (Laravel Forge → Environment), then redeploy or run
+                            <code class="rounded bg-red-100 px-1">php artisan config:cache</code>.
+                            This is a server setting — not part of the frontend build.
+                        </p>
+                    </div>
+
                     <div v-if="isDailyCast" class="space-y-4">
                         <DailyBroadcastPanel
-                            v-if="editingWebinar?.id"
+                            v-if="editingWebinar?.id && dailyLiveEnabled"
                             :live-show-id="editingWebinar.id"
                             :room-url="dailySettings.room_url"
                             :host-name="form.settings.host_name"

@@ -36,6 +36,8 @@ Copy `.env.example` to `.env` and configure:
 | `CLOUDINARY_*` | Production Cloudinary account |
 | `OPENAI_API_KEY` | Optional — AI script generation |
 | `HEYGEN_API_KEY` | Optional — AI avatar videos |
+| `DAILY_API_KEY` | **Required for Go Live** — Daily.co API key from [dashboard.daily.co](https://dashboard.daily.co) |
+| `DAILY_ENABLED` | `true` (default) — set `false` only to disable browser go-live |
 
 ### Frontend assets (GitHub Actions)
 

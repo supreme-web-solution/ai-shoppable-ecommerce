@@ -49,14 +49,4 @@ class ExternalVideoUrlTest extends TestCase
         $this->assertNull($parsed['embed_url']);
     }
 
-    public function test_parses_restream_url(): void
-    {
-        $url = 'https://app.restream.io/player/example-channel';
-        $parsed = ExternalVideoUrl::parse($url);
-
-        $this->assertNotNull($parsed);
-        $this->assertSame(ExternalVideoUrl::PROVIDER_RESTREAM, $parsed['provider']);
-        $this->assertSame($url, $parsed['embed_url']);
-        $this->assertNull($parsed['direct_url']);
-    }
 }

@@ -24,6 +24,25 @@ class DailyService
         return $this->enabled();
     }
 
+    public function configurationHint(): string
+    {
+        if ($this->ready()) {
+            return '';
+        }
+
+        $enabled = config('services.daily.enabled', true);
+
+        if (! filter_var($enabled, FILTER_VALIDATE_BOOLEAN)) {
+            return 'Daily live streaming is disabled (DAILY_ENABLED=false). Set DAILY_ENABLED=true on the server.';
+        }
+
+        if ($this->apiKey() === '') {
+            return 'Daily live streaming is not configured. Set DAILY_API_KEY in your production server environment (e.g. Laravel Forge → Environment), then redeploy or run: php artisan config:cache';
+        }
+
+        return 'Daily live streaming is not configured.';
+    }
+
     /**
      * @return array<string, mixed>
      */

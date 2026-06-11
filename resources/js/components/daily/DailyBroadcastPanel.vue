@@ -247,7 +247,14 @@ defineExpose({ joinAsHost });
                 v-else-if="phase === 'error'"
                 class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-gray-950 p-6 text-center text-sm text-white"
             >
-                <p>{{ errorText }}</p>
+                <p class="max-w-md">{{ errorText }}</p>
+                <p
+                    v-if="errorText.toLowerCase().includes('daily_api_key') || errorText.toLowerCase().includes('not configured')"
+                    class="max-w-md text-xs text-white/60"
+                >
+                    On production, set <strong class="text-white/80">DAILY_API_KEY</strong> in your server
+                    environment and redeploy (or run <code class="text-white/80">php artisan config:cache</code>).
+                </p>
                 <Button
                     type="button"
                     size="sm"

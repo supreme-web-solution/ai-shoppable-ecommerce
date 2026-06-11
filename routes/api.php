@@ -25,7 +25,6 @@ use App\Http\Controllers\Api\V1\Player\CartController;
 use App\Http\Controllers\Api\V1\Player\CheckoutController;
 use App\Http\Controllers\Api\V1\Player\CheckoutOrderController;
 use App\Http\Controllers\Api\V1\Player\EngagementController;
-use App\Http\Controllers\Api\V1\Player\LiveBroadcastController;
 use App\Http\Controllers\Api\V1\Player\FeedController;
 use App\Http\Controllers\Api\V1\Player\LinkPreviewController;
 use App\Http\Controllers\Api\V1\Player\LiveShowController as PlayerLiveShowController;
@@ -49,9 +48,6 @@ Route::prefix('v1')->group(function (): void {
         Route::get('live-show', [PlayerLiveShowController::class, 'current'])->middleware('throttle:player-feed');
         Route::get('webinars/{liveShow}', [PlayerWebinarController::class, 'show'])->middleware('throttle:player-feed');
         Route::get('webinars/{liveShow}/daily-token', [PlayerWebinarController::class, 'dailyViewerToken'])
-            ->middleware('throttle:player-feed');
-        Route::get('webinars/{liveShow}/live-stream/{file}', [LiveBroadcastController::class, 'stream'])
-            ->where('file', 'index\\.m3u8|index\\d+\\.ts')
             ->middleware('throttle:player-feed');
         Route::post('webinars/{liveShow}/register', [PlayerWebinarController::class, 'register']);
         Route::post('webinars/{liveShow}/watch-progress', [PlayerWebinarController::class, 'recordWatchProgress']);
@@ -141,12 +137,6 @@ Route::prefix('v1')->group(function (): void {
             Route::post('live-shows/{liveShow}/attendees/notify', [LiveShowController::class, 'notifyAttendees']);
             Route::post('live-shows/{liveShow}/attendees/import', [LiveShowController::class, 'importAttendees']);
             Route::get('live-shows/{liveShow}/daily/token', [LiveShowController::class, 'dailyHostToken']);
-            Route::post('live-shows/{liveShow}/restream/stream', [LiveShowController::class, 'createRestreamStream']);
-            Route::get('live-shows/{liveShow}/restream/status', [LiveShowController::class, 'restreamStreamStatus']);
-            Route::post('live-shows/{liveShow}/restream/targets', [LiveShowController::class, 'addRestreamTarget']);
-            Route::post('live-shows/{liveShow}/broadcast/start', [LiveShowController::class, 'startBroadcastSession']);
-            Route::post('live-shows/{liveShow}/broadcast/chunk', [LiveShowController::class, 'broadcastChunk']);
-            Route::post('live-shows/{liveShow}/broadcast/stop', [LiveShowController::class, 'stopBroadcastSession']);
             Route::get('live-shows/{liveShow}/conversations', [LiveShowController::class, 'conversations']);
             Route::get('live-shows/{liveShow}/messages', [LiveShowController::class, 'messages']);
             Route::post('live-shows/{liveShow}/messages', [LiveShowController::class, 'postHostMessage']);

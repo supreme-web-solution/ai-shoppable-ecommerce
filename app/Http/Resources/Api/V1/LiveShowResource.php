@@ -2,8 +2,6 @@
 
 namespace App\Http\Resources\Api\V1;
 
-use App\Services\Integrations\RestreamService;
-use App\Services\LiveBroadcast\LiveBroadcastSessionService;
 use App\Support\ExternalVideoUrl;
 use App\Services\Webinars\WebinarOfferService;
 use Illuminate\Http\Request;
@@ -12,19 +10,15 @@ use Illuminate\Http\Resources\Json\JsonResource;
 class LiveShowResource extends JsonResource
 {
     /**
-     * Transform the resource into an array.
-     *
      * @return array<string, mixed>
      */
     public function toArray(Request $request): array
     {
         $settings = is_array($this->settings) ? $this->settings : [];
-        $restreamSettings = $this->resolvedRestreamSettings($settings);
         $dailySettings = $this->resolvedDailySettings($settings);
         $thumbnailUrl = data_get($settings, 'thumbnail_url') ?: optional($this->video)->thumbnail_url;
-        $resolvedVideoUrl = $this->resolvedVideoUrl($settings, $restreamSettings);
+        $resolvedVideoUrl = $this->resolvedVideoUrl($settings);
         $videoPlayback = ExternalVideoUrl::parse($resolvedVideoUrl);
-        $videoPlayback = $this->enrichRestreamPlayback($settings, $restreamSettings, $videoPlayback);
 
         if ($thumbnailUrl === null && is_array($videoPlayback)) {
             $thumbnailUrl = $videoPlayback['thumbnail_url'] ?? null;
@@ -46,7 +40,6 @@ class LiveShowResource extends JsonResource
             'video_url' => $resolvedVideoUrl,
             'video_playback' => $videoPlayback,
             'source_type' => data_get($settings, 'source_type', 'upload'),
-            'restream' => $restreamSettings,
             'daily' => $dailySettings,
             'registration_title' => data_get($settings, 'registration_title'),
             'registration_description' => data_get($settings, 'registration_description'),
@@ -83,11 +76,7 @@ class LiveShowResource extends JsonResource
     /**
      * @param  array<string, mixed>  $settings
      */
-    /**
-     * @param  array<string, mixed>  $settings
-     * @param  array<string, mixed>|null  $restreamSettings
-     */
-    protected function resolvedVideoUrl(array $settings, ?array $restreamSettings): ?string
+    protected function resolvedVideoUrl(array $settings): ?string
     {
         $override = trim((string) data_get($settings, 'video_url', ''));
 
@@ -95,55 +84,11 @@ class LiveShowResource extends JsonResource
             return $override;
         }
 
-        $playerUrl = trim((string) data_get($restreamSettings, 'player_url', ''));
-
-        if ($playerUrl !== '') {
-            return $playerUrl;
-        }
-
         $playback = trim((string) ($this->video?->playback_url ?? ''));
 
         return $playback !== '' ? $playback : null;
     }
 
-    /**
-     * @param  array<string, mixed>  $settings
-     * @return array<string, mixed>|null
-     */
-    protected function resolvedRestreamSettings(array $settings): ?array
-    {
-        $restream = data_get($settings, 'restream');
-
-        if (! is_array($restream)) {
-            return null;
-        }
-
-        $playerUrl = trim((string) ($restream['player_url'] ?? ''));
-
-        if ($playerUrl === '') {
-            $resolved = app(RestreamService::class)->resolvePlayerUrl();
-
-            if ($resolved !== null) {
-                $restream['player_url'] = $resolved;
-            }
-        }
-
-        if (data_get($settings, 'source_type') === 'restream') {
-            $restream['player_url'] = app(LiveBroadcastSessionService::class)
-                ->playbackUrlForLiveShow($this->id);
-        }
-
-        return $restream;
-    }
-
-    /**
-     * Ensure live streams expose playback URLs for the webinar room.
-     *
-     * @param  array<string, mixed>  $settings
-     * @param  array<string, mixed>|null  $restreamSettings
-     * @param  array<string, mixed>|null  $videoPlayback
-     * @return array<string, mixed>|null
-     */
     /**
      * @param  array<string, mixed>  $settings
      * @return array<string, mixed>|null
@@ -164,28 +109,5 @@ class LiveShowResource extends JsonResource
             'room_name' => isset($daily['room_name']) ? trim((string) $daily['room_name']) : null,
             'room_url' => isset($daily['room_url']) ? trim((string) $daily['room_url']) : null,
         ], fn (mixed $value): bool => $value !== null && $value !== '');
-    }
-
-    protected function enrichRestreamPlayback(array $settings, ?array $restreamSettings, ?array $videoPlayback): ?array
-    {
-        if (data_get($settings, 'source_type') !== 'restream') {
-            return $videoPlayback;
-        }
-
-        $playerUrl = trim((string) data_get($restreamSettings, 'player_url', ''));
-
-        if ($playerUrl === '') {
-            return $videoPlayback;
-        }
-
-        $isHls = str_contains($playerUrl, '.m3u8');
-
-        return [
-            'provider' => ExternalVideoUrl::PROVIDER_RESTREAM,
-            'source_url' => $playerUrl,
-            'embed_url' => $isHls ? null : $playerUrl,
-            'direct_url' => $isHls ? $playerUrl : null,
-            'thumbnail_url' => is_array($videoPlayback) ? ($videoPlayback['thumbnail_url'] ?? null) : null,
-        ];
     }
 }

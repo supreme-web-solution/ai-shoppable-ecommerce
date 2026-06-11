@@ -3,7 +3,6 @@
 use App\Http\Controllers\CheckoutPageController;
 use App\Http\Controllers\EmbedPageController;
 use App\Http\Controllers\ShopPageController;
-use App\Http\Controllers\StreamingCallbackController;
 use App\Http\Controllers\TeamInvitePageController;
 use App\Http\Controllers\TutorialController;
 use App\Http\Controllers\WebinarPageController;
@@ -57,6 +56,5 @@ Route::get('checkout/{order}/{token}', [CheckoutPageController::class, 'show'])-
 Route::get('checkout/{order}/{token}/receipt', [CheckoutPageController::class, 'receipt'])->name('checkout.receipt');
 Route::get('webinars/{liveShow}/register', [WebinarPageController::class, 'register'])->name('webinars.register');
 Route::get('webinars/{liveShow}/room', [WebinarPageController::class, 'room'])->name('webinars.room');
-Route::get('streaming/callback', StreamingCallbackController::class)->name('streaming.callback');
 
 require __DIR__.'/settings.php';
