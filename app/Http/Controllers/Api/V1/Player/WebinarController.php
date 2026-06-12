@@ -22,6 +22,7 @@ use App\Services\Webinars\WebinarOfferService;
 use App\Services\Webinars\WebinarWatchProgressService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class WebinarController extends Controller
 {
@@ -30,10 +31,21 @@ class WebinarController extends Controller
         abort_if($liveShow->status === 'cancelled', 404);
         abort_if(data_get($liveShow->settings, 'source_type') !== 'daily', 404);
 
+        abort_unless($daily->ready(), 503, 'Live room is temporarily unavailable.');
+
+        try {
+            $liveShow = $daily->ensureLiveShowRoomReady($liveShow);
+        } catch (\Throwable $exception) {
+            Log::warning('Daily room provisioning before viewer token failed', [
+                'live_show_id' => $liveShow->id,
+                'message' => $exception->getMessage(),
+            ]);
+
+            abort(503, 'Live room is temporarily unavailable.');
+        }
+
         $roomName = trim((string) data_get($liveShow->settings, 'daily.room_name', ''));
         abort_if($roomName === '', 404, 'Live room is not ready yet.');
-
-        abort_unless($daily->ready(), 503, 'Live room is temporarily unavailable.');
 
         $userName = trim((string) $request->input('user_name', 'Viewer'));
 
@@ -243,7 +255,7 @@ class WebinarController extends Controller
         ]);
     }
 
-    public function messages(Request $request, LiveShow $liveShow): JsonResponse
+    public function messages(Request $request, LiveShow $liveShow, WebinarOfferService $offerService): JsonResponse
     {
         abort_if($liveShow->status === 'cancelled', 404);
 
@@ -262,16 +274,12 @@ class WebinarController extends Controller
             ->orderBy('id')
             ->limit($limit);
 
+        $liveShow->loadMissing(['featuredProducts', 'team']);
+
         return response()->json([
-            'data' => $query->get()->map(fn (LiveShowMessage $message): array => [
-                'id' => $message->id,
-                'sender_type' => $message->sender_type,
-                'sender_name' => $message->sender_name,
-                'live_show_registration_id' => $message->live_show_registration_id,
-                'message' => $message->message,
-                'is_pinned' => (bool) $message->is_pinned,
-                'created_at' => $message->created_at,
-            ]),
+            'data' => $query->get()->map(
+                fn (LiveShowMessage $message): array => $offerService->formatPlayerMessage($liveShow, $message),
+            ),
         ]);
     }
 

@@ -137,6 +137,8 @@ Route::prefix('v1')->group(function (): void {
             Route::post('live-shows/{liveShow}/attendees/notify', [LiveShowController::class, 'notifyAttendees']);
             Route::post('live-shows/{liveShow}/attendees/import', [LiveShowController::class, 'importAttendees']);
             Route::get('live-shows/{liveShow}/daily/token', [LiveShowController::class, 'dailyHostToken']);
+            Route::post('live-shows/{liveShow}/offers/{product}/push', [LiveShowController::class, 'pushLiveOffer']);
+            Route::post('live-shows/{liveShow}/offers/{product}/unpublish', [LiveShowController::class, 'unpublishLiveOffer']);
             Route::get('live-shows/{liveShow}/conversations', [LiveShowController::class, 'conversations']);
             Route::get('live-shows/{liveShow}/messages', [LiveShowController::class, 'messages']);
             Route::post('live-shows/{liveShow}/messages', [LiveShowController::class, 'postHostMessage']);

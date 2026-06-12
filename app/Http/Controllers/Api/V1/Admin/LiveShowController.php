@@ -9,6 +9,7 @@ use App\Jobs\RefreshKnowledgeEmbeddingsJob;
 use App\Models\LiveShow;
 use App\Models\LiveShowMessage;
 use App\Models\LiveShowRegistration;
+use App\Models\Product;
 use App\Services\Integrations\DailyService;
 use Illuminate\Support\Facades\Log;
 use App\Services\Webinars\WebinarAttendeeService;
@@ -374,25 +375,38 @@ class LiveShowController extends Controller
 
     private function doCreateDailyRoom(LiveShow $liveShow, DailyService $daily): void
     {
-        $room = $daily->createRoomForLiveShow($liveShow);
-        $roomName = trim((string) ($room['name'] ?? $daily->roomNameForLiveShow($liveShow)));
-        $roomUrl = trim((string) ($room['url'] ?? ''));
-
-        if ($roomName === '' || $roomUrl === '') {
-            throw new \RuntimeException('Daily did not return a room name or URL.');
-        }
-
-        $settings = is_array($liveShow->settings) ? $liveShow->settings : [];
-        $existingEndpoints = data_get($settings, 'daily.streaming_endpoints');
-        $settings['source_type'] = 'daily';
-        $settings['daily'] = array_filter([
-            'room_name' => $roomName,
-            'room_url' => $roomUrl,
-            'streaming_endpoints' => is_array($existingEndpoints) ? $existingEndpoints : null,
-        ], fn (mixed $value): bool => $value !== null && $value !== '');
-
-        $liveShow->update(['settings' => $this->normalizeSettings($settings)]);
+        $liveShow = $daily->syncLiveShowRoom($liveShow);
+        $settings = $this->normalizeSettings(is_array($liveShow->settings) ? $liveShow->settings : []);
+        $liveShow->update(['settings' => $settings]);
         $liveShow->refresh();
+    }
+
+    public function pushLiveOffer(Request $request, LiveShow $liveShow, Product $product, WebinarOfferService $offerService)
+    {
+        $this->authorize('update', $liveShow);
+        abort_unless($product->team_id === $liveShow->team_id, 404);
+
+        $offer = $offerService->pushLiveOffer(
+            $liveShow,
+            $product,
+            trim((string) $request->input('host_name', $request->user()?->name ?? '')),
+        );
+
+        return response()->json([
+            'data' => [
+                'offer' => $offer,
+            ],
+        ]);
+    }
+
+    public function unpublishLiveOffer(LiveShow $liveShow, Product $product, WebinarOfferService $offerService)
+    {
+        $this->authorize('update', $liveShow);
+        abort_unless($product->team_id === $liveShow->team_id, 404);
+
+        $offerService->unpublishLiveOffer($liveShow, $product);
+
+        return response()->noContent();
     }
 
     public function dailyHostToken(Request $request, LiveShow $liveShow, DailyService $daily)
@@ -401,11 +415,22 @@ class LiveShowController extends Controller
 
         abort_unless($daily->ready(), 422, $daily->configurationHint() ?: 'Daily live streaming is not configured.');
 
-        $roomName = trim((string) data_get($liveShow->settings, 'daily.room_name', ''));
+        try {
+            $liveShow = $daily->ensureLiveShowRoomReady($liveShow);
+        } catch (\Throwable $exception) {
+            Log::warning('Daily room provisioning before host token failed', [
+                'live_show_id' => $liveShow->id,
+                'message' => $exception->getMessage(),
+            ]);
 
-        if ($roomName === '') {
-            $this->doCreateDailyRoom($liveShow, $daily);
-            $liveShow->refresh();
+            $message = trim($exception->getMessage());
+
+            abort(
+                422,
+                $message !== ''
+                    ? 'Could not prepare the Daily live room: '.$message
+                    : 'Could not prepare the Daily live room. Check DAILY_API_KEY and try again.',
+            );
         }
 
         $userName = trim((string) $request->input('user_name', $request->user()?->name ?? 'Host'));

@@ -62,7 +62,6 @@ class DailyService
 
         $properties = array_filter([
             'owner_only_broadcast' => true,
-            'enable_livestreaming' => true,
             // Viewers land straight in the room — no Daily welcome / prejoin screens.
             'enable_prejoin_ui' => false,
             'enable_people_ui' => false,
@@ -104,10 +103,97 @@ class DailyService
         return $response->json();
     }
 
+    /**
+     * Ensure the Daily room exists (create or recreate if missing/expired) and return its name + URL.
+     *
+     * @return array{name: string, url: string}
+     */
+    public function provisionRoomForLiveShow(LiveShow $liveShow): array
+    {
+        $roomName = $this->roomNameForLiveShow($liveShow);
+
+        if ($this->roomExists($roomName)) {
+            $this->syncRoomProperties($roomName);
+            $roomUrl = trim((string) data_get($liveShow->settings, 'daily.room_url', ''));
+            $existing = $this->getRoom($roomName);
+
+            if ($roomUrl === '' && is_array($existing)) {
+                $roomUrl = trim((string) ($existing['url'] ?? ''));
+            }
+
+            return [
+                'name' => $roomName,
+                'url' => $roomUrl,
+            ];
+        }
+
+        $room = $this->createRoomForLiveShow($liveShow);
+        $resolvedName = trim((string) ($room['name'] ?? $roomName));
+        $resolvedUrl = trim((string) ($room['url'] ?? ''));
+
+        abort_if($resolvedName === '' || $resolvedUrl === '', 422, 'Daily did not return a room name or URL.');
+
+        return [
+            'name' => $resolvedName,
+            'url' => $resolvedUrl,
+        ];
+    }
+
+    public function syncLiveShowRoom(LiveShow $liveShow): LiveShow
+    {
+        $room = $this->provisionRoomForLiveShow($liveShow);
+        $settings = is_array($liveShow->settings) ? $liveShow->settings : [];
+        $existingEndpoints = data_get($settings, 'daily.streaming_endpoints');
+        $settings['source_type'] = 'daily';
+        $settings['daily'] = array_filter([
+            'room_name' => $room['name'],
+            'room_url' => $room['url'],
+            'streaming_endpoints' => is_array($existingEndpoints) ? $existingEndpoints : null,
+        ], fn (mixed $value): bool => $value !== null && $value !== '');
+
+        $liveShow->update(['settings' => $settings]);
+
+        return $liveShow->fresh();
+    }
+
+    public function ensureLiveShowRoomReady(LiveShow $liveShow): LiveShow
+    {
+        $roomName = trim((string) data_get($liveShow->settings, 'daily.room_name', ''));
+
+        if ($roomName !== '' && $this->roomExists($roomName)) {
+            $this->syncRoomProperties($roomName);
+
+            return $liveShow;
+        }
+
+        return $this->syncLiveShowRoom($liveShow);
+    }
+
+    public function roomExists(string $roomName): bool
+    {
+        return $this->getRoom($roomName) !== null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function getRoom(string $roomName): ?array
+    {
+        $roomName = trim($roomName);
+
+        if ($roomName === '') {
+            return null;
+        }
+
+        $response = $this->client()->get("/rooms/{$roomName}");
+
+        return $response->successful() ? $response->json() : null;
+    }
+
     public function createHostToken(LiveShow $liveShow, string $userName): string
     {
         $roomName = $this->requireRoomName($liveShow);
-        $this->ensurePassiveViewerRoom($roomName);
+        $this->syncRoomProperties($roomName);
 
         return $this->createMeetingToken($roomName, array_filter([
             'is_owner' => true,
@@ -123,7 +209,7 @@ class DailyService
     public function createViewerToken(LiveShow $liveShow, string $userName): string
     {
         $roomName = $this->requireRoomName($liveShow);
-        $this->ensurePassiveViewerRoom($roomName);
+        $this->syncRoomProperties($roomName);
 
         return $this->createMeetingToken($roomName, array_filter([
             'is_owner' => false,
@@ -181,11 +267,10 @@ class DailyService
     /**
      * Viewers should enter the room immediately when the page loads.
      */
-    protected function ensurePassiveViewerRoom(string $roomName): void
+    protected function syncRoomProperties(string $roomName): void
     {
         $response = $this->client()->post("/rooms/{$roomName}", [
             'properties' => [
-                'enable_livestreaming' => true,
                 'enable_prejoin_ui' => false,
                 'enable_people_ui' => false,
                 'enable_hidden_participants' => true,
@@ -198,7 +283,7 @@ class DailyService
         ]);
 
         if (! $response->successful()) {
-            Log::warning('Daily room passive-viewer update failed', [
+            Log::warning('Daily room property sync failed', [
                 'room_name' => $roomName,
                 'status' => $response->status(),
                 'body' => $response->body(),

@@ -141,7 +141,11 @@ type FeaturedOffer = {
     cta_url: string;
     pin_order: number;
     default_checkout_url?: string;
+    /** Epoch ms when pushed live (browser go-live casts only). */
+    live_pushed_at_ms?: number | null;
 };
+
+const LIVE_OFFER_EPOCH_MS = 1_000_000_000_000;
 
 const OFFER_APPEARANCE_OPTIONS: { value: OfferAppearance; label: string; hint: string }[] = [
     { value: 'pin', label: 'Pin on chat', hint: 'Pinned above the chat while active' },
@@ -351,6 +355,7 @@ const uploadingVideo = ref(false);
 const videoUploadError = ref('');
 const dailyHostJoined = ref(false);
 const dailySimulcastActive = ref(false);
+const pushingOfferId = ref<number | null>(null);
 const simulcastDraft = ref({
     preset: 'youtube' as (typeof SIMULCAST_PRESETS)[number]['id'],
     name: 'YouTube Live',
@@ -774,21 +779,108 @@ function offerForProduct(productId: number): FeaturedOffer | undefined {
     return form.value.featured_offers.find((offer) => offer.product_id === productId);
 }
 
-function toggleProduct(productId: number) {
+function isLiveEpochOfferMs(ms: number | null | undefined): boolean {
+    return typeof ms === 'number' && ms > LIVE_OFFER_EPOCH_MS;
+}
+
+async function pushLiveOfferToRoom(productId: number): Promise<void> {
+    if (!editingWebinar.value?.id) {
+        return;
+    }
+
+    pushingOfferId.value = productId;
+
+    try {
+        const response = await postJson<{ data: { offer: WebinarFeaturedProduct } }>(
+            `/api/v1/admin/live-shows/${editingWebinar.value.id}/offers/${productId}/push`,
+            {
+                host_name: form.value.settings.host_name.trim() || undefined,
+            },
+        );
+
+        const pushed = response.data.offer;
+        const existing = offerForProduct(productId);
+
+        if (existing) {
+            Object.assign(existing, {
+                appearance: 'in_chat',
+                live_pushed_at_ms: pushed.starts_at_ms ?? Date.now(),
+                starts_at_sec: 0,
+                ends_at_sec: null,
+            });
+        }
+
+        toast.success(`${pushed.title} is now live in the webinar room.`);
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not push this offer live.');
+        throw error;
+    } finally {
+        pushingOfferId.value = null;
+    }
+}
+
+async function unpublishLiveOfferFromRoom(productId: number): Promise<void> {
+    if (!editingWebinar.value?.id) {
+        return;
+    }
+
+    pushingOfferId.value = productId;
+
+    try {
+        await apiFetch(
+            `/api/v1/admin/live-shows/${editingWebinar.value.id}/offers/${productId}/unpublish`,
+            { method: 'POST' },
+        );
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not remove this live offer.');
+        throw error;
+    } finally {
+        pushingOfferId.value = null;
+    }
+}
+
+async function toggleProduct(productId: number) {
     const idx = form.value.featured_offers.findIndex((offer) => offer.product_id === productId);
+    const isDailyLive =
+        isDailyCast.value
+        && Boolean(editingWebinar.value?.id)
+        && (form.value.status === 'live' || dailyHostJoined.value);
 
     if (idx === -1) {
         form.value.featured_offers.push({
             product_id: productId,
             starts_at_sec: 0,
             ends_at_sec: null,
-            appearance: 'popup',
+            appearance: isDailyCast.value ? 'in_chat' : 'popup',
             cta_url: '',
             pin_order: form.value.featured_offers.length,
+            live_pushed_at_ms: null,
         });
-    } else {
-        form.value.featured_offers.splice(idx, 1);
+
+        if (isDailyLive) {
+            try {
+                await pushLiveOfferToRoom(productId);
+            } catch {
+                form.value.featured_offers = form.value.featured_offers.filter(
+                    (offer) => offer.product_id !== productId,
+                );
+            }
+        }
+
+        return;
     }
+
+    const removing = form.value.featured_offers[idx];
+
+    if (isDailyLive && isLiveEpochOfferMs(removing.live_pushed_at_ms ?? null)) {
+        try {
+            await unpublishLiveOfferFromRoom(productId);
+        } catch {
+            return;
+        }
+    }
+
+    form.value.featured_offers.splice(idx, 1);
 }
 
 function updateOffer(
@@ -819,23 +911,31 @@ function offerCheckoutHint(productId: number): string {
 }
 
 function mapFeaturedProductsToOffers(products: WebinarFeaturedProduct[]): FeaturedOffer[] {
-    return products.map((product, index) => ({
-        product_id: product.id,
-        starts_at_sec: Math.max(0, Math.round((product.starts_at_ms ?? 0) / 1000)),
-        ends_at_sec:
-            product.ends_at_ms != null && product.ends_at_ms > 0
-                ? Math.round(product.ends_at_ms / 1000)
-                : null,
-        appearance:
-            product.appearance === 'pin' ||
-            product.appearance === 'in_chat' ||
-            product.appearance === 'popup'
-                ? product.appearance
-                : 'popup',
-        cta_url: product.cta_url ?? '',
-        pin_order: product.pin_order ?? index,
-        default_checkout_url: product.default_checkout_url ?? undefined,
-    }));
+    return products.map((product, index) => {
+        const startsAtMs = product.starts_at_ms ?? 0;
+        const isLivePushed = isLiveEpochOfferMs(startsAtMs);
+
+        return {
+            product_id: product.id,
+            starts_at_sec: isLivePushed ? 0 : Math.max(0, Math.round(startsAtMs / 1000)),
+            ends_at_sec:
+                !isLivePushed && product.ends_at_ms != null && product.ends_at_ms > 0
+                    ? Math.round(product.ends_at_ms / 1000)
+                    : null,
+            appearance:
+                product.appearance === 'pin' ||
+                product.appearance === 'in_chat' ||
+                product.appearance === 'popup'
+                    ? product.appearance
+                    : isDailyCast.value
+                      ? 'in_chat'
+                      : 'popup',
+            cta_url: product.cta_url ?? '',
+            pin_order: product.pin_order ?? index,
+            default_checkout_url: product.default_checkout_url ?? undefined,
+            live_pushed_at_ms: isLivePushed ? startsAtMs : null,
+        };
+    });
 }
 
 function validateForm(): string | null {
@@ -856,27 +956,29 @@ return 'End date must be after start date.';
 }
     }
 
-    const duration = videoDurationSeconds.value;
+    if (!isDailyCast.value) {
+        const duration = videoDurationSeconds.value;
 
-    for (const offer of form.value.featured_offers) {
-        if (offer.starts_at_sec < 0) {
-            return 'Offer show times cannot be negative.';
-        }
+        for (const offer of form.value.featured_offers) {
+            if (offer.starts_at_sec < 0) {
+                return 'Offer show times cannot be negative.';
+            }
 
-        if (duration !== null && offer.starts_at_sec > duration) {
-            return 'An offer is scheduled after the video duration ends.';
-        }
+            if (duration !== null && offer.starts_at_sec > duration) {
+                return 'An offer is scheduled after the video duration ends.';
+            }
 
-        if (
-            offer.ends_at_sec !== null &&
-            offer.ends_at_sec >= 0 &&
-            offer.ends_at_sec < offer.starts_at_sec
-        ) {
-            return 'Offer hide time must be after the show time.';
-        }
+            if (
+                offer.ends_at_sec !== null &&
+                offer.ends_at_sec >= 0 &&
+                offer.ends_at_sec < offer.starts_at_sec
+            ) {
+                return 'Offer hide time must be after the show time.';
+            }
 
-        if (duration !== null && offer.ends_at_sec !== null && offer.ends_at_sec > duration) {
-            return 'An offer hide time is after the video duration ends.';
+            if (duration !== null && offer.ends_at_sec !== null && offer.ends_at_sec > duration) {
+                return 'An offer hide time is after the video duration ends.';
+            }
         }
     }
 
@@ -897,10 +999,15 @@ function buildPayload(forCreate = false) {
         is_premiere: false,
         featured_products: form.value.featured_offers.map((offer, index) => ({
             product_id: offer.product_id,
-            starts_at_ms: Math.max(0, Math.round(offer.starts_at_sec * 1000)),
+            starts_at_ms:
+                isDailyCast.value && offer.live_pushed_at_ms
+                    ? offer.live_pushed_at_ms
+                    : Math.max(0, Math.round(offer.starts_at_sec * 1000)),
             ends_at_ms:
                 offer.ends_at_sec !== null && offer.ends_at_sec >= 0
-                    ? Math.round(offer.ends_at_sec * 1000)
+                    ? isDailyCast.value && isLiveEpochOfferMs(offer.ends_at_sec * 1000)
+                        ? offer.ends_at_sec * 1000
+                        : Math.round(offer.ends_at_sec * 1000)
                     : null,
             appearance: offer.appearance,
             cta_url: offer.cta_url.trim() || null,
@@ -1952,7 +2059,10 @@ onBeforeUnmount(() => {
                 <div v-show="activeTab === 'offers'" class="space-y-4">
                     <div class="rounded-lg border p-4">
                         <p class="mb-1 text-sm font-semibold">Offers</p>
-                        <p class="mb-3 text-xs text-muted-foreground">
+                        <p v-if="isDailyCast" class="mb-3 text-xs text-muted-foreground">
+                            Choose products for your go-live cast. While you are on air, tap a product to publish it instantly to viewers.
+                        </p>
+                        <p v-else class="mb-3 text-xs text-muted-foreground">
                             Assign products and schedule when each offer appears in the live room (requires video duration on the Video tab).
                         </p>
                         <div class="relative mb-3">
@@ -1998,6 +2108,7 @@ onBeforeUnmount(() => {
                                         </svg>
                                     </div>
                                     <ChevronDown
+                                        v-if="!isDailyCast"
                                         :class="[
                                             'size-4 shrink-0 text-muted-foreground transition-transform',
                                             isProductSelected(product.id) ? 'rotate-180 text-[#E8563A]' : '',
@@ -2006,7 +2117,7 @@ onBeforeUnmount(() => {
                                 </button>
 
                                 <div
-                                    v-if="isProductSelected(product.id) && offerForProduct(product.id)"
+                                    v-if="!isDailyCast && isProductSelected(product.id) && offerForProduct(product.id)"
                                     class="space-y-3 border-t border-[#E8563A]/15 bg-muted/20 px-3 py-3"
                                 >
                                     <div class="grid gap-3 sm:grid-cols-2">
@@ -2724,11 +2835,24 @@ onBeforeUnmount(() => {
                 <div v-show="activeTab === 'offers'" class="space-y-4">
                     <div class="rounded-lg border p-4">
                         <p class="mb-1 text-sm font-semibold">Offers</p>
-                        <p class="mb-3 text-xs text-muted-foreground">
+                        <p v-if="isDailyCast" class="mb-3 text-xs text-muted-foreground">
+                            Tap a product to push it live. It appears instantly in the webinar chat and below the video for viewers.
+                            Deselect to remove it from the room.
+                        </p>
+                        <p v-else class="mb-3 text-xs text-muted-foreground">
                             Schedule when each product appears in the room player. Set video duration on the Video tab first.
                         </p>
-                        <div v-if="!videoDurationSeconds" class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        <div
+                            v-if="!isDailyCast && !videoDurationSeconds"
+                            class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                        >
                             Add <strong>video duration</strong> on the Video tab so offer timers can be validated.
+                        </div>
+                        <div
+                            v-if="isDailyCast && (form.status === 'live' || dailyHostJoined)"
+                            class="mb-3 rounded-lg border border-[#E8563A]/30 bg-[#E8563A]/5 px-3 py-2 text-xs text-[#9A3F2B]"
+                        >
+                            You are live — selecting a product publishes it to viewers immediately.
                         </div>
                         <div class="relative mb-3">
                             <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -2748,9 +2872,11 @@ onBeforeUnmount(() => {
                             >
                                 <button
                                     type="button"
+                                    :disabled="pushingOfferId === product.id"
                                     :class="[
                                         'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',
                                         isProductSelected(product.id) ? 'bg-[#E8563A]/5' : 'hover:bg-muted/40',
+                                        pushingOfferId === product.id ? 'opacity-60' : '',
                                     ]"
                                     @click="toggleProduct(product.id)"
                                 >
@@ -2763,16 +2889,30 @@ onBeforeUnmount(() => {
                                         <p class="text-xs text-muted-foreground">
                                             {{ product.sale_price ? `$${product.sale_price}` : product.price ? `$${product.price}` : '' }}
                                         </p>
+                                        <p
+                                            v-if="isDailyCast && isProductSelected(product.id) && isLiveEpochOfferMs(offerForProduct(product.id)?.live_pushed_at_ms)"
+                                            class="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#E8563A]"
+                                        >
+                                            Live in room
+                                        </p>
                                     </div>
-                                    <div :class="[
-                                        'flex size-5 shrink-0 items-center justify-center rounded-full border-2',
-                                        isProductSelected(product.id) ? 'border-[#E8563A] bg-[#E8563A] text-white' : 'border-muted-foreground/30',
-                                    ]">
+                                    <Loader2
+                                        v-if="pushingOfferId === product.id"
+                                        class="size-4 shrink-0 animate-spin text-[#E8563A]"
+                                    />
+                                    <div
+                                        v-else
+                                        :class="[
+                                            'flex size-5 shrink-0 items-center justify-center rounded-full border-2',
+                                            isProductSelected(product.id) ? 'border-[#E8563A] bg-[#E8563A] text-white' : 'border-muted-foreground/30',
+                                        ]"
+                                    >
                                         <svg v-if="isProductSelected(product.id)" class="size-3" viewBox="0 0 12 12" fill="none">
                                             <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                         </svg>
                                     </div>
                                     <ChevronDown
+                                        v-if="!isDailyCast"
                                         :class="[
                                             'size-4 shrink-0 text-muted-foreground transition-transform',
                                             isProductSelected(product.id) ? 'rotate-180 text-[#E8563A]' : '',
@@ -2781,7 +2921,7 @@ onBeforeUnmount(() => {
                                 </button>
 
                                 <div
-                                    v-if="isProductSelected(product.id) && offerForProduct(product.id)"
+                                    v-if="!isDailyCast && isProductSelected(product.id) && offerForProduct(product.id)"
                                     class="space-y-3 border-t border-[#E8563A]/15 bg-muted/20 px-3 py-3"
                                 >
                                     <div class="grid gap-3 sm:grid-cols-2">

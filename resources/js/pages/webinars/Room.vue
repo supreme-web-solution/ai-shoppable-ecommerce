@@ -100,6 +100,11 @@ const embedSessionKey = ref(0);
 const embedPlayStartedAt = ref<number | null>(null);
 let embedTimelineRef: number | null = null;
 let offerMessageId = 1_000_000;
+const LIVE_OFFER_EPOCH_MS = 1_000_000_000_000;
+
+const liveClockMs = ref(Date.now());
+let liveClockRef: number | null = null;
+const selectedShelfOfferId = ref<number | null>(null);
 
 const videoPlayback = computed(() => {
     const fromApi = webinar.value?.video_playback;
@@ -213,16 +218,57 @@ function restoreRegistrationSession(): void {
     }
 }
 
+function isLiveEpochOffer(offer: WebinarOffer): boolean {
+    return (offer.starts_at_ms ?? 0) > LIVE_OFFER_EPOCH_MS;
+}
+
 const activeOffers = computed(() => {
     const offers = webinar.value?.featured_products ?? [];
-    const t = videoCurrentMs.value;
 
     return offers.filter((offer) => {
         const start = offer.starts_at_ms ?? 0;
         const end = offer.ends_at_ms;
 
+        if (isLiveStream.value && isLiveEpochOffer(offer)) {
+            const now = liveClockMs.value;
+
+            return now >= start && (end == null || now <= end);
+        }
+
+        if (isLiveStream.value) {
+            return false;
+        }
+
+        const t = videoCurrentMs.value;
+
         return t >= start && (end == null || t <= end);
     });
+});
+
+const liveShelfOffers = computed(() =>
+    activeOffers.value
+        .filter((offer) => isLiveEpochOffer(offer))
+        .sort((a, b) => (b.starts_at_ms ?? 0) - (a.starts_at_ms ?? 0)),
+);
+
+const spotlightShelfOffer = computed(() => {
+    const offers = liveShelfOffers.value;
+
+    if (offers.length === 0) {
+        return null;
+    }
+
+    const selectedId = selectedShelfOfferId.value;
+
+    if (selectedId != null) {
+        const match = offers.find((offer) => offer.id === selectedId);
+
+        if (match) {
+            return match;
+        }
+    }
+
+    return offers[0];
 });
 
 const pinnedOffers = computed(() =>
@@ -237,8 +283,27 @@ const popupOffers = computed(() =>
     ),
 );
 
+function enrichMessageWithOffer(message: RoomMessage): RoomMessage {
+    if (message.offer) {
+        return message;
+    }
+
+    if (message.sender_type !== 'host' || !message.message.startsWith('Featured: ')) {
+        return message;
+    }
+
+    const title = message.message.slice('Featured: '.length).trim();
+    const offer = (webinar.value?.featured_products ?? []).find(
+        (item) => item.title === title,
+    );
+
+    return offer ? { ...message, offer } : message;
+}
+
 const displayMessages = computed(() => {
-    const base = messages.value.filter((m) => m.sender_type !== 'offer');
+    const base = messages.value
+        .filter((m) => m.sender_type !== 'offer')
+        .map(enrichMessageWithOffer);
     const welcome = hostWelcomeMessage.value;
     const hasWelcomeInThread =
         welcome !== null
@@ -261,6 +326,10 @@ watch(activeOffers, (offers) => {
             continue;
         }
 
+        if (isLiveStream.value && isLiveEpochOffer(offer)) {
+            continue;
+        }
+
         const key = `offer-${offer.id}`;
 
         if (injectedOfferChatKeys.value.includes(key)) {
@@ -279,6 +348,52 @@ watch(activeOffers, (offers) => {
         });
     }
 });
+
+watch(liveShelfOffers, (offers, previousOffers) => {
+    if (offers.length === 0) {
+        selectedShelfOfferId.value = null;
+
+        return;
+    }
+
+    const newestId = offers[0].id;
+    const previousNewestId = previousOffers?.[0]?.id;
+    const selectedId = selectedShelfOfferId.value;
+
+    if (
+        selectedId == null
+        || !offers.some((offer) => offer.id === selectedId)
+        || (previousNewestId != null && newestId !== previousNewestId)
+    ) {
+        selectedShelfOfferId.value = newestId;
+    }
+});
+
+function selectShelfOffer(offerId: number): void {
+    selectedShelfOfferId.value = offerId;
+}
+
+function isShelfOfferSelected(offerId: number): boolean {
+    return spotlightShelfOffer.value?.id === offerId;
+}
+
+function startLiveClock(): void {
+    if (liveClockRef !== null) {
+        return;
+    }
+
+    liveClockMs.value = Date.now();
+    liveClockRef = window.setInterval(() => {
+        liveClockMs.value = Date.now();
+    }, 500);
+}
+
+function stopLiveClock(): void {
+    if (liveClockRef !== null) {
+        window.clearInterval(liveClockRef);
+        liveClockRef = null;
+    }
+}
 
 async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
     const headers = new Headers(options.headers ?? {});
@@ -324,7 +439,7 @@ function isOwnMessage(message: RoomMessage): boolean {
 }
 
 function messageRowClass(message: RoomMessage): string {
-    if (message.sender_type === 'offer') {
+    if (message.offer) {
         return 'justify-start';
     }
 
@@ -332,7 +447,7 @@ function messageRowClass(message: RoomMessage): string {
 }
 
 function messageBubbleClass(message: RoomMessage): string {
-    if (message.sender_type === 'offer') {
+    if (message.offer) {
         return 'message-bubble message-bubble--offer';
     }
 
@@ -621,6 +736,27 @@ function messagesPollUrl(lastId: number): string {
     return lastId > 0 ? `${base}?after_id=${lastId}` : base;
 }
 
+async function pollWebinarOffers(): Promise<void> {
+    if (!isLiveStream.value || !webinar.value) {
+        return;
+    }
+
+    try {
+        const payload = await apiFetch<{ data: WebinarData }>(
+            `/api/v1/player/webinars/${webinarId}`,
+        );
+
+        if (payload.data?.featured_products) {
+            webinar.value = {
+                ...webinar.value,
+                featured_products: payload.data.featured_products,
+            };
+        }
+    } catch {
+        /* keep room stable */
+    }
+}
+
 async function pollMessages() {
     const lastId =
         messages.value.length > 0 ? messages.value[messages.value.length - 1].id : 0;
@@ -633,6 +769,10 @@ async function pollMessages() {
         }
     } catch {
         /* keep room stable */
+    }
+
+    if (isLiveStream.value) {
+        await pollWebinarOffers();
     }
 }
 
@@ -745,11 +885,19 @@ function dismissPopup(offerId: number) {
 }
 
 watch(isLiveStream, async (live) => {
-    if (live && !videoStarted.value) {
-        await nextTick();
-        videoStarted.value = true;
-        videoEnded.value = false;
+    if (live) {
+        startLiveClock();
+
+        if (!videoStarted.value) {
+            await nextTick();
+            videoStarted.value = true;
+            videoEnded.value = false;
+        }
+
+        return;
     }
+
+    stopLiveClock();
 }, { immediate: true });
 
 onMounted(async () => {
@@ -764,6 +912,7 @@ onBeforeUnmount(() => {
     }
 
     stopEmbedTimeline();
+    stopLiveClock();
 });
 </script>
 
@@ -1004,8 +1153,77 @@ onBeforeUnmount(() => {
                         </div>
                     </div>
 
-                    <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
-                        <div class="flex items-center gap-2 overflow-x-auto">
+                    <div
+                        v-if="spotlightShelfOffer"
+                        class="live-offers-strip mt-2 rounded-xl border border-[#E8563A]/20 bg-white p-2 shadow-sm"
+                    >
+                        <article class="product-spotlight flex items-center gap-2">
+                            <div
+                                class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-gray-100"
+                            >
+                                <img
+                                    v-if="spotlightShelfOffer.image_url"
+                                    :src="spotlightShelfOffer.image_url"
+                                    :alt="spotlightShelfOffer.title"
+                                    class="h-full w-full object-cover"
+                                >
+                                <ShoppingBag v-else class="size-4 text-gray-400" />
+                            </div>
+                            <div class="min-w-0 flex-1">
+                                <p class="text-[9px] font-bold uppercase tracking-wide text-[#E8563A]">
+                                    Featured now
+                                </p>
+                                <p class="truncate text-xs font-bold text-gray-900">
+                                    {{ spotlightShelfOffer.title }}
+                                </p>
+                                <p class="text-xs font-black text-[#E8563A]">
+                                    {{ formatMoney(spotlightShelfOffer) }}
+                                </p>
+                            </div>
+                            <Button
+                                size="sm"
+                                class="h-8 shrink-0 bg-[#E8563A] px-3 text-xs hover:bg-[#D44A2F]"
+                                :disabled="checkoutLoadingId === spotlightShelfOffer.id"
+                                @click="checkoutOffer(spotlightShelfOffer)"
+                            >
+                                <Loader2
+                                    v-if="checkoutLoadingId === spotlightShelfOffer.id"
+                                    class="mr-1 size-3 animate-spin"
+                                />
+                                Shop
+                            </Button>
+                        </article>
+
+                        <div
+                            v-if="liveShelfOffers.length > 1"
+                            class="mt-1.5 grid grid-cols-6 gap-1"
+                        >
+                            <button
+                                v-for="offer in liveShelfOffers"
+                                :key="`shelf-${offer.id}`"
+                                type="button"
+                                :title="offer.title"
+                                :class="[
+                                    'flex aspect-square items-center justify-center overflow-hidden rounded-md border bg-gray-50 transition-all',
+                                    isShelfOfferSelected(offer.id)
+                                        ? 'border-[#E8563A] ring-1 ring-[#E8563A]/40'
+                                        : 'border-gray-200 hover:border-[#E8563A]/35',
+                                ]"
+                                @click="selectShelfOffer(offer.id)"
+                            >
+                                <img
+                                    v-if="offer.image_url"
+                                    :src="offer.image_url"
+                                    :alt="offer.title"
+                                    class="h-full w-full object-cover"
+                                >
+                                <ShoppingBag v-else class="size-3 text-gray-400" />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mt-2 flex flex-wrap items-center justify-between gap-3">
+                        <div class="flex items-center gap-2">
                             <button
                                 v-for="emoji in ['👍', '❤️', '🔥', '👏']"
                                 :key="emoji"
@@ -1015,7 +1233,6 @@ onBeforeUnmount(() => {
                                 {{ emoji }}
                             </button>
                         </div>
-                        
                     </div>
                 </section>
 
@@ -1112,21 +1329,31 @@ onBeforeUnmount(() => {
                                 :class="messageBubbleClass(message)"
                             >
                             <div
-                                v-if="message.sender_type === 'offer' && message.offer"
-                                class="space-y-2"
+                                v-if="message.offer"
+                                class="offer-chat-card space-y-2"
                             >
-                                <div class="flex items-center gap-2 text-xs font-bold text-[#E8563A]">
-                                    <ShoppingBag class="size-3.5" />
-                                    Featured offer
-                                </div>
-                                <div class="flex gap-2">
-                                    <img
-                                        v-if="message.offer.image_url"
-                                        :src="message.offer.image_url"
-                                        :alt="message.offer.title"
-                                        class="h-14 w-14 rounded-lg object-cover"
+                                <p class="text-xs text-gray-500">
+                                    <span class="font-bold text-gray-700">
+                                        {{
+                                            message.sender_name ||
+                                            (message.sender_type === 'offer' ? 'Featured offer' : 'Host')
+                                        }}
+                                    </span>
+                                    featured a product
+                                </p>
+                                <div class="flex gap-2.5">
+                                    <div
+                                        class="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-gray-100"
                                     >
-                                    <div>
+                                        <img
+                                            v-if="message.offer.image_url"
+                                            :src="message.offer.image_url"
+                                            :alt="message.offer.title"
+                                            class="h-full w-full object-cover"
+                                        >
+                                        <ShoppingBag v-else class="size-5 text-gray-400" />
+                                    </div>
+                                    <div class="min-w-0 flex-1">
                                         <p class="font-bold text-gray-900">{{ message.offer.title }}</p>
                                         <p class="text-sm font-black text-[#E8563A]">
                                             {{ formatMoney(message.offer) }}
@@ -1135,13 +1362,16 @@ onBeforeUnmount(() => {
                                 </div>
                                 <Button
                                     size="sm"
-                                    variant="outline"
-                                    class="w-full border-[#E8563A]/40 text-[#E8563A]"
+                                    class="w-full bg-[#E8563A] hover:bg-[#D44A2F]"
                                     :disabled="checkoutLoadingId === message.offer.id"
                                     @click="checkoutOffer(message.offer)"
                                 >
-                                    <ExternalLink class="mr-1.5 size-3.5" />
-                                    {{ checkoutLoadingId === message.offer.id ? 'Opening…' : 'Shop now' }}
+                                    <Loader2
+                                        v-if="checkoutLoadingId === message.offer.id"
+                                        class="mr-1.5 size-3.5 animate-spin"
+                                    />
+                                    <ExternalLink v-else class="mr-1.5 size-3.5" />
+                                    {{ checkoutLoadingId === message.offer.id ? 'Opening…' : 'Checkout' }}
                                 </Button>
                             </div>
                             <template v-else>
@@ -1434,8 +1664,23 @@ onBeforeUnmount(() => {
     cursor: not-allowed;
 }
 
+.live-offers-strip {
+    animation: spotlight-in 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .offer-popup-card {
     animation: popup-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes spotlight-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 @keyframes popup-in {

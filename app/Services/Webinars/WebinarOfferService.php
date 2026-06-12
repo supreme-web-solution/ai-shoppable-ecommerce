@@ -3,6 +3,7 @@
 namespace App\Services\Webinars;
 
 use App\Models\LiveShow;
+use App\Models\LiveShowMessage;
 use App\Models\Product;
 use App\Models\Team;
 use App\Services\Checkout\TeamCheckoutResolver;
@@ -93,6 +94,38 @@ class WebinarOfferService
         ];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    public function formatPlayerMessage(LiveShow $liveShow, LiveShowMessage $message): array
+    {
+        $payload = [
+            'id' => $message->id,
+            'sender_type' => $message->sender_type,
+            'sender_name' => $message->sender_name,
+            'live_show_registration_id' => $message->live_show_registration_id,
+            'message' => $message->message,
+            'is_pinned' => (bool) $message->is_pinned,
+            'created_at' => $message->created_at,
+        ];
+
+        $meta = is_array($message->meta) ? $message->meta : [];
+        $productId = (int) data_get($meta, 'offer_product_id', 0);
+
+        if ($productId < 1) {
+            return $payload;
+        }
+
+        $liveShow->loadMissing(['featuredProducts', 'team']);
+        $product = $liveShow->featuredProducts->firstWhere('id', $productId);
+
+        if ($product !== null) {
+            $payload['offer'] = $this->formatOffer($liveShow, $product);
+        }
+
+        return $payload;
+    }
+
     public function defaultCheckoutUrl(?Team $team, Product $product): string
     {
         if ($team === null) {
@@ -141,5 +174,80 @@ class WebinarOfferService
         $appearance = strtolower(trim($appearance));
 
         return in_array($appearance, self::APPEARANCES, true) ? $appearance : 'popup';
+    }
+
+    public function isLiveEpochTimestamp(int $milliseconds): bool
+    {
+        return $milliseconds > 1_000_000_000_000;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function pushLiveOffer(LiveShow $liveShow, Product $product, ?string $hostName = null): array
+    {
+        abort_unless(
+            data_get($liveShow->settings, 'source_type') === 'daily',
+            422,
+            'Live offer push is only available for browser go-live casts.',
+        );
+
+        $nowMs = (int) round(microtime(true) * 1000);
+        $existing = $liveShow->featuredProducts()->whereKey($product->id)->first();
+        $maxOrder = (int) $liveShow->featuredProducts()->max('live_show_products.pin_order');
+
+        $liveShow->featuredProducts()->syncWithoutDetaching([
+            $product->id => [
+                'starts_at_ms' => $nowMs,
+                'ends_at_ms' => null,
+                'appearance' => 'in_chat',
+                'pin_order' => $existing?->pivot?->pin_order ?? ($maxOrder + 1),
+                'cta_url' => $existing?->pivot?->cta_url,
+            ],
+        ]);
+
+        $liveShow->loadMissing(['featuredProducts', 'team']);
+        $freshProduct = $liveShow->featuredProducts->firstWhere('id', $product->id);
+        abort_if($freshProduct === null, 422, 'Could not attach this product to the live cast.');
+
+        $hostLabel = trim((string) ($hostName ?? data_get($liveShow->settings, 'host_name', 'Host')));
+        $hostLabel = $hostLabel !== '' ? $hostLabel : 'Host';
+
+        \App\Models\LiveShowMessage::query()->create([
+            'live_show_id' => $liveShow->id,
+            'sender_type' => 'host',
+            'sender_name' => $hostLabel,
+            'message' => 'Featured: '.$product->title,
+            'meta' => [
+                'offer_product_id' => $product->id,
+            ],
+        ]);
+
+        return $this->formatOffer($liveShow, $freshProduct);
+    }
+
+    public function unpublishLiveOffer(LiveShow $liveShow, Product $product): void
+    {
+        abort_unless(
+            data_get($liveShow->settings, 'source_type') === 'daily',
+            422,
+            'Live offer unpublish is only available for browser go-live casts.',
+        );
+
+        $pivot = $liveShow->featuredProducts()->whereKey($product->id)->first()?->pivot;
+        abort_if($pivot === null, 404, 'This product is not assigned to the live cast.');
+
+        $nowMs = (int) round(microtime(true) * 1000);
+        $startsAtMs = (int) ($pivot->starts_at_ms ?? 0);
+
+        if (! $this->isLiveEpochTimestamp($startsAtMs)) {
+            $liveShow->featuredProducts()->detach($product->id);
+
+            return;
+        }
+
+        $liveShow->featuredProducts()->updateExistingPivot($product->id, [
+            'ends_at_ms' => $nowMs,
+        ]);
     }
 }
