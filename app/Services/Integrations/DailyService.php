@@ -62,6 +62,7 @@ class DailyService
 
         $properties = array_filter([
             'owner_only_broadcast' => true,
+            'enable_livestreaming' => true,
             // Viewers land straight in the room — no Daily welcome / prejoin screens.
             'enable_prejoin_ui' => false,
             'enable_people_ui' => false,
@@ -184,6 +185,7 @@ class DailyService
     {
         $response = $this->client()->post("/rooms/{$roomName}", [
             'properties' => [
+                'enable_livestreaming' => true,
                 'enable_prejoin_ui' => false,
                 'enable_people_ui' => false,
                 'enable_hidden_participants' => true,

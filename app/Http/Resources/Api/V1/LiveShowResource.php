@@ -105,9 +105,29 @@ class LiveShowResource extends JsonResource
             return null;
         }
 
+        $streamingEndpoints = collect($daily['streaming_endpoints'] ?? [])
+            ->filter(fn (mixed $endpoint): bool => is_array($endpoint))
+            ->map(function (array $endpoint): ?array {
+                $name = trim((string) ($endpoint['name'] ?? ''));
+                $rtmpUrl = trim((string) ($endpoint['endpoint'] ?? ''));
+
+                if ($name === '' || $rtmpUrl === '') {
+                    return null;
+                }
+
+                return [
+                    'name' => $name,
+                    'endpoint' => $rtmpUrl,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+
         return array_filter([
             'room_name' => isset($daily['room_name']) ? trim((string) $daily['room_name']) : null,
             'room_url' => isset($daily['room_url']) ? trim((string) $daily['room_url']) : null,
+            'streaming_endpoints' => ! empty($streamingEndpoints) ? $streamingEndpoints : null,
         ], fn (mixed $value): bool => $value !== null && $value !== '');
     }
 }

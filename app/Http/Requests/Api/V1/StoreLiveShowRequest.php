@@ -63,6 +63,15 @@ class StoreLiveShowRequest extends FormRequest
             'featured_products.*.cta_url' => ['nullable', 'string', 'max:2048'],
             'featured_products.*.pin_order' => ['nullable', 'integer', 'min:0'],
             'settings.video_duration_seconds' => ['nullable', 'integer', 'min:1', 'max:86400'],
+            'settings.daily' => ['nullable', 'array'],
+            'settings.daily.streaming_endpoints' => ['nullable', 'array', 'max:10'],
+            'settings.daily.streaming_endpoints.*.name' => ['required_with:settings.daily.streaming_endpoints', 'string', 'max:80'],
+            'settings.daily.streaming_endpoints.*.endpoint' => [
+                'required_with:settings.daily.streaming_endpoints',
+                'string',
+                'max:2048',
+                'regex:/^rtmps?:\\/\\//i',
+            ],
         ];
     }
 }

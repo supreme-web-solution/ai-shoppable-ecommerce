@@ -263,7 +263,7 @@ async function loadViewerRoom(): Promise<void> {
         errorText.value = error instanceof Error ? error.message : 'Could not join the live room.';
     } finally {
         if (generation === loadGeneration) {
-            loading.value = false;
+        loading.value = false;
         }
     }
 }

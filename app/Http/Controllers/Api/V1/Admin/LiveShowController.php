@@ -15,6 +15,7 @@ use App\Services\Webinars\WebinarAttendeeService;
 use App\Services\Webinars\WebinarOfferService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class LiveShowController extends Controller
@@ -120,6 +121,15 @@ class LiveShowController extends Controller
             'featured_products.*.cta_url' => ['nullable', 'string', 'max:2048'],
             'featured_products.*.pin_order' => ['nullable', 'integer', 'min:0'],
             'settings.video_duration_seconds' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:86400'],
+            'settings.daily' => ['sometimes', 'nullable', 'array'],
+            'settings.daily.streaming_endpoints' => ['sometimes', 'nullable', 'array', 'max:10'],
+            'settings.daily.streaming_endpoints.*.name' => ['required_with:settings.daily.streaming_endpoints', 'string', 'max:80'],
+            'settings.daily.streaming_endpoints.*.endpoint' => [
+                'required_with:settings.daily.streaming_endpoints',
+                'string',
+                'max:2048',
+                'regex:/^rtmps?:\\/\\//i',
+            ],
         ]);
 
         $payload = collect($validated)->except(['featured_product_ids', 'featured_products'])->all();
@@ -373,10 +383,12 @@ class LiveShowController extends Controller
         }
 
         $settings = is_array($liveShow->settings) ? $liveShow->settings : [];
+        $existingEndpoints = data_get($settings, 'daily.streaming_endpoints');
         $settings['source_type'] = 'daily';
         $settings['daily'] = array_filter([
             'room_name' => $roomName,
             'room_url' => $roomUrl,
+            'streaming_endpoints' => is_array($existingEndpoints) ? $existingEndpoints : null,
         ], fn (mixed $value): bool => $value !== null && $value !== '');
 
         $liveShow->update(['settings' => $this->normalizeSettings($settings)]);
@@ -398,10 +410,21 @@ class LiveShowController extends Controller
 
         $userName = trim((string) $request->input('user_name', $request->user()?->name ?? 'Host'));
 
+        $streamingEndpoints = collect(data_get($liveShow->settings, 'daily.streaming_endpoints', []))
+            ->filter(fn (mixed $endpoint): bool => is_array($endpoint))
+            ->map(fn (array $endpoint): ?array => [
+                'name' => trim((string) ($endpoint['name'] ?? '')),
+                'endpoint' => trim((string) ($endpoint['endpoint'] ?? '')),
+            ])
+            ->filter(fn (array $endpoint): bool => $endpoint['name'] !== '' && $endpoint['endpoint'] !== '')
+            ->values()
+            ->all();
+
         return response()->json([
             'token' => $daily->createHostToken($liveShow, $userName),
             'room_url' => data_get($liveShow->settings, 'daily.room_url'),
             'room_name' => data_get($liveShow->settings, 'daily.room_name'),
+            'streaming_endpoints' => $streamingEndpoints,
         ]);
     }
 
@@ -435,9 +458,30 @@ class LiveShowController extends Controller
         $daily = null;
         $rawDaily = $settings['daily'] ?? null;
         if (is_array($rawDaily)) {
+            $streamingEndpoints = collect($rawDaily['streaming_endpoints'] ?? [])
+                ->filter(fn (mixed $endpoint): bool => is_array($endpoint))
+                ->take(10)
+                ->map(function (array $endpoint): ?array {
+                    $name = trim((string) ($endpoint['name'] ?? ''));
+                    $rtmpUrl = trim((string) ($endpoint['endpoint'] ?? ''));
+
+                    if ($name === '' || $rtmpUrl === '' || ! preg_match('/^rtmps?:\/\//i', $rtmpUrl)) {
+                        return null;
+                    }
+
+                    return [
+                        'name' => Str::limit($name, 80, ''),
+                        'endpoint' => Str::limit($rtmpUrl, 2048, ''),
+                    ];
+                })
+                ->filter()
+                ->values()
+                ->all();
+
             $daily = array_filter([
                 'room_name' => isset($rawDaily['room_name']) ? trim((string) $rawDaily['room_name']) : null,
                 'room_url' => isset($rawDaily['room_url']) ? trim((string) $rawDaily['room_url']) : null,
+                'streaming_endpoints' => ! empty($streamingEndpoints) ? $streamingEndpoints : null,
             ], fn (mixed $value): bool => $value !== null && $value !== '');
         }
 

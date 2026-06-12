@@ -69,10 +69,44 @@ type VideoOption = {
 
 type OfferAppearance = 'pin' | 'in_chat' | 'popup';
 
+type SimulcastDestination = {
+    name: string;
+    endpoint: string;
+};
+
 type DailyConfig = {
     room_name?: string | null;
     room_url?: string | null;
+    streaming_endpoints?: SimulcastDestination[];
 };
+
+const SIMULCAST_PRESETS = [
+    {
+        id: 'youtube',
+        label: 'YouTube Live',
+        placeholder: 'rtmps://a.rtmp.youtube.com/live2/YOUR_STREAM_KEY',
+    },
+    {
+        id: 'facebook',
+        label: 'Facebook Live',
+        placeholder: 'rtmps://live-api-s.facebook.com:443/rtmp/YOUR_STREAM_KEY',
+    },
+    {
+        id: 'twitch',
+        label: 'Twitch',
+        placeholder: 'rtmps://live.twitch.tv/app/YOUR_STREAM_KEY',
+    },
+    {
+        id: 'linkedin',
+        label: 'LinkedIn Live',
+        placeholder: 'rtmps://YOUR_LINKEDIN_RTMP_URL',
+    },
+    {
+        id: 'custom',
+        label: 'Custom RTMP',
+        placeholder: 'rtmps://your-ingest-server/live/YOUR_STREAM_KEY',
+    },
+] as const;
 
 type LiveSourceType = 'ai' | 'upload' | 'url' | 'daily';
 
@@ -316,6 +350,12 @@ const previewVideoUrl = ref<string | null>(null);
 const uploadingVideo = ref(false);
 const videoUploadError = ref('');
 const dailyHostJoined = ref(false);
+const dailySimulcastActive = ref(false);
+const simulcastDraft = ref({
+    preset: 'youtube' as (typeof SIMULCAST_PRESETS)[number]['id'],
+    name: 'YouTube Live',
+    endpoint: '',
+});
 
 // Knowledge source state
 const addingSource = ref(false);
@@ -350,6 +390,7 @@ function newForm(): WebinarForm {
             daily: {
                 room_name: null,
                 room_url: null,
+                streaming_endpoints: [],
             },
         },
     };
@@ -512,6 +553,73 @@ const selectedPlayback = computed(() => parseExternalVideoUrl(selectedVideoUrl()
 const isDailyCast = computed(() => form.value.settings.source_type === 'daily');
 const dailySettings = computed<DailyConfig>(() => form.value.settings.daily ?? {});
 const hasDailyRoom = computed(() => Boolean((dailySettings.value.room_url ?? '').trim()));
+const simulcastDestinations = computed(
+    () => form.value.settings.daily?.streaming_endpoints ?? [],
+);
+const simulcastPreset = computed(
+    () => SIMULCAST_PRESETS.find((preset) => preset.id === simulcastDraft.value.preset) ?? SIMULCAST_PRESETS[0],
+);
+
+function ensureDailySettings(): void {
+    if (!form.value.settings.daily) {
+        form.value.settings.daily = {
+            room_name: null,
+            room_url: null,
+            streaming_endpoints: [],
+        };
+    }
+
+    if (!Array.isArray(form.value.settings.daily.streaming_endpoints)) {
+        form.value.settings.daily.streaming_endpoints = [];
+    }
+}
+
+function onSimulcastPresetChange(presetId: string): void {
+    const preset = SIMULCAST_PRESETS.find((item) => item.id === presetId) ?? SIMULCAST_PRESETS[0];
+    simulcastDraft.value.preset = preset.id;
+    simulcastDraft.value.name = preset.label;
+}
+
+function addSimulcastDestination(): void {
+    const name = simulcastDraft.value.name.trim();
+    const endpoint = simulcastDraft.value.endpoint.trim();
+
+    if (!name || !endpoint) {
+        toast.error('Enter a destination name and RTMP URL.');
+
+        return;
+    }
+
+    if (!/^rtmps?:\/\//i.test(endpoint)) {
+        toast.error('RTMP URL must start with rtmp:// or rtmps://');
+
+        return;
+    }
+
+    ensureDailySettings();
+
+    const destinations = form.value.settings.daily?.streaming_endpoints ?? [];
+
+    if (destinations.length >= 10) {
+        toast.error('You can add up to 10 simulcast destinations.');
+
+        return;
+    }
+
+    form.value.settings.daily!.streaming_endpoints = [
+        ...destinations,
+        { name, endpoint },
+    ];
+    simulcastDraft.value.endpoint = '';
+    toast.success(`Added ${name}. Save changes before going live.`);
+}
+
+function removeSimulcastDestination(index: number): void {
+    ensureDailySettings();
+    form.value.settings.daily!.streaming_endpoints = (
+        form.value.settings.daily?.streaming_endpoints ?? []
+    ).filter((_, itemIndex) => itemIndex !== index);
+}
 
 function mergeDailyConfig(
     ...sources: Array<DailyConfig | null | undefined>
@@ -1141,6 +1249,12 @@ async function openEditModal(item: WebinarItem) {
             daily: {
                 room_name: dailyConfig.room_name ?? null,
                 room_url: dailyConfig.room_url ?? null,
+                streaming_endpoints: Array.isArray(dailyConfig.streaming_endpoints)
+                    ? dailyConfig.streaming_endpoints.map((destination) => ({
+                        name: destination.name ?? '',
+                        endpoint: destination.endpoint ?? '',
+                    }))
+                    : [],
             },
         },
     };
@@ -1150,6 +1264,12 @@ async function openEditModal(item: WebinarItem) {
     sourceForm.value = { title: '', content: '' };
     expandedSourceIndex.value = null;
     dailyHostJoined.value = false;
+    dailySimulcastActive.value = false;
+    simulcastDraft.value = {
+        preset: 'youtube',
+        name: 'YouTube Live',
+        endpoint: '',
+    };
     clearSelectedVideoFile();
     // Default go-live casts to the streaming tab so keys are immediately visible.
     activeTab.value = isGoLiveSourceType(item.source_type ?? item.settings?.source_type)
@@ -2141,16 +2261,22 @@ onBeforeUnmount(() => {
                         <div class="flex items-start gap-3">
                             <Radio class="mt-0.5 size-4 shrink-0 text-[#E8563A]" />
                             <div class="text-sm">
-                                <p class="font-semibold text-gray-900">How to go live with Daily</p>
+                                <p class="font-semibold text-gray-900">How to go live</p>
                                 <p class="mt-1 text-xs text-gray-600">
-                                    Click <strong>Join as host</strong>, allow camera and microphone, then present.
-                                    When the badge shows <strong>On air</strong>, share the viewer room link below.
+                                    Add social RTMP destinations below, click <strong>Save Changes</strong>, then
+                                    <strong>Join as host</strong>. Viewers watch in your webinar room; social platforms
+                                    receive the same stream (about 8–20 seconds behind).
                                 </p>
                             </div>
                         </div>
-                        <Badge :variant="dailyHostJoined ? 'default' : 'secondary'" class="shrink-0">
-                            {{ dailyHostJoined ? 'On air' : 'Not joined' }}
-                        </Badge>
+                        <div class="flex shrink-0 flex-wrap gap-2">
+                            <Badge :variant="dailyHostJoined ? 'default' : 'secondary'">
+                                {{ dailyHostJoined ? 'On air' : 'Not joined' }}
+                            </Badge>
+                            <Badge v-if="dailySimulcastActive" variant="outline">
+                                Simulcasting
+                            </Badge>
+                        </div>
                     </div>
 
                     <div
@@ -2167,13 +2293,100 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div v-if="isDailyCast" class="space-y-4">
+                        <div class="rounded-xl border p-4">
+                            <div class="mb-3 flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                    <p class="text-sm font-semibold text-gray-900">Simulcast destinations</p>
+                                    <p class="mt-1 text-xs text-muted-foreground">
+                                        Paste each platform&apos;s full RTMP URL (including stream key) from YouTube Studio,
+                                        Meta Live Producer, Twitch, or LinkedIn. Requires Daily live streaming on your plan.
+                                    </p>
+                                </div>
+                                <Badge v-if="simulcastDestinations.length > 0" variant="secondary">
+                                    {{ simulcastDestinations.length }} destination{{ simulcastDestinations.length === 1 ? '' : 's' }}
+                                </Badge>
+                            </div>
+
+                            <div class="grid gap-3 md:grid-cols-2">
+                                <div class="space-y-1.5">
+                                    <Label>Platform</Label>
+                                    <select
+                                        :value="simulcastDraft.preset"
+                                        class="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                                        @change="onSimulcastPresetChange(($event.target as HTMLSelectElement).value)"
+                                    >
+                                        <option
+                                            v-for="preset in SIMULCAST_PRESETS"
+                                            :key="preset.id"
+                                            :value="preset.id"
+                                        >
+                                            {{ preset.label }}
+                                        </option>
+                                    </select>
+                                </div>
+                                <div class="space-y-1.5">
+                                    <Label>Display name</Label>
+                                    <Input v-model="simulcastDraft.name" placeholder="YouTube Live" />
+                                </div>
+                            </div>
+
+                            <div class="mt-3 space-y-1.5">
+                                <Label>RTMP URL (with stream key)</Label>
+                                <Input
+                                    v-model="simulcastDraft.endpoint"
+                                    :placeholder="simulcastPreset.placeholder"
+                                    class="font-mono text-xs"
+                                />
+                            </div>
+
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <Button type="button" size="sm" variant="outline" @click="addSimulcastDestination">
+                                    <Plus class="mr-1.5 size-4" />
+                                    Add destination
+                                </Button>
+                            </div>
+
+                            <div v-if="simulcastDestinations.length > 0" class="mt-4 space-y-2">
+                                <div
+                                    v-for="(destination, index) in simulcastDestinations"
+                                    :key="`${destination.name}-${index}`"
+                                    class="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2"
+                                >
+                                    <div class="min-w-0">
+                                        <p class="text-sm font-semibold text-gray-900">{{ destination.name }}</p>
+                                        <p class="truncate font-mono text-xs text-muted-foreground">
+                                            {{ destination.endpoint }}
+                                        </p>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="ghost"
+                                        class="shrink-0 text-destructive hover:text-destructive"
+                                        @click="removeSimulcastDestination(index)"
+                                    >
+                                        <Trash2 class="size-4" />
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <p
+                                v-if="simulcastDestinations.length > 0"
+                                class="mt-3 text-xs text-amber-800"
+                            >
+                                Save this cast before joining as host so simulcast destinations are sent to Daily.
+                            </p>
+                        </div>
+
                         <DailyBroadcastPanel
                             v-if="editingWebinar?.id && dailyLiveEnabled"
                             :live-show-id="editingWebinar.id"
                             :room-url="dailySettings.room_url"
                             :host-name="form.settings.host_name"
+                            :streaming-endpoints="simulcastDestinations"
                             :active="editModalOpen && activeTab === 'streaming'"
                             @joined-change="dailyHostJoined = $event"
+                            @simulcast-change="dailySimulcastActive = $event"
                         />
 
                         <div v-if="editingWebinar?.room_url" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3">
