@@ -1,1 +1,0 @@
-import{F as e}from"./app-u2vqqf7Z.js";var t=e(`CheckIcon`,[[`path`,{d:`M20 6 9 17l-5-5`,key:`1gmf2c`}]]);export{t};
