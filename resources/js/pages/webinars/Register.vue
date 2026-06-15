@@ -62,7 +62,9 @@ async function loadWebinar() {
     errorText.value = '';
 
     try {
-        const payload = await apiFetch<{ data: WebinarData }>(`/api/v1/player/webinars/${webinarId}`);
+        const payload = await apiFetch<{ data: WebinarData }>(
+            `/api/v1/player/webinars/${webinarId}?track_view=0`,
+        );
         webinar.value = payload.data;
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not load webinar.';

@@ -56,5 +56,6 @@ Route::get('checkout/{order}/{token}', [CheckoutPageController::class, 'show'])-
 Route::get('checkout/{order}/{token}/receipt', [CheckoutPageController::class, 'receipt'])->name('checkout.receipt');
 Route::get('webinars/{liveShow}/register', [WebinarPageController::class, 'register'])->name('webinars.register');
 Route::get('webinars/{liveShow}/room', [WebinarPageController::class, 'room'])->name('webinars.room');
+Route::inertia('virofeed-bnus-page', 'virofeed/BnusPage')->name('virofeed.bnus-page');
 
 require __DIR__.'/settings.php';

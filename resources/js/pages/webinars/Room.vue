@@ -185,6 +185,39 @@ function registrationStorageKey(id: number = webinarId): string {
     return `webinar_registration_${id}`;
 }
 
+function viewerKeyStorageKey(id: number = webinarId): string {
+    return `webinar_viewer_key_${id}`;
+}
+
+function getOrCreateViewerKey(): string {
+    const storageKey = viewerKeyStorageKey();
+    const existing = localStorage.getItem(storageKey);
+
+    if (existing) {
+        return existing;
+    }
+
+    const created = crypto.randomUUID();
+    localStorage.setItem(storageKey, created);
+
+    return created;
+}
+
+function webinarShowUrl(trackView: boolean): string {
+    const params = new URLSearchParams();
+    params.set('track_view', trackView ? '1' : '0');
+
+    const regId = activeRegistrationId.value;
+
+    if (regId > 0) {
+        params.set('registration_id', String(regId));
+    } else {
+        params.set('viewer_key', getOrCreateViewerKey());
+    }
+
+    return `/api/v1/player/webinars/${webinarId}?${params.toString()}`;
+}
+
 function readStoredRegistrationId(): number {
     const raw = sessionStorage.getItem(registrationStorageKey());
 
@@ -717,7 +750,7 @@ async function loadRoom() {
 
     try {
         const [webinarPayload, messagesPayload] = await Promise.all([
-            apiFetch<{ data: WebinarData }>(`/api/v1/player/webinars/${webinarId}`),
+            apiFetch<{ data: WebinarData }>(webinarShowUrl(true)),
             apiFetch<{ data: RoomMessage[] }>(`/api/v1/player/webinars/${webinarId}/messages`),
         ]);
         webinar.value = webinarPayload.data;
@@ -742,9 +775,7 @@ async function pollWebinarOffers(): Promise<void> {
     }
 
     try {
-        const payload = await apiFetch<{ data: WebinarData }>(
-            `/api/v1/player/webinars/${webinarId}`,
-        );
+        const payload = await apiFetch<{ data: WebinarData }>(webinarShowUrl(false));
 
         if (payload.data?.featured_products) {
             webinar.value = {

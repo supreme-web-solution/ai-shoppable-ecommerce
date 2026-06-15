@@ -19,6 +19,7 @@ use App\Services\Checkout\NativeCheckoutService;
 use App\Services\Checkout\TeamCheckoutResolver;
 use App\Services\Leads\LeadCaptureService;
 use App\Services\Webinars\WebinarOfferService;
+use App\Services\Webinars\WebinarViewTrackerService;
 use App\Services\Webinars\WebinarWatchProgressService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -56,14 +57,22 @@ class WebinarController extends Controller
         ]);
     }
 
-    public function show(LiveShow $liveShow): JsonResponse
-    {
+    public function show(
+        Request $request,
+        LiveShow $liveShow,
+        WebinarViewTrackerService $viewTracker,
+    ): JsonResponse {
         abort_if($liveShow->status === 'cancelled', 404);
 
-        $settings = is_array($liveShow->settings) ? $liveShow->settings : [];
-        $settings['views_count'] = (int) ($settings['views_count'] ?? 0) + 1;
-        $liveShow->forceFill(['settings' => $settings])->save();
+        if ($viewTracker->shouldTrackView($request)) {
+            $viewerKey = $viewTracker->resolveViewerKey($request, $liveShow);
 
+            if ($viewerKey !== null) {
+                $viewTracker->recordRoomView($liveShow, $viewerKey);
+            }
+        }
+
+        $liveShow->refresh();
         $liveShow->load(['featuredProducts', 'video', 'team'])->loadCount(['registrations', 'messages']);
 
         return response()->json([
