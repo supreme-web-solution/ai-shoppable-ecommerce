@@ -25,6 +25,8 @@ createInertiaApp({
                 return null;
             case name.startsWith('webinars/'):
                 return null;
+            case name.startsWith('virofeed/'):
+                return null;
             case name.startsWith('checkout/'):
                 return null;
             case name.startsWith('auth/'):
