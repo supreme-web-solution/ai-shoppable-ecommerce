@@ -158,6 +158,7 @@ Route::prefix('v1')->group(function (): void {
                 Route::post('profile', [ZernioController::class, 'ensureProfile']);
                 Route::get('connect', [ZernioController::class, 'connectUrl']);
                 Route::get('accounts', [ZernioController::class, 'accounts']);
+                Route::delete('accounts/{accountId}', [ZernioController::class, 'disconnectAccount']);
                 Route::get('shop-link', [ZernioController::class, 'shopLink']);
                 Route::post('publish', [ZernioController::class, 'publish']);
                 Route::get('history', [ZernioController::class, 'history']);

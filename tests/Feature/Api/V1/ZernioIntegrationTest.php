@@ -140,6 +140,146 @@ class ZernioIntegrationTest extends TestCase
         ]);
     }
 
+    public function test_list_accounts_scopes_by_profile_id(): void
+    {
+        config([
+            'services.zernio.enabled' => true,
+            'services.zernio.api_key' => 'test-zernio-key',
+        ]);
+
+        [$team, $owner] = $this->createTeamWithOwner();
+        $team->update([
+            'settings' => [
+                'integrations' => [
+                    'zernio' => [
+                        'profile_id' => 'prof_team_a',
+                    ],
+                ],
+            ],
+        ]);
+
+        Http::fake([
+            'https://zernio.com/api/v1/accounts*' => function ($request) {
+                $this->assertSame('prof_team_a', $request->data()['profileId'] ?? null);
+
+                return Http::response([
+                    'accounts' => [
+                        [
+                            '_id' => 'acc_1',
+                            'platform' => 'instagram',
+                            'username' => 'team_a_ig',
+                            'profileId' => 'prof_team_a',
+                        ],
+                        [
+                            '_id' => 'acc_other',
+                            'platform' => 'facebook',
+                            'username' => 'other_team',
+                            'profileId' => 'prof_other',
+                        ],
+                    ],
+                ]);
+            },
+        ]);
+
+        Sanctum::actingAs($owner);
+
+        $response = $this->getJson("/api/v1/admin/zernio/status?team_id={$team->id}");
+        $response->assertOk();
+        $response->assertJsonPath('accounts.0._id', 'acc_1');
+        $response->assertJsonCount(1, 'accounts');
+    }
+
+    public function test_stale_profile_is_recreated_and_accounts_retried(): void
+    {
+        config([
+            'services.zernio.enabled' => true,
+            'services.zernio.api_key' => 'test-zernio-key',
+        ]);
+
+        [$team, $owner] = $this->createTeamWithOwner();
+        $team->update([
+            'settings' => [
+                'integrations' => [
+                    'zernio' => [
+                        'profile_id' => 'prof_stale',
+                    ],
+                ],
+            ],
+        ]);
+
+        $accountCalls = 0;
+
+        Http::fake([
+            'https://zernio.com/api/v1/accounts*' => function () use (&$accountCalls) {
+                $accountCalls++;
+
+                if ($accountCalls === 1) {
+                    return Http::response([
+                        'error' => ['message' => 'Profile not found or access denied'],
+                    ], 404);
+                }
+
+                return Http::response([
+                    'accounts' => [
+                        [
+                            '_id' => 'acc_fresh',
+                            'platform' => 'instagram',
+                            'username' => 'fresh_ig',
+                            'profileId' => 'prof_fresh',
+                        ],
+                    ],
+                ]);
+            },
+            'https://zernio.com/api/v1/profiles' => Http::response([
+                'profile' => ['_id' => 'prof_fresh'],
+            ], 201),
+        ]);
+
+        Sanctum::actingAs($owner);
+
+        $response = $this->getJson("/api/v1/admin/zernio/status?team_id={$team->id}");
+        $response->assertOk();
+        $response->assertJsonPath('profile_id', 'prof_fresh');
+        $response->assertJsonPath('accounts.0._id', 'acc_fresh');
+        $this->assertSame(2, $accountCalls);
+    }
+
+    public function test_disconnect_account_calls_zernio_delete(): void
+    {
+        config([
+            'services.zernio.enabled' => true,
+            'services.zernio.api_key' => 'test-zernio-key',
+        ]);
+
+        [$team, $owner] = $this->createTeamWithOwner();
+        $team->update([
+            'settings' => [
+                'integrations' => [
+                    'zernio' => [
+                        'profile_id' => 'prof_team_a',
+                    ],
+                ],
+            ],
+        ]);
+
+        Http::fake([
+            'https://zernio.com/api/v1/accounts/acc_123*' => Http::response([], 204),
+            'https://zernio.com/api/v1/accounts*' => Http::response(['accounts' => []]),
+        ]);
+
+        Sanctum::actingAs($owner);
+
+        $this->deleteJson("/api/v1/admin/zernio/accounts/acc_123?team_id={$team->id}")
+            ->assertOk()
+            ->assertJsonPath('disconnected', true);
+
+        Http::assertSent(function ($request) {
+            return $request->method() === 'DELETE'
+                && str_contains($request->url(), '/accounts/acc_123')
+                && ($request->data()['profileId'] ?? null) === 'prof_team_a';
+        });
+    }
+
     /**
      * @return array{0: Team, 1: User}
      */

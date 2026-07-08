@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ExternalLink, Loader2, RefreshCw } from 'lucide-vue-next';
+import { ExternalLink, Loader2, RefreshCw, Unlink } from 'lucide-vue-next';
 import { computed, onMounted, ref } from 'vue';
 import { Button } from '@/components/ui/button';
 import { useAdminApi } from '@/composables/useAdminApi';
@@ -24,16 +24,21 @@ const PLATFORM_LABELS: Record<string, string> = {
     pinterest: 'Pinterest',
 };
 
-const { apiFetch, postJson, ensureTeam } = useAdminApi();
+const { apiFetch, postJson, deleteResource, ensureTeam } = useAdminApi();
 
 const loading = ref(false);
 const connecting = ref<string | null>(null);
+const disconnectingId = ref<string | null>(null);
 const errorText = ref('');
 const profileId = ref<string | null>(null);
 const accounts = ref<ZernioAccount[]>([]);
 const supportedPlatforms = ref<string[]>([]);
 
 const connectedCount = computed(() => accounts.value.length);
+
+const connectedPlatforms = computed(() =>
+    new Set(accounts.value.map((account) => String(account.platform ?? '').toLowerCase())),
+);
 
 function accountLabel(account: ZernioAccount): string {
     return (
@@ -71,10 +76,25 @@ async function loadStatus() {
     }
 }
 
-async function ensureProfile() {
+async function ensureProfileOnly(): Promise<string> {
     const id = await ensureTeam();
-    await postJson<{ profile_id: string }>(`/api/v1/admin/zernio/profile?team_id=${id}`, {});
-    await loadStatus();
+    const data = await postJson<{ profile_id: string }>(`/api/v1/admin/zernio/profile?team_id=${id}`, {});
+    profileId.value = data.profile_id ?? profileId.value;
+
+    return profileId.value ?? '';
+}
+
+function watchOAuthPopup(popup: Window | null) {
+    if (!popup) {
+        return;
+    }
+
+    const timer = window.setInterval(() => {
+        if (popup.closed) {
+            window.clearInterval(timer);
+            void loadStatus();
+        }
+    }, 800);
 }
 
 async function connectPlatform(platform: string) {
@@ -85,18 +105,40 @@ async function connectPlatform(platform: string) {
         const id = await ensureTeam();
 
         if (!profileId.value) {
-            await ensureProfile();
+            await ensureProfileOnly();
         }
 
         const data = await apiFetch<{ auth_url: string }>(
             `/api/v1/admin/zernio/connect?team_id=${id}&platform=${encodeURIComponent(platform)}`,
         );
 
-        window.open(data.auth_url, '_blank', 'noopener,noreferrer');
+        const popup = window.open(data.auth_url, '_blank', 'noopener,noreferrer');
+        watchOAuthPopup(popup);
     } catch (err) {
         errorText.value = err instanceof Error ? err.message : 'Could not start OAuth.';
     } finally {
         connecting.value = null;
+    }
+}
+
+async function disconnectAccount(account: ZernioAccount) {
+    const id = accountId(account);
+
+    if (!id) {
+        return;
+    }
+
+    disconnectingId.value = id;
+    errorText.value = '';
+
+    try {
+        const teamId = await ensureTeam();
+        await deleteResource(`/api/v1/admin/zernio/accounts/${encodeURIComponent(id)}?team_id=${teamId}`);
+        await loadStatus();
+    } catch (err) {
+        errorText.value = err instanceof Error ? err.message : 'Could not disconnect account.';
+    } finally {
+        disconnectingId.value = null;
     }
 }
 
@@ -111,8 +153,8 @@ onMounted(() => {
             <div>
                 <p class="text-xs font-bold uppercase tracking-wider text-[#E8563A]">Social publishing</p>
                 <p class="mt-1 max-w-xl text-sm text-gray-500">
-                    Connect Instagram, Facebook, TikTok, and more. Posts include a
-                    <strong>shop link</strong> that opens your vertical player with product cards and checkout
+                    Connect one platform at a time via OAuth. Only accounts linked to
+                    <strong>this team's Zernio profile</strong> are shown — not every account on your API key.
                 </p>
             </div>
             <Button variant="outline" size="sm" :disabled="loading" @click="loadStatus">
@@ -133,23 +175,40 @@ onMounted(() => {
         <template v-else>
             <p class="mb-3 text-xs text-gray-500">
                 Profile:
-                <span class="font-mono">{{ profileId || 'Not created yet — connect a platform to create one' }}</span>
-                · {{ connectedCount }} account(s) connected
+                <span class="font-mono">{{ profileId || 'Created on first connect' }}</span>
+                · {{ connectedCount }} account(s) for this team
             </p>
 
             <div v-if="accounts.length" class="mb-4 space-y-2">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Connected</p>
+                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Connected for this team</p>
                 <div
                     v-for="account in accounts"
                     :key="accountId(account)"
-                    class="flex items-center justify-between rounded-xl border bg-gray-50 px-3 py-2 text-sm"
+                    class="flex items-center justify-between gap-3 rounded-xl border bg-gray-50 px-3 py-2 text-sm"
                 >
-                    <span class="font-medium capitalize text-gray-800">
-                        {{ PLATFORM_LABELS[account.platform ?? ''] ?? account.platform }}
-                    </span>
-                    <span class="truncate text-gray-500">{{ accountLabel(account) }}</span>
+                    <div class="min-w-0">
+                        <p class="font-medium capitalize text-gray-800">
+                            {{ PLATFORM_LABELS[account.platform ?? ''] ?? account.platform }}
+                        </p>
+                        <p class="truncate text-xs text-gray-500">{{ accountLabel(account) }}</p>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        class="shrink-0 text-red-600 hover:bg-red-50 hover:text-red-700"
+                        :disabled="disconnectingId !== null"
+                        @click="disconnectAccount(account)"
+                    >
+                        <Loader2 v-if="disconnectingId === accountId(account)" class="mr-1 size-3.5 animate-spin" />
+                        <Unlink v-else class="mr-1 size-3.5" />
+                        Disconnect
+                    </Button>
                 </div>
             </div>
+
+            <p v-else class="mb-4 text-sm text-gray-500">
+                No accounts connected yet. Click a platform below to start OAuth — you'll return here and can hit Refresh when done.
+            </p>
 
             <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Connect a platform</p>
             <div class="flex flex-wrap gap-2">
@@ -164,10 +223,14 @@ onMounted(() => {
                     <Loader2 v-if="connecting === platform" class="mr-1 size-3 animate-spin" />
                     <ExternalLink v-else class="mr-1 size-3" />
                     {{ PLATFORM_LABELS[platform] ?? platform }}
+                    <span
+                        v-if="connectedPlatforms.has(platform)"
+                        class="ml-1.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700"
+                    >
+                        linked
+                    </span>
                 </Button>
             </div>
-
-           
         </template>
     </div>
 </template>

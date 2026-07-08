@@ -25,11 +25,16 @@ class ZernioService
         return rtrim((string) config('services.zernio.base_url', 'https://zernio.com/api/v1'), '/');
     }
 
+    protected function profiles(): ZernioProfileManager
+    {
+        return app(ZernioProfileManager::class);
+    }
+
     /**
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
-    protected function request(string $method, string $path, array $payload = []): array
+    public function request(string $method, string $path, array $payload = []): array
     {
         $http = Http::timeout(30)
             ->withToken($this->apiKey())
@@ -54,7 +59,10 @@ class ZernioService
                 'body' => Str::limit($response->body(), 800),
             ]);
 
-            throw new \RuntimeException($this->errorMessage($response->json(), $response->status()));
+            throw new ZernioApiException(
+                $this->errorMessage($response->json(), $response->status()),
+                $response->status(),
+            );
         }
 
         return $response->json() ?? [];
@@ -80,56 +88,58 @@ class ZernioService
         return (array) data_get($team->settings, 'integrations.zernio', []);
     }
 
-    public function ensureTeamProfile(Team $team): string
+    /**
+     * @return array<string, mixed>
+     */
+    public function createProfile(string $name, string $description): array
     {
-        $settings = $this->zernioSettings($team);
-        $profileId = trim((string) ($settings['profile_id'] ?? ''));
-
-        if ($profileId !== '') {
-            return $profileId;
-        }
-
-        $response = $this->request('POST', '/profiles', [
-            'name' => Str::limit($team->name.' — '.config('app.name'), 120),
-            'description' => 'Social publishing profile for team #'.$team->id,
+        return $this->request('POST', '/profiles', [
+            'name' => $name,
+            'description' => $description,
         ]);
-
-        $profileId = (string) (data_get($response, 'profile._id') ?? data_get($response, '_id') ?? '');
-
-        if ($profileId === '') {
-            throw new \RuntimeException('Zernio did not return a profile id.');
-        }
-
-        $team->update([
-            'settings' => array_replace_recursive((array) $team->settings, [
-                'integrations' => [
-                    'zernio' => [
-                        'profile_id' => $profileId,
-                        'profile_created_at' => now()->toIso8601String(),
-                    ],
-                ],
-            ]),
-        ]);
-
-        return $profileId;
     }
 
-    public function connectUrl(Team $team, string $platform): string
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function listProfiles(): array
     {
-        $profileId = $this->ensureTeamProfile($team);
-        $platform = $this->normalizePlatform($platform);
+        $response = $this->request('GET', '/profiles');
+        $profiles = data_get($response, 'profiles', $response);
 
-        $response = $this->request('GET', '/connect/'.$platform, [
-            'profileId' => $profileId,
-        ]);
-
-        $authUrl = (string) (data_get($response, 'authUrl') ?? data_get($response, 'auth_url') ?? '');
-
-        if ($authUrl === '') {
-            throw new \RuntimeException('Zernio did not return a connect URL.');
+        if (! is_array($profiles)) {
+            return [];
         }
 
-        return $authUrl;
+        return array_values(array_filter($profiles, fn ($row) => is_array($row)));
+    }
+
+    public function ensureTeamProfile(Team $team): string
+    {
+        return $this->profiles()->ensureForTeam($team);
+    }
+
+    public function connectUrl(Team $team, string $platform, ?string $redirectUrl = null): string
+    {
+        $platform = $this->normalizePlatform($platform);
+
+        return $this->profiles()->withProfile($team, function (string $profileId) use ($platform, $redirectUrl): string {
+            $query = ['profileId' => $profileId];
+
+            if ($redirectUrl) {
+                $query['redirectUrl'] = $redirectUrl;
+            }
+
+            $response = $this->request('GET', '/connect/'.$platform, $query);
+
+            $authUrl = (string) (data_get($response, 'authUrl') ?? data_get($response, 'auth_url') ?? '');
+
+            if ($authUrl === '') {
+                throw new ZernioApiException('Zernio did not return a connect URL.');
+            }
+
+            return $authUrl;
+        });
     }
 
     /**
@@ -137,16 +147,58 @@ class ZernioService
      */
     public function listAccounts(Team $team): array
     {
-        $this->ensureTeamProfile($team);
+        return $this->profiles()->withProfile($team, fn (string $profileId): array => $this->listAccountsForProfile($profileId));
+    }
 
-        $response = $this->request('GET', '/accounts');
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function listAccountsForProfile(string $profileId): array
+    {
+        $response = $this->request('GET', '/accounts', [
+            'profileId' => $profileId,
+        ]);
+
         $accounts = data_get($response, 'accounts', $response);
 
         if (! is_array($accounts)) {
             return [];
         }
 
-        return array_values(array_filter($accounts, fn ($row) => is_array($row)));
+        return array_values(array_filter($accounts, function ($row) use ($profileId) {
+            if (! is_array($row)) {
+                return false;
+            }
+
+            $rowProfileId = (string) (
+                data_get($row, 'profileId')
+                ?? data_get($row, 'profile_id')
+                ?? data_get($row, 'profile._id')
+                ?? data_get($row, 'profile.id')
+                ?? ''
+            );
+
+            if ($rowProfileId === '') {
+                return true;
+            }
+
+            return $rowProfileId === $profileId;
+        }));
+    }
+
+    public function disconnectAccount(Team $team, string $accountId): void
+    {
+        $accountId = trim($accountId);
+
+        if ($accountId === '') {
+            throw new ZernioApiException('Account id is required.');
+        }
+
+        $this->profiles()->withProfile($team, function (string $profileId) use ($accountId): void {
+            $this->request('DELETE', '/accounts/'.$accountId, [
+                'profileId' => $profileId,
+            ]);
+        });
     }
 
     /**

@@ -24,13 +24,14 @@ class ZernioController extends Controller
         $this->assertEnabled();
 
         $team = $this->resolveTeam($request);
-        $settings = $this->zernio->zernioSettings($team);
-        $profileId = trim((string) ($settings['profile_id'] ?? ''));
+        $profileId = trim((string) data_get($this->zernio->zernioSettings($team), 'profile_id', ''));
 
         $accounts = [];
         if ($profileId !== '') {
             try {
                 $accounts = $this->zernio->listAccounts($team);
+                $team->refresh();
+                $profileId = trim((string) data_get($this->zernio->zernioSettings($team), 'profile_id', ''));
             } catch (\Throwable) {
                 $accounts = [];
             }
@@ -78,6 +79,19 @@ class ZernioController extends Controller
         $team = $this->resolveTeam($request);
 
         return response()->json([
+            'accounts' => $this->zernio->listAccounts($team),
+        ]);
+    }
+
+    public function disconnectAccount(Request $request, string $accountId): JsonResponse
+    {
+        $this->assertEnabled();
+        $team = $this->resolveTeam($request);
+
+        $this->zernio->disconnectAccount($team, $accountId);
+
+        return response()->json([
+            'disconnected' => true,
             'accounts' => $this->zernio->listAccounts($team),
         ]);
     }
