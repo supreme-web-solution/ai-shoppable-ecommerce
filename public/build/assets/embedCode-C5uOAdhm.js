@@ -1,0 +1,1 @@
+function e(e,t=`vertical_feed`,n=typeof window<`u`?window.location.origin:``){return`<script async src="${`${n}/embed/embed.js`}" data-embed="${e}" data-type="${t}" data-height="700"><\/script>`}export{e as t};
