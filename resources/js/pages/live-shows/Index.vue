@@ -23,6 +23,7 @@ import {
     PlusCircle,
     Radio,
     Search,
+    Sparkles,
     Trash2,
     Upload,
     UserRound,
@@ -31,6 +32,8 @@ import {
 } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
+import AiVideoWizardPanel from '@/components/ai/AiVideoWizardPanel.vue';
+import { LIVE_CAST_DURATION_OPTIONS, type AiVideoGenerationPayload } from '@/composables/useAiVideoWizard';
 import DailyBroadcastPanel from '@/components/daily/DailyBroadcastPanel.vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -64,6 +67,8 @@ type VideoOption = {
     title: string;
     thumbnail_url?: string | null;
     playback_url?: string | null;
+    status?: string | null;
+    source?: string | null;
     metadata?: Record<string, unknown> | null;
 };
 
@@ -109,6 +114,15 @@ const SIMULCAST_PRESETS = [
 ] as const;
 
 type LiveSourceType = 'ai' | 'upload' | 'url' | 'daily';
+
+type PreRecordedVideoMode = 'upload' | 'library' | 'url' | 'ai';
+
+const PRE_RECORDED_VIDEO_MODES: { value: PreRecordedVideoMode; label: string; icon: typeof Upload }[] = [
+    { value: 'upload', label: 'Upload file', icon: Upload },
+    { value: 'library', label: 'Library', icon: Film },
+    { value: 'url', label: 'Paste URL', icon: Link2 },
+    { value: 'ai', label: 'Generate with AI', icon: Sparkles },
+];
 
 function isGoLiveSourceType(sourceType?: string | null): boolean {
     return sourceType === 'daily';
@@ -353,6 +367,10 @@ const selectedVideoFile = ref<File | null>(null);
 const previewVideoUrl = ref<string | null>(null);
 const uploadingVideo = ref(false);
 const videoUploadError = ref('');
+const preRecordedVideoMode = ref<PreRecordedVideoMode>('upload');
+const aiVideoLinkedMessage = ref('');
+const aiVideoGenerating = ref(false);
+let processingPollTimer: number | null = null;
 const dailyHostJoined = ref(false);
 const dailySimulcastActive = ref(false);
 const pushingOfferId = ref<number | null>(null);
@@ -556,6 +574,163 @@ return form.value.settings.video_url.trim();
 const selectedPlayback = computed(() => parseExternalVideoUrl(selectedVideoUrl() || null));
 
 const isDailyCast = computed(() => form.value.settings.source_type === 'daily');
+
+const isCreateAiVideoFlow = computed(
+    () =>
+        createModalOpen.value
+        && !isGoLiveSourceType(form.value.settings.source_type)
+        && preRecordedVideoMode.value === 'ai',
+);
+
+const castTitleReady = computed(() => Boolean(form.value.title.trim()));
+
+const hasProcessingAiVideos = computed(() =>
+    webinars.value.some((item) => item.video?.status === 'processing'),
+);
+
+function webinarVideoIsProcessing(item: WebinarItem): boolean {
+    return (
+        item.video?.status === 'processing'
+        || (item.source_type === 'ai' && Boolean(item.video_id) && !item.video?.playback_url)
+    );
+}
+
+function stopProcessingPoll() {
+    if (processingPollTimer !== null) {
+        window.clearInterval(processingPollTimer);
+        processingPollTimer = null;
+    }
+}
+
+function startProcessingPoll() {
+    if (processingPollTimer !== null || !hasProcessingAiVideos.value) {
+        return;
+    }
+
+    processingPollTimer = window.setInterval(() => {
+        if (!hasProcessingAiVideos.value) {
+            stopProcessingPoll();
+
+            return;
+        }
+
+        void loadData();
+    }, 15000);
+}
+
+const aiContextProductIds = computed(() =>
+    form.value.featured_offers.map((offer) => offer.product_id),
+);
+
+function setPreRecordedVideoMode(mode: PreRecordedVideoMode) {
+    preRecordedVideoMode.value = mode;
+    aiVideoLinkedMessage.value = '';
+
+    if (mode === 'url') {
+        form.value.settings.source_type = 'url';
+    } else if (mode === 'ai') {
+        form.value.settings.source_type = 'ai';
+    } else {
+        form.value.settings.source_type = 'upload';
+    }
+}
+
+function resolvePreRecordedVideoModeFromForm() {
+    const sourceType = form.value.settings.source_type;
+
+    if (sourceType === 'ai') {
+        preRecordedVideoMode.value = 'ai';
+    } else if (sourceType === 'url' || form.value.settings.video_url.trim()) {
+        preRecordedVideoMode.value = 'url';
+    } else if (form.value.video_id) {
+        preRecordedVideoMode.value = 'library';
+    } else {
+        preRecordedVideoMode.value = 'upload';
+    }
+}
+
+async function onAiVideoGenerated(payload: { videoId: number; title: string; durationSeconds: number }) {
+    form.value.video_id = payload.videoId;
+    form.value.settings.source_type = 'ai';
+    form.value.settings.video_duration_seconds = payload.durationSeconds;
+    aiVideoLinkedMessage.value = `✓ AI video "${payload.title}" queued (#${payload.videoId}, ~${payload.durationSeconds}s). Save this cast to keep the link.`;
+
+    try {
+        await ensureTeam();
+        const videoPayload = await getList<VideoOption>('/api/v1/admin/videos');
+        videos.value = videoPayload.data ?? [];
+
+        if (editingWebinar.value?.id) {
+            await putJson(`/api/v1/admin/live-shows/${editingWebinar.value.id}`, buildPayload());
+            await loadData();
+            startProcessingPoll();
+            aiVideoLinkedMessage.value = `✓ AI video "${payload.title}" queued and saved to this cast (~${payload.durationSeconds}s).`;
+            toast.success('AI video queued — rendering in the background.');
+        }
+    } catch (error) {
+        modalError.value = error instanceof Error ? error.message : 'Video queued but could not save the live cast.';
+    }
+}
+
+async function createLiveCastWithAiVideo(payload: AiVideoGenerationPayload) {
+    modalError.value = '';
+    const err = validateForm();
+
+    if (err) {
+        modalError.value = err;
+        activeTab.value = err.includes('title') ? 'basics' : activeTab.value;
+
+        return;
+    }
+
+    saving.value = true;
+    aiVideoGenerating.value = true;
+
+    try {
+        await ensureTeam();
+        form.value.settings.source_type = 'ai';
+        form.value.settings.video_duration_seconds = payload.durationSeconds;
+
+        const castResult = await postJson<{ data: WebinarItem }>('/api/v1/admin/live-shows', {
+            ...buildPayload(true),
+            video_id: null,
+        });
+        const cast = castResult.data;
+
+        if (!cast?.id) {
+            throw new Error('Live cast could not be created.');
+        }
+
+        const videoPayload = await postJson<{ video?: unknown }>('/api/v1/admin/ai/avatar-videos', {
+            ...payload.avatarForm,
+            title: payload.avatarForm.title.trim() || form.value.title.trim(),
+            enable_embed_overlays: false,
+            usage_context: 'live_cast',
+        });
+        const video = unwrapVideo(
+            videoPayload && typeof videoPayload === 'object' && 'video' in videoPayload
+                ? videoPayload.video
+                : videoPayload,
+        );
+
+        if (!video?.id) {
+            throw new Error('AI video could not be queued.');
+        }
+
+        form.value.video_id = video.id;
+        await putJson(`/api/v1/admin/live-shows/${cast.id}`, buildPayload());
+
+        createModalOpen.value = false;
+        await loadData();
+        startProcessingPoll();
+        toast.success(`Live cast "${cast.title}" created — AI video is rendering…`);
+    } catch (error) {
+        modalError.value = error instanceof Error ? error.message : 'Could not create live cast with AI video.';
+    } finally {
+        saving.value = false;
+        aiVideoGenerating.value = false;
+    }
+}
 const dailySettings = computed<DailyConfig>(() => form.value.settings.daily ?? {});
 const hasDailyRoom = computed(() => Boolean((dailySettings.value.room_url ?? '').trim()));
 const simulcastDestinations = computed(
@@ -1102,6 +1277,7 @@ async function loadData() {
         webinars.value = wPayload.data ?? [];
         videos.value = vPayload.data ?? [];
         products.value = pPayload.data ?? [];
+        startProcessingPoll();
     } catch (error) {
         errorText.value = error instanceof Error ? error.message : 'Could not load webinars.';
     } finally {
@@ -1290,6 +1466,8 @@ function openCreateModal() {
     sourceForm.value = { title: '', content: '' };
     expandedSourceIndex.value = null;
     clearSelectedVideoFile();
+    preRecordedVideoMode.value = 'upload';
+    aiVideoLinkedMessage.value = '';
     activeTab.value = 'basics';
     createModalOpen.value = true;
 }
@@ -1372,6 +1550,8 @@ async function openEditModal(item: WebinarItem) {
     expandedSourceIndex.value = null;
     dailyHostJoined.value = false;
     dailySimulcastActive.value = false;
+    aiVideoLinkedMessage.value = '';
+    resolvePreRecordedVideoModeFromForm();
     simulcastDraft.value = {
         preset: 'youtube',
         name: 'YouTube Live',
@@ -1465,6 +1645,8 @@ onBeforeUnmount(() => {
     if (copiedLinkTimeout !== null) {
         window.clearTimeout(copiedLinkTimeout);
     }
+
+    stopProcessingPoll();
 });
 </script>
 
@@ -1647,9 +1829,19 @@ onBeforeUnmount(() => {
                                 {{ item.host_name || item.settings?.host_name || '—' }}
                             </td>
                             <td class="px-4 py-3">
-                                <Badge :variant="statusVariant(item.status)" class="status-badge">
-                                    {{ statusLabel(item.status) }}
-                                </Badge>
+                                <div class="flex flex-wrap items-center gap-1.5">
+                                    <Badge :variant="statusVariant(item.status)" class="status-badge">
+                                        {{ statusLabel(item.status) }}
+                                    </Badge>
+                                    <Badge
+                                        v-if="webinarVideoIsProcessing(item)"
+                                        variant="outline"
+                                        class="border-amber-300 bg-amber-50 text-amber-800"
+                                    >
+                                        <Loader2 class="mr-1 size-3 animate-spin" />
+                                        Video rendering
+                                    </Badge>
+                                </div>
                             </td>
                             <td class="px-4 py-3 font-medium">{{ item.registrants_count ?? 0 }}</td>
                             <td class="px-4 py-3 font-medium">{{ item.views_count ?? 0 }}</td>
@@ -1874,7 +2066,7 @@ onBeforeUnmount(() => {
                             </div>
                             <div>
                                 <p class="font-semibold text-gray-900">Pre-recorded Video</p>
-                                <p class="mt-1 text-xs text-gray-500">Upload a video file or pick one from your library. Perfect for scheduled or evergreen content.</p>
+                                <p class="mt-1 text-xs text-gray-500">Upload, pick from library, paste a URL, or generate an AI presenter video — perfect for scheduled or evergreen content.</p>
                             </div>
                             <div :class="['mt-auto flex h-5 w-5 items-center justify-center rounded-full border-2', !isGoLiveSourceType(form.settings.source_type) ? 'border-[#E8563A] bg-[#E8563A]' : 'border-gray-300']">
                                 <div v-if="!isGoLiveSourceType(form.settings.source_type)" class="size-2 rounded-full bg-white" />
@@ -1935,7 +2127,25 @@ onBeforeUnmount(() => {
                     <div v-if="!isGoLiveSourceType(form.settings.source_type)" class="space-y-4 rounded-xl border p-4">
                         <p class="text-sm font-semibold text-gray-900">Video source</p>
 
-                        <div class="rounded-xl border-2 border-dashed border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
+                        <div class="flex flex-wrap gap-2">
+                            <button
+                                v-for="mode in PRE_RECORDED_VIDEO_MODES"
+                                :key="mode.value"
+                                type="button"
+                                :class="[
+                                    'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all',
+                                    preRecordedVideoMode === mode.value
+                                        ? 'border-[#E8563A] bg-[#E8563A] text-white shadow-sm'
+                                        : 'border-border bg-background text-muted-foreground hover:border-[#E8563A]/40 hover:text-foreground',
+                                ]"
+                                @click="setPreRecordedVideoMode(mode.value)"
+                            >
+                                <component :is="mode.icon" class="size-3.5" />
+                                {{ mode.label }}
+                            </button>
+                        </div>
+
+                        <div v-if="preRecordedVideoMode === 'upload'" class="rounded-xl border-2 border-dashed border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
                             <p class="mb-1 text-sm font-semibold">Upload video file</p>
                             <p class="mb-3 text-xs text-muted-foreground">MP4, MOV, or WebM. File is saved to your video library and linked automatically.</p>
                             <input
@@ -1963,19 +2173,46 @@ onBeforeUnmount(() => {
                             </p>
                         </div>
 
+                        <div v-else-if="preRecordedVideoMode === 'library'" class="space-y-3 rounded-xl border p-4">
+                            <p class="text-sm font-semibold">Pick from library</p>
+                            <select v-model="form.video_id" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
+                                <option :value="null">No linked video</option>
+                                <option v-for="video in videos" :key="video.id" :value="video.id">{{ video.title }}</option>
+                            </select>
+                            <p v-if="form.video_id" class="text-xs font-medium text-green-600">
+                                ✓ Linked to library video #{{ form.video_id }}
+                            </p>
+                        </div>
+
+                        <div v-else-if="preRecordedVideoMode === 'url'" class="space-y-3 rounded-xl border p-4">
+                            <p class="text-sm font-semibold">Paste a video URL</p>
+                            <Input v-model="form.settings.video_url" placeholder="YouTube, Vimeo, or direct MP4 URL" />
+                            <p class="text-xs text-muted-foreground">Paste a YouTube/Vimeo link to embed, or a direct .mp4 URL.</p>
+                        </div>
+
+                        <AiVideoWizardPanel
+                            v-else
+                            :products="products"
+                            :product-ids="aiContextProductIds"
+                            :default-title="form.title"
+                            :topic-hint="form.description"
+                            default-topic="live cast presentation"
+                            :default-duration-seconds="60"
+                            :duration-options="[...LIVE_CAST_DURATION_OPTIONS]"
+                            create-with-cast
+                            :cast-title-ready="castTitleReady"
+                            :submitting="saving || aiVideoGenerating"
+                            @create-with-video="createLiveCastWithAiVideo"
+                        />
+
+                        <p
+                            v-if="aiVideoLinkedMessage && preRecordedVideoMode === 'ai'"
+                            class="text-xs font-medium text-green-600"
+                        >
+                            {{ aiVideoLinkedMessage }}
+                        </p>
+
                         <div class="grid gap-3 sm:grid-cols-2">
-                            <div class="space-y-1.5">
-                                <Label>Or pick from library</Label>
-                                <select v-model="form.video_id" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
-                                    <option :value="null">No linked video</option>
-                                    <option v-for="video in videos" :key="video.id" :value="video.id">{{ video.title }}</option>
-                                </select>
-                            </div>
-                            <div class="space-y-1.5">
-                                <Label>Or paste a video URL</Label>
-                                <Input v-model="form.settings.video_url" placeholder="YouTube, Vimeo, or direct MP4 URL" />
-                                <p class="text-xs text-muted-foreground">Paste a YouTube/Vimeo link to embed, or a direct .mp4 URL.</p>
-                            </div>
                             <div class="space-y-1.5">
                                 <Label>Thumbnail URL</Label>
                                 <Input v-model="form.settings.thumbnail_url" placeholder="https://.../thumb.png" />
@@ -2205,10 +2442,18 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="flex gap-2">
                         <Button variant="ghost" @click="createModalOpen = false">Cancel</Button>
-                <Button class="cta-btn" :disabled="saving" @click="createWebinar">
+                        <Button
+                            v-if="!isCreateAiVideoFlow"
+                            class="cta-btn"
+                            :disabled="saving"
+                            @click="createWebinar"
+                        >
                             <Loader2 v-if="saving" class="mr-2 size-4 animate-spin" />
                             {{ saving ? 'Creating...' : 'Create Live Cast' }}
                         </Button>
+                        <p v-else class="max-w-xs text-right text-xs text-muted-foreground">
+                            Use <strong>Generate & create live cast</strong> in the AI wizard after filling Basics.
+                        </p>
                     </div>
                 </div>
             </DialogFooter>
@@ -2541,7 +2786,25 @@ onBeforeUnmount(() => {
                     <div class="rounded-lg border p-4">
                         <p class="mb-3 text-sm font-semibold">Video</p>
 
-                        <div class="mb-4 rounded-xl border-2 border-dashed border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
+                        <div class="mb-4 flex flex-wrap gap-2">
+                            <button
+                                v-for="mode in PRE_RECORDED_VIDEO_MODES"
+                                :key="mode.value"
+                                type="button"
+                                :class="[
+                                    'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all',
+                                    preRecordedVideoMode === mode.value
+                                        ? 'border-[#E8563A] bg-[#E8563A] text-white shadow-sm'
+                                        : 'border-border bg-background text-muted-foreground hover:border-[#E8563A]/40 hover:text-foreground',
+                                ]"
+                                @click="setPreRecordedVideoMode(mode.value)"
+                            >
+                                <component :is="mode.icon" class="size-3.5" />
+                                {{ mode.label }}
+                            </button>
+                        </div>
+
+                        <div v-if="preRecordedVideoMode === 'upload'" class="mb-4 rounded-xl border-2 border-dashed border-[#E8563A]/30 bg-[#E8563A]/5 p-4">
                             <p class="mb-1 text-sm font-semibold">Upload video file</p>
                             <p class="mb-3 text-xs text-muted-foreground">MP4, MOV, or WebM. Saved to your library and linked to this webinar.</p>
                             <input
@@ -2578,34 +2841,52 @@ onBeforeUnmount(() => {
                             </p>
                         </div>
 
+                        <div v-else-if="preRecordedVideoMode === 'library'" class="mb-4 space-y-3 rounded-xl border p-4">
+                            <p class="text-sm font-semibold">Pick from library</p>
+                            <select v-model="form.video_id" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
+                                <option :value="null">No linked video</option>
+                                <option v-for="video in videos" :key="video.id" :value="video.id">{{ video.title }}</option>
+                            </select>
+                            <p v-if="form.video_id" class="text-xs font-medium text-green-600 dark:text-green-400">
+                                ✓ Linked to library video #{{ form.video_id }}
+                            </p>
+                        </div>
+
+                        <div v-else-if="preRecordedVideoMode === 'url'" class="mb-4 space-y-3 rounded-xl border p-4">
+                            <p class="text-sm font-semibold">Paste a video URL</p>
+                            <Input
+                                v-model="form.settings.video_url"
+                                placeholder="YouTube, Vimeo, or direct MP4 URL"
+                            />
+                            <p class="text-xs text-muted-foreground">Paste a YouTube/Vimeo link to embed, or a direct .mp4 URL.</p>
+                        </div>
+
+                        <AiVideoWizardPanel
+                            v-else
+                            class="mb-4"
+                            :products="products"
+                            :product-ids="aiContextProductIds"
+                            :default-title="form.title"
+                            :topic-hint="form.description"
+                            default-topic="live cast presentation"
+                            :default-duration-seconds="60"
+                            :duration-options="[...LIVE_CAST_DURATION_OPTIONS]"
+                            @generated="onAiVideoGenerated"
+                        />
+
+                        <p
+                            v-if="aiVideoLinkedMessage && preRecordedVideoMode === 'ai'"
+                            class="mb-4 text-xs font-medium text-green-600 dark:text-green-400"
+                        >
+                            {{ aiVideoLinkedMessage }}
+                        </p>
+
                         <div class="grid gap-4 sm:grid-cols-2">
-                            <div class="space-y-1.5">
-                                <Label>Video source</Label>
-                                <select v-model="form.settings.source_type" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
-                                    <option value="upload">Uploaded Video</option>
-                                    <option value="url">Direct URL / Embed</option>
-                                    <option value="ai">AI Generated Video</option>
-                                </select>
-                            </div>
-                            <div class="space-y-1.5">
-                                <Label>Linked library video</Label>
-                                <select v-model="form.video_id" class="w-full rounded-md border bg-background px-3 py-2 text-sm">
-                                    <option :value="null">No linked video</option>
-                                    <option v-for="video in videos" :key="video.id" :value="video.id">{{ video.title }}</option>
-                                </select>
-                            </div>
                             <div class="space-y-1.5">
                                 <Label>Thumbnail URL</Label>
                                 <Input v-model="form.settings.thumbnail_url" placeholder="https://.../thumb.png" />
                             </div>
                             <div class="space-y-1.5">
-                                <Label>Video URL override</Label>
-                                <Input
-                                    v-model="form.settings.video_url"
-                                    placeholder="YouTube, Vimeo, or direct MP4 URL"
-                                />
-                            </div>
-                            <div class="space-y-1.5 sm:col-span-2">
                                 <Label>Video duration (seconds)</Label>
                                 <Input
                                     :model-value="form.settings.video_duration_seconds ?? ''"

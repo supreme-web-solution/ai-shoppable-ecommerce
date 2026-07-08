@@ -55,7 +55,10 @@ type VideoItem = {
     thumbnail_url?: string | null;
     product_tags?: unknown[];
     published_at?: string | null;
+    metadata?: Record<string, unknown> | null;
 };
+
+type VideoUsageFilter = 'all' | 'shoppable' | 'live_cast';
 
 type PlaylistItem = {
     id: number;
@@ -81,6 +84,7 @@ const loading = ref(false);
 const saving = ref(false);
 const errorText = ref('');
 const search = ref('');
+const usageFilter = ref<VideoUsageFilter>('all');
 const videos = ref<VideoItem[]>([]);
 const playlists = ref<PlaylistItem[]>([]);
 const shareModalOpen = ref(false);
@@ -102,17 +106,35 @@ const playlistModalVideoTitle = ref('');
 const pendingPlaylistIds = ref<number[]>([]);
 const savingPlaylists = ref(false);
 
+function videoUsageContext(video: VideoItem): string {
+    return String(video.metadata?.usage_context ?? 'shoppable');
+}
+
 const filteredVideos = computed(() => {
     const q = search.value.trim().toLowerCase();
 
-    if (!q) {
-return videos.value;
-}
+    return videos.value.filter((video) => {
+        const matchesUsage =
+            usageFilter.value === 'all'
+            || videoUsageContext(video) === usageFilter.value;
 
-    return videos.value.filter(
-        (v) => v.title.toLowerCase().includes(q) || v.source.toLowerCase().includes(q),
-    );
+        if (!matchesUsage) {
+            return false;
+        }
+
+        if (!q) {
+            return true;
+        }
+
+        return video.title.toLowerCase().includes(q) || video.source.toLowerCase().includes(q);
+    });
 });
+
+const USAGE_FILTER_OPTIONS: { value: VideoUsageFilter; label: string }[] = [
+    { value: 'all', label: 'All videos' },
+    { value: 'shoppable', label: 'Shoppable' },
+    { value: 'live_cast', label: 'Live Cast AI' },
+];
 
 function statusIcon(status: string) {
     if (status === 'published') {
@@ -132,14 +154,18 @@ return XCircle;
 
 function sourceLabel(source: string) {
     if (source === 'ai_generated') {
-return 'AI';
-}
+        return 'AI generated';
+    }
+
+    if (source === 'uploaded') {
+        return 'Uploaded';
+    }
 
     if (source === 'live_replay') {
-return 'Replay';
-}
+        return 'Replay';
+    }
 
-    return 'Upload';
+    return source.replace(/_/g, ' ');
 }
 
 function formatDate(iso: string | null | undefined) {
@@ -388,14 +414,32 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
         </div>
 
         <!-- Search + refresh -->
-        <div class="flex items-center gap-3">
-            <div class="relative max-w-sm flex-1">
-                <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input v-model="search" placeholder="Search videos…" class="rounded-xl pl-9 !bg-white" />
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex flex-wrap gap-2">
+                <button
+                    v-for="option in USAGE_FILTER_OPTIONS"
+                    :key="option.value"
+                    type="button"
+                    :class="[
+                        'rounded-full border px-3 py-1 text-xs font-semibold transition-all',
+                        usageFilter === option.value
+                            ? 'border-[#E8563A] bg-[#E8563A] text-white'
+                            : 'border-border bg-white text-muted-foreground hover:border-[#E8563A]/40',
+                    ]"
+                    @click="usageFilter = option.value"
+                >
+                    {{ option.label }}
+                </button>
             </div>
-            <button type="button" :disabled="loading" class="ghost-btn flex size-9 items-center justify-center rounded-xl" @click="loadVideos">
-                <svg :class="['size-4 text-muted-foreground', loading && 'animate-spin']" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-            </button>
+            <div class="flex items-center gap-3">
+                <div class="relative max-w-sm flex-1">
+                    <Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input v-model="search" placeholder="Search videos…" class="rounded-xl pl-9 !bg-white" />
+                </div>
+                <button type="button" :disabled="loading" class="ghost-btn flex size-9 items-center justify-center rounded-xl" @click="loadVideos">
+                    <svg :class="['size-4 text-muted-foreground', loading && 'animate-spin']" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                </button>
+            </div>
         </div>
 
         <!-- Skeleton -->
@@ -459,6 +503,7 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
                                     {{ video.status }}
                                 </span>
                                 <span class="tag-pill">{{ sourceLabel(video.source) }}</span>
+                                <span v-if="videoUsageContext(video) === 'live_cast'" class="tag-pill">Live Cast</span>
                                 <span v-if="video.product_tags?.length" class="tag-pill">
                                     <Tag class="size-3 shrink-0" />
                                     {{ video.product_tags.length }} product{{ video.product_tags.length !== 1 ? 's' : '' }}
@@ -476,6 +521,16 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
                             <Pencil class="size-3.5" />
                             Edit
                         </Link>
+                        <a
+                            v-if="video.playback_url"
+                            :href="video.playback_url"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="action-btn"
+                        >
+                            <Film class="size-3.5" />
+                            Play / download
+                        </a>
                         <button type="button" class="action-btn" @click="openPlaylistModal(video)">
                             <Layers3 class="size-3.5" />
                             Playlist

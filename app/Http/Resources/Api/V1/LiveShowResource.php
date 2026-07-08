@@ -61,6 +61,8 @@ class LiveShowResource extends JsonResource
                     'title' => $this->video?->title,
                     'thumbnail_url' => $this->video?->thumbnail_url,
                     'playback_url' => $this->video?->playback_url,
+                    'status' => $this->video?->status,
+                    'source' => $this->video?->source,
                 ];
             }),
             'registrants_count' => (int) ($this->registrations_count ?? 0),

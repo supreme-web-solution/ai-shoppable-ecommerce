@@ -68,7 +68,7 @@ class AiContentController extends Controller
             'topic' => ['nullable', 'string', 'max:255'],
             'tone' => ['nullable', 'string', 'in:engaging,luxury,urgent,friendly'],
             'language' => ['nullable', 'string', 'max:10'],
-            'duration_seconds' => ['nullable', 'integer', 'min:15', 'max:180'],
+            'duration_seconds' => ['nullable', 'integer', 'min:15', 'max:600'],
             'product_ids' => ['nullable', 'array'],
             'product_ids.*' => ['integer', 'exists:products,id'],
         ]);
@@ -112,6 +112,7 @@ class AiContentController extends Controller
             'publish_when_ready' => ['nullable', 'boolean'],
             'custom_background_enabled' => ['nullable', 'boolean'],
             'background_color' => ['nullable', 'string', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'],
+            'usage_context' => ['nullable', 'string', 'in:live_cast,shoppable'],
         ]);
 
         abort_unless($teamId === (int) $validated['team_id'], 403);
@@ -131,6 +132,7 @@ class AiContentController extends Controller
                 'enable_embed_overlays' => (bool) ($validated['enable_embed_overlays'] ?? true),
                 'product_ids' => $validated['product_ids'] ?? [],
                 'avatar_background' => $this->avatarBackgroundMetadata($validated),
+                'usage_context' => $validated['usage_context'] ?? 'shoppable',
             ],
         ]);
 

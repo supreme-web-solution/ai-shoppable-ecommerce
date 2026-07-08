@@ -76,6 +76,9 @@ class AiScriptGeneratorService
 
         $topic = (string) ($input['topic'] ?? 'product showcase');
         $wordRange = $this->targetWordRange($durationSeconds);
+        $structureHint = $durationSeconds >= 120
+            ? 'Write a thorough long-form script with multiple detailed sections (intro, context, deep product/value story, proof, objections, urgency, strong CTA). Use rich, substantive copy — do not pad with filler.'
+            : 'Structure full_script as multiple short paragraphs (hook, product story, proof/benefits, urgency, CTA).';
 
         $prompt = trim(<<<PROMPT
 Write a shoppable social video script in {$language} meant to fill exactly {$durationSeconds} seconds when read aloud at a natural presenter pace (~{$this->targetWordCount($durationSeconds)} words).
@@ -86,14 +89,14 @@ Target length: {$wordRange} words in full_script (do not under-write — short s
 Products:
 {$productLines}
 
-Structure full_script as multiple short paragraphs (hook, product story, proof/benefits, urgency, CTA).
+{$structureHint}
 Spread scene_beats across the full {$durationSeconds}s timeline (first beat near 0ms, last beat near the end).
 
 Return JSON with keys: hook, body, cta, full_script, scene_beats (array of {time_ms, line, cta}).
 PROMPT);
 
         try {
-            $response = Http::timeout(45)
+            $response = Http::timeout($durationSeconds > 120 ? 90 : 45)
                 ->withToken($apiKey)
                 ->post(rtrim((string) config('services.openai.base_url'), '/').'/chat/completions', [
                     'model' => config('services.openai.model', 'gpt-4o-mini'),
