@@ -123,16 +123,31 @@ class ZernioService
     {
         $platform = $this->normalizePlatform($platform);
 
-        return $this->profiles()->withProfile($team, function (string $profileId) use ($platform, $redirectUrl): string {
+        return $this->profiles()->withProfile($team, function (string $profileId) use ($platform, $redirectUrl, $team): string {
             $query = ['profileId' => $profileId];
 
             if ($redirectUrl) {
+                $query['redirect_url'] = $redirectUrl;
                 $query['redirectUrl'] = $redirectUrl;
             }
+
+            Log::info('Zernio API: GET /connect request', [
+                'team_id' => $team->id,
+                'platform' => $platform,
+                'profile_id' => $profileId,
+                'redirect_url' => $redirectUrl,
+            ]);
 
             $response = $this->request('GET', '/connect/'.$platform, $query);
 
             $authUrl = (string) (data_get($response, 'authUrl') ?? data_get($response, 'auth_url') ?? '');
+
+            Log::info('Zernio API: GET /connect response', [
+                'team_id' => $team->id,
+                'platform' => $platform,
+                'auth_url' => $authUrl !== '' ? $authUrl : null,
+                'response_keys' => array_keys($response),
+            ]);
 
             if ($authUrl === '') {
                 throw new ZernioApiException('Zernio did not return a connect URL.');
@@ -170,12 +185,11 @@ class ZernioService
                 return false;
             }
 
-            $rowProfileId = (string) (
+            $rowProfileId = $this->stringifyValue(
                 data_get($row, 'profileId')
                 ?? data_get($row, 'profile_id')
                 ?? data_get($row, 'profile._id')
                 ?? data_get($row, 'profile.id')
-                ?? ''
             );
 
             if ($rowProfileId === '') {
@@ -184,6 +198,29 @@ class ZernioService
 
             return $rowProfileId === $profileId;
         }));
+    }
+
+    protected function stringifyValue(mixed $value): string
+    {
+        if (is_string($value)) {
+            return trim($value);
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return (string) $value;
+        }
+
+        if (is_array($value)) {
+            foreach ($value as $item) {
+                $string = $this->stringifyValue($item);
+
+                if ($string !== '') {
+                    return $string;
+                }
+            }
+        }
+
+        return '';
     }
 
     public function disconnectAccount(Team $team, string $accountId): void
@@ -202,7 +239,43 @@ class ZernioService
     }
 
     /**
-     * @param  array<int, array{platform: string, accountId: string}>  $platforms
+     * @return array<string, mixed>
+     */
+    public function completeOAuthConnection(Team $team, string $platform, string $code, string $state): array
+    {
+        $platform = $this->normalizePlatform($platform);
+
+        return $this->profiles()->withProfile(
+            $team,
+            function (string $profileId) use ($team, $platform, $code, $state): array {
+                Log::info('Zernio API: POST /connect exchange', [
+                    'team_id' => $team->id,
+                    'platform' => $platform,
+                    'profile_id' => $profileId,
+                    'has_code' => $code !== '',
+                    'has_state' => $state !== '',
+                ]);
+
+                $response = $this->request('POST', '/connect/'.$platform, [
+                    'code' => $code,
+                    'state' => $state,
+                    'profileId' => $profileId,
+                ]);
+
+                Log::info('Zernio API: POST /connect exchange response', [
+                    'team_id' => $team->id,
+                    'platform' => $platform,
+                    'account_id' => data_get($response, 'account._id') ?? data_get($response, 'account.id'),
+                    'response_keys' => array_keys($response),
+                ]);
+
+                return $response;
+            },
+        );
+    }
+
+    /**
+     * @param  array<int, array{platform: string, accountId: string, content?: string, platformSpecificData?: array<string, mixed>}>  $platforms
      * @return array<string, mixed>
      */
     public function createPost(
@@ -215,10 +288,22 @@ class ZernioService
     ): array {
         $payload = [
             'content' => $content,
-            'platforms' => array_map(fn (array $row) => [
-                'platform' => $this->normalizePlatform((string) ($row['platform'] ?? '')),
-                'accountId' => (string) ($row['accountId'] ?? $row['account_id'] ?? ''),
-            ], $platforms),
+            'platforms' => array_map(function (array $row): array {
+                $entry = [
+                    'platform' => $this->normalizePlatform((string) ($row['platform'] ?? '')),
+                    'accountId' => (string) ($row['accountId'] ?? $row['account_id'] ?? ''),
+                ];
+
+                if (isset($row['content']) && is_string($row['content']) && $row['content'] !== '') {
+                    $entry['content'] = $row['content'];
+                }
+
+                if (! empty($row['platformSpecificData']) && is_array($row['platformSpecificData'])) {
+                    $entry['platformSpecificData'] = $row['platformSpecificData'];
+                }
+
+                return $entry;
+            }, $platforms),
         ];
 
         if ($publishNow) {
@@ -246,9 +331,7 @@ class ZernioService
             'tiktok',
             'youtube',
             'linkedin',
-            'threads',
             'twitter',
-            'pinterest',
         ];
     }
 

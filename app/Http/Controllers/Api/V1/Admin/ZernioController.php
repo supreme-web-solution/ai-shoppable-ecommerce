@@ -8,6 +8,8 @@ use App\Models\SocialPost;
 use App\Models\Team;
 use App\Models\Video;
 use App\Services\Integrations\ZernioService;
+use App\Services\Social\SocialAccountConnectionService;
+use App\Services\Social\SocialPublishService;
 use App\Services\Social\SocialShopLinkService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,6 +19,8 @@ class ZernioController extends Controller
     public function __construct(
         protected ZernioService $zernio,
         protected SocialShopLinkService $shopLinks,
+        protected SocialAccountConnectionService $connections,
+        protected SocialPublishService $publisher,
     ) {}
 
     public function status(Request $request): JsonResponse
@@ -26,22 +30,12 @@ class ZernioController extends Controller
         $team = $this->resolveTeam($request);
         $profileId = trim((string) data_get($this->zernio->zernioSettings($team), 'profile_id', ''));
 
-        $accounts = [];
-        if ($profileId !== '') {
-            try {
-                $accounts = $this->zernio->listAccounts($team);
-                $team->refresh();
-                $profileId = trim((string) data_get($this->zernio->zernioSettings($team), 'profile_id', ''));
-            } catch (\Throwable) {
-                $accounts = [];
-            }
-        }
-
         return response()->json([
             'enabled' => true,
             'profile_id' => $profileId !== '' ? $profileId : null,
-            'accounts' => $accounts,
+            'accounts' => $this->connections->listForTeam($team),
             'supported_platforms' => $this->zernio->supportedPlatforms(),
+            'publish_limits' => $this->publisher->publishLimits(),
         ]);
     }
 
@@ -79,7 +73,7 @@ class ZernioController extends Controller
         $team = $this->resolveTeam($request);
 
         return response()->json([
-            'accounts' => $this->zernio->listAccounts($team),
+            'accounts' => $this->connections->listForTeam($team),
         ]);
     }
 
@@ -88,11 +82,24 @@ class ZernioController extends Controller
         $this->assertEnabled();
         $team = $this->resolveTeam($request);
 
-        $this->zernio->disconnectAccount($team, $accountId);
+        $this->connections->disconnectByAccountId($team, $accountId);
 
         return response()->json([
             'disconnected' => true,
-            'accounts' => $this->zernio->listAccounts($team),
+            'accounts' => $this->connections->listForTeam($team),
+        ]);
+    }
+
+    public function disconnectPlatform(Request $request, string $platform): JsonResponse
+    {
+        $this->assertEnabled();
+        $team = $this->resolveTeam($request);
+
+        $this->connections->disconnect($team, $platform);
+
+        return response()->json([
+            'disconnected' => true,
+            'accounts' => $this->connections->listForTeam($team),
         ]);
     }
 
@@ -196,6 +203,24 @@ class ZernioController extends Controller
         $shopUrl = $this->shopLinks->shopUrlForEmbed($embed);
         $caption = $this->shopLinks->buildCaption($video, $shopUrl, $validated['caption'] ?? null);
         $publishNow = (bool) ($validated['publish_now'] ?? true);
+        $hasMedia = count($mediaUrls) > 0;
+        $mediaType = $hasMedia ? 'video' : null;
+
+        try {
+            $prepared = $this->publisher->prepare(
+                $team,
+                $caption,
+                $validated['platforms'],
+                $hasMedia,
+                $mediaType,
+                $video->title,
+            );
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            return response()->json([
+                'message' => collect($exception->errors())->flatten()->first() ?? 'Validation failed.',
+                'errors' => $exception->errors(),
+            ], 422);
+        }
 
         $socialPost = SocialPost::query()->create([
             'team_id' => $team->id,
@@ -211,8 +236,8 @@ class ZernioController extends Controller
 
         try {
             $response = $this->zernio->createPost(
-                content: $caption,
-                platforms: $validated['platforms'],
+                content: $prepared['content'],
+                platforms: $prepared['platforms'],
                 scheduledFor: isset($validated['scheduled_for'])
                     ? $validated['scheduled_for']
                     : null,
@@ -234,6 +259,7 @@ class ZernioController extends Controller
                 'social_post' => $socialPost->fresh(),
                 'zernio' => $response,
                 'shop_url' => $shopUrl,
+                'adaptations' => $prepared['adaptations'],
             ]);
         } catch (\Throwable $e) {
             $socialPost->update([
@@ -242,7 +268,7 @@ class ZernioController extends Controller
             ]);
 
             return response()->json([
-                'message' => $e->getMessage(),
+                'message' => $this->publisher->friendlyErrorMessage($e->getMessage()),
                 'social_post' => $socialPost->fresh(),
             ], 422);
         }

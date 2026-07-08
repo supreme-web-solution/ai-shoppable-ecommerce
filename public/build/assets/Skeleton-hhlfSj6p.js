@@ -1,1 +1,0 @@
-import{A as e,E as t,G as n,St as r,wt as i}from"./reverbConfig-ONkLMFhS.js";import{mt as a}from"./app-D3IUW77F.js";var o=e({__name:`Skeleton`,props:{class:{type:[Boolean,null,String,Object,Array]}},setup(e){let o=e;return(e,s)=>(n(),t(`div`,{"data-slot":`skeleton`,class:i(r(a)(`animate-pulse rounded-md bg-primary/10`,o.class))},null,2))}});export{o as t};
