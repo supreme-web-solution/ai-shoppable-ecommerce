@@ -4,7 +4,7 @@ import { Film, TrendingUp, Users } from 'lucide-vue-next';
 import { home } from '@/routes';
 
 const page = usePage();
-const appName = (page.props as { name?: string }).name ?? 'SupremeVid';
+const appName = (page.props as { name?: string }).name ?? 'My Stream Cart';
 
 defineProps<{
     title?: string;

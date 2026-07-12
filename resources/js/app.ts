@@ -15,7 +15,7 @@ if (reverb) {
     configureEcho(echoOptionsFromConfig(reverb));
 }
 
-const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
+const appName = import.meta.env.VITE_APP_NAME || 'My Stream Cart';
 
 createInertiaApp({
     title: (title) => (title ? `${title} - ${appName}` : appName),

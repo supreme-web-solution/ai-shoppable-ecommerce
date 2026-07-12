@@ -4,14 +4,17 @@ import EmbedShell from '@/embed/EmbedShell.vue';
 import { normalizeEmbedDisplayType } from '@/lib/videoEmbed';
 
 function injectStylesheet(origin: string): void {
-    if (document.querySelector('link[data-supreme-embed]')) {
+    if (
+        document.querySelector('link[data-msc-embed]') ||
+        document.querySelector('link[data-supreme-embed]')
+    ) {
         return;
     }
 
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = `${origin}/embed/embed.css`;
-    link.setAttribute('data-supreme-embed', 'true');
+    link.setAttribute('data-msc-embed', 'true');
     document.head.appendChild(link);
 }
 
@@ -23,7 +26,7 @@ function findEmbedScript(): HTMLScriptElement | null {
     }
 
     return document.querySelector<HTMLScriptElement>(
-        'script[data-embed]:not([data-supreme-mounted])[src*="embed.js"], script[data-slug]:not([data-supreme-mounted])[src*="embed.js"]',
+        'script[data-embed]:not([data-msc-mounted]):not([data-supreme-mounted])[src*="embed.js"], script[data-slug]:not([data-msc-mounted]):not([data-supreme-mounted])[src*="embed.js"]',
     );
 }
 
@@ -32,7 +35,7 @@ function bootstrap(): void {
 
     if (!script?.src) {
         console.error(
-            '[Supreme] Embed loader must be loaded via <script src=".../embed/embed.js" data-embed="your-slug">',
+            '[My Stream Cart] Embed loader must be loaded via <script src=".../embed/embed.js" data-embed="your-slug">',
         );
 
         return;
@@ -42,7 +45,7 @@ function bootstrap(): void {
         script.getAttribute('data-embed') ?? script.getAttribute('data-slug');
 
     if (!slug) {
-        console.error('[Supreme] Missing data-embed attribute on embed script.');
+        console.error('[My Stream Cart] Missing data-embed attribute on embed script.');
 
         return;
     }
@@ -55,7 +58,7 @@ function bootstrap(): void {
     const targetSelector = script.getAttribute('data-target');
 
     const origin = new URL(script.src).origin;
-    window.__SUPREME_EMBED_ORIGIN__ = origin;
+    window.__MSC_EMBED_ORIGIN__ = origin;
 
     injectStylesheet(origin);
 
@@ -73,8 +76,8 @@ function bootstrap(): void {
         }
     } else if (embedType === 'floating_widget') {
         container = document.createElement('div');
-        container.id = `supreme-embed-${slug}`;
-        container.setAttribute('data-supreme-floating', 'true');
+        container.id = `msc-embed-${slug}`;
+        container.setAttribute('data-msc-floating', 'true');
         container.style.position = 'relative';
         container.style.width = '0';
         container.style.height = '0';
@@ -82,7 +85,7 @@ function bootstrap(): void {
         script.parentNode?.insertBefore(container, script.nextSibling);
     } else {
         container = document.createElement('div');
-        container.id = `supreme-embed-${slug}`;
+        container.id = `msc-embed-${slug}`;
         container.style.width = '100%';
         const autoHeight =
             embedType === 'carousel' || embedType === 'product_page';
@@ -103,7 +106,7 @@ function bootstrap(): void {
         embedName,
     }).mount(container);
 
-    script.setAttribute('data-supreme-mounted', 'true');
+    script.setAttribute('data-msc-mounted', 'true');
 }
 
 bootstrap();

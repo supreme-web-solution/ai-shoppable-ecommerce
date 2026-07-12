@@ -10,6 +10,8 @@ declare global {
     interface Window {
         __REVERB__?: ReverbConfig | null;
         /** @deprecated Use __REVERB__ — kept for older embed snippets. */
+        __MSC_REVERB__?: Partial<ReverbConfig>;
+        /** @deprecated Use __MSC_REVERB__ — kept for older embed snippets. */
         __SUPREME_REVERB__?: Partial<ReverbConfig>;
     }
 }
@@ -46,7 +48,8 @@ export function resolveReverbConfigFromWindow(): ReverbConfig | null {
         return normalizeConfig(fromWindow);
     }
 
-    const legacy = window.__SUPREME_REVERB__;
+    const legacy =
+        window.__MSC_REVERB__ ?? window.__SUPREME_REVERB__;
 
     if (legacy?.key) {
         return normalizeConfig(legacy);

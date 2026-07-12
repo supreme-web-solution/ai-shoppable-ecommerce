@@ -186,7 +186,7 @@ onMounted(() => {
                                     </div>
                                     <div>
                                         <p class="text-xs font-medium text-white/60">Hosted by</p>
-                                        <p class="font-bold text-white">{{ webinar?.host_name || 'SupremeVid Team' }}</p>
+                                        <p class="font-bold text-white">{{ webinar?.host_name || 'My Stream Cart Team' }}</p>
                                     </div>
                                 </div>
                             </div>

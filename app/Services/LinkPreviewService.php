@@ -60,7 +60,7 @@ class LinkPreviewService
     {
         try {
             $response = Http::timeout(5)
-                ->withHeaders(['User-Agent' => 'SupremeWebLinkPreview/1.0'])
+                ->withHeaders(['User-Agent' => 'MyStreamCartLinkPreview/1.0'])
                 ->get($url);
 
             if (! $response->successful()) {

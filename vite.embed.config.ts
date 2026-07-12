@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => {
     build: {
         lib: {
             entry: resolve(__dirname, 'resources/js/embed/loader.ts'),
-            name: 'SupremeEmbed',
+            name: 'MyStreamCartEmbed',
             formats: ['iife'],
             fileName: () => 'embed.js',
             cssFileName: 'embed',

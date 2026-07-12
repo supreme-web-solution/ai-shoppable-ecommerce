@@ -75,6 +75,7 @@ const baseNavSections: NavSection[] = [
 ];
 
 const page = usePage();
+const appName = computed(() => (page.props as { name?: string }).name ?? 'My Stream Cart');
 
 const navSections = computed((): NavSection[] => {
     const sections = [...baseNavSections];
@@ -126,8 +127,8 @@ return path === '/content' || (path.startsWith('/content/') && !path.startsWith(
                             <Film class="size-5 text-white" />
                         </div>
                         <div class="grid leading-tight">
-                            <span class="truncate text-sm font-extrabold text-gray-900">SupremeVid</span>
-                            <span class="truncate text-[10px] text-gray-400">AI Commerce Studio</span>
+                            <span class="truncate text-sm font-extrabold text-gray-900">{{ appName }}</span>
+                            <span class="truncate text-[10px] text-gray-400">Shoppable Video Commerce</span>
                         </div>
                     </Link>
                 </SidebarMenuItem>

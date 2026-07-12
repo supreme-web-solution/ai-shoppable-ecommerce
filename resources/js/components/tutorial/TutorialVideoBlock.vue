@@ -68,7 +68,7 @@ return;
 return;
 }
 
-    const existing = target.querySelector('script[data-supreme-mounted]');
+    const existing = target.querySelector('script[data-msc-mounted], script[data-supreme-mounted]');
 
     if (existing) {
         embedMounted.value = true;
