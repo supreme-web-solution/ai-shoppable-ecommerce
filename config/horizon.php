@@ -199,226 +199,116 @@ return [
     | Queue Worker Configuration
     |--------------------------------------------------------------------------
     |
-    | Here you may define the queue worker settings used by your application
-    | in all environments. These supervisors and settings handle all your
-    | queued jobs and will be provisioned by Horizon during deployment.
+    | Supervisors are grouped by resource characteristics (not one-per-queue)
+    | so a small VPS does not keep 10 idle workers alive. Redis queue names
+    | stay the same; jobs still dispatch to critical/ai/mail/etc.
+    |
+    |   supervisor-fast     — short / latency-sensitive work
+    |   supervisor-business — background business work
+    |   supervisor-heavy    — AI, embeddings, media (CPU/RAM heavy)
     |
     */
 
     'defaults' => [
-        'critical' => [
+        'supervisor-fast' => [
             'connection' => 'redis',
-            'queue' => ['critical'],
-            'balance' => 'auto',
-            'autoScalingStrategy' => 'time',
-            'maxProcesses' => 4,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 256,
-            'tries' => 3,
-            'timeout' => 60,
-            'nice' => 0,
-        ],
-        'realtime' => [
-            'connection' => 'redis',
-            'queue' => ['realtime'],
+            // Order = priority when auto-balancing.
+            'queue' => ['critical', 'realtime', 'mail', 'webhooks'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
             'maxProcesses' => 3,
-            'maxTime' => 0,
-            'maxJobs' => 0,
+            'minProcesses' => 1,
+            'balanceMaxShift' => 1,
+            'balanceCooldown' => 3,
+            'maxTime' => 3600,
+            'maxJobs' => 500,
             'memory' => 256,
             'tries' => 3,
-            'timeout' => 60,
+            'timeout' => 120,
             'nice' => 0,
         ],
-        'media' => [
+        'supervisor-business' => [
             'connection' => 'redis',
-            'queue' => ['media'],
-            'balance' => 'simple',
+            'queue' => ['default', 'integration', 'analytics'],
+            'balance' => 'auto',
             'autoScalingStrategy' => 'time',
-            'maxProcesses' => 3,
-            'maxTime' => 0,
-            'maxJobs' => 0,
+            'maxProcesses' => 2,
+            'minProcesses' => 1,
+            'balanceMaxShift' => 1,
+            'balanceCooldown' => 3,
+            'maxTime' => 3600,
+            'maxJobs' => 500,
+            'memory' => 256,
+            'tries' => 5,
+            'timeout' => 120,
+            'nice' => 0,
+        ],
+        'supervisor-heavy' => [
+            'connection' => 'redis',
+            'queue' => ['ai', 'embeddings', 'media'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 2,
+            'minProcesses' => 1,
+            'balanceMaxShift' => 1,
+            'balanceCooldown' => 3,
+            'maxTime' => 3600,
+            'maxJobs' => 200,
             'memory' => 512,
-            'tries' => 3,
-            'timeout' => 900,
-            'nice' => 0,
-        ],
-        'ai' => [
-            'connection' => 'redis',
-            'queue' => ['ai'],
-            'balance' => 'simple',
-            'autoScalingStrategy' => 'time',
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 256,
             'tries' => 5,
             'timeout' => 900,
-            'nice' => 0,
-        ],
-        'embeddings' => [
-            'connection' => 'redis',
-            'queue' => ['embeddings'],
-            'balance' => 'simple',
-            'autoScalingStrategy' => 'time',
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 256,
-            'tries' => 5,
-            'timeout' => 900,
-            'nice' => 0,
-        ],
-        'webhooks' => [
-            'connection' => 'redis',
-            'queue' => ['webhooks'],
-            'balance' => 'simple',
-            'autoScalingStrategy' => 'time',
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 256,
-            'tries' => 5,
-            'timeout' => 120,
-            'nice' => 0,
-        ],
-        'integration' => [
-            'connection' => 'redis',
-            'queue' => ['integration'],
-            'balance' => 'auto',
-            'autoScalingStrategy' => 'time',
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 256,
-            'tries' => 5,
-            'timeout' => 120,
-            'nice' => 0,
-        ],
-        'analytics' => [
-            'connection' => 'redis',
-            'queue' => ['analytics'],
-            'balance' => 'auto',
-            'autoScalingStrategy' => 'time',
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 256,
-            'tries' => 5,
-            'timeout' => 120,
-            'nice' => 0,
-        ],
-        'default' => [
-            'connection' => 'redis',
-            'queue' => ['default'],
-            'balance' => 'auto',
-            'autoScalingStrategy' => 'time',
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 256,
-            'tries' => 5,
-            'timeout' => 120,
-            'nice' => 0,
-        ],
-        'mail' => [
-            'connection' => 'redis',
-            'queue' => ['mail'],
-            'balance' => 'simple',
-            'autoScalingStrategy' => 'time',
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 256,
-            'tries' => 3,
-            'timeout' => 120,
             'nice' => 0,
         ],
     ],
 
     'environments' => [
+        // ~4 GB VPS budget: peak workers ≈ 8+3+3 = 14 (not 52).
         'production' => [
-            'critical' => [
-                'maxProcesses' => 12,
+            'supervisor-fast' => [
+                'maxProcesses' => 8,
+                'minProcesses' => 1,
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
             ],
-            'realtime' => [
-                'maxProcesses' => 8,
+            'supervisor-business' => [
+                'maxProcesses' => 3,
+                'minProcesses' => 1,
             ],
-            'media' => [
-                'maxProcesses' => 6,
-            ],
-            'ai' => [
-                'maxProcesses' => 4,
-            ],
-            'embeddings' => [
-                'maxProcesses' => 4,
-            ],
-            'webhooks' => [
-                'maxProcesses' => 4,
-            ],
-            'integration' => [
-                'maxProcesses' => 4,
-            ],
-            'analytics' => [
-                'maxProcesses' => 4,
-            ],
-            'default' => [
-                'maxProcesses' => 4,
-            ],
-            'mail' => [
-                'maxProcesses' => 2,
+            'supervisor-heavy' => [
+                'maxProcesses' => 3,
+                'minProcesses' => 1,
             ],
         ],
 
         'local' => [
-            'critical' => ['maxProcesses' => 1],
-            'realtime' => ['maxProcesses' => 1],
-            'media' => ['maxProcesses' => 1],
-            'ai' => ['maxProcesses' => 1],
-            'embeddings' => ['maxProcesses' => 1],
-            'webhooks' => ['maxProcesses' => 1],
-            'integration' => ['maxProcesses' => 1],
-            'analytics' => ['maxProcesses' => 1],
-            'default' => ['maxProcesses' => 1],
-            'mail' => ['maxProcesses' => 1],
+            'supervisor-fast' => [
+                'maxProcesses' => 1,
+                'minProcesses' => 1,
+            ],
+            'supervisor-business' => [
+                'maxProcesses' => 1,
+                'minProcesses' => 1,
+            ],
+            'supervisor-heavy' => [
+                'maxProcesses' => 1,
+                'minProcesses' => 1,
+            ],
         ],
 
         'staging' => [
-            'critical' => [
-                'maxProcesses' => 6,
+            'supervisor-fast' => [
+                'maxProcesses' => 4,
+                'minProcesses' => 1,
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
             ],
-            'realtime' => [
-                'maxProcesses' => 4,
-            ],
-            'media' => [
-                'maxProcesses' => 3,
-            ],
-            'ai' => [
+            'supervisor-business' => [
                 'maxProcesses' => 2,
+                'minProcesses' => 1,
             ],
-            'embeddings' => [
+            'supervisor-heavy' => [
                 'maxProcesses' => 2,
-            ],
-            'webhooks' => [
-                'maxProcesses' => 2,
-            ],
-            'integration' => [
-                'maxProcesses' => 2,
-            ],
-            'analytics' => [
-                'maxProcesses' => 2,
-            ],
-            'default' => [
-                'maxProcesses' => 8,
-            ],
-            'mail' => [
-                'maxProcesses' => 2,
+                'minProcesses' => 1,
             ],
         ],
     ],
