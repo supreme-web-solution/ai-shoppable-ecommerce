@@ -1,0 +1,1 @@
+import{Ct as e,D as t,K as n,Tt as r,j as i}from"./reverbConfig-C7s8x-e4.js";import{mt as a}from"./app-Dsv2t-SS.js";var o=i({__name:`Skeleton`,props:{class:{type:[Boolean,null,String,Object,Array]}},setup(i){let o=i;return(i,s)=>(n(),t(`div`,{"data-slot":`skeleton`,class:r(e(a)(`animate-pulse rounded-md bg-primary/10`,o.class))},null,2))}});export{o as t};
