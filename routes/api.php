@@ -125,6 +125,7 @@ Route::prefix('v1')->group(function (): void {
             Route::put('videos/{video}/product-tags/{productTag}', [VideoProductTagController::class, 'update']);
             Route::delete('videos/{video}/product-tags/{productTag}', [VideoProductTagController::class, 'destroy']);
             Route::post('products/upload-image', [ProductController::class, 'uploadImage']);
+            Route::post('products/upload-digital-file', [ProductController::class, 'uploadDigitalFile']);
             Route::post('products/{product}/duplicate', [ProductController::class, 'duplicate']);
             Route::apiResource('products', ProductController::class);
             Route::apiResource('orders', OrderController::class)->only(['index', 'show']);

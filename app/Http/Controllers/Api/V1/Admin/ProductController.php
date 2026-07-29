@@ -10,6 +10,7 @@ use App\Services\CloudinaryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class ProductController extends Controller
 {
@@ -39,6 +40,34 @@ class ProductController extends Controller
 
         return response()->json([
             'image_url' => $upload['secure_url'],
+            'public_id' => $upload['public_id'],
+        ]);
+    }
+
+    public function uploadDigitalFile(Request $request, CloudinaryService $cloudinary)
+    {
+        $teamId = $this->resolveTeamId($request);
+
+        $validated = $request->validate([
+            'team_id' => ['required', 'integer', 'exists:teams,id'],
+            'file' => [
+                'required',
+                'file',
+                'max:51200',
+                'mimes:pdf,zip,epub,mp3,mp4,wav,mov,png,jpg,jpeg,webp,gif,txt,csv,doc,docx,xls,xlsx,ppt,pptx',
+            ],
+        ]);
+
+        abort_unless($teamId === (int) $validated['team_id'], 403);
+
+        $file = $request->file('file');
+        $upload = $cloudinary->uploadRawFile($file->getRealPath(), [
+            'public_id' => 'teams/'.$teamId.'/digital-products/'.Str::uuid()->toString(),
+        ]);
+
+        return response()->json([
+            'digital_access_url' => $upload['secure_url'],
+            'digital_file_name' => $file->getClientOriginalName(),
             'public_id' => $upload['public_id'],
         ]);
     }
@@ -96,10 +125,31 @@ class ProductController extends Controller
     {
         $this->authorize('update', $product);
 
+        if ($request->input('product_type', $product->product_type) === 'physical') {
+            $request->merge([
+                'digital_access_type' => null,
+                'digital_access_url' => null,
+                'digital_file_name' => null,
+            ]);
+        }
+
         $validated = $request->validate([
             'title' => ['sometimes', 'string', 'max:255'],
             'slug' => ['sometimes', 'string', 'max:255'],
             'source' => ['sometimes', 'in:native,shopify,woocommerce'],
+            'product_type' => ['sometimes', 'in:physical,digital'],
+            'digital_access_type' => [
+                'nullable',
+                'in:file,link',
+                Rule::requiredIf(fn () => $request->input('product_type', $product->product_type) === 'digital'),
+            ],
+            'digital_access_url' => [
+                'nullable',
+                'url',
+                'max:2048',
+                Rule::requiredIf(fn () => $request->input('product_type', $product->product_type) === 'digital'),
+            ],
+            'digital_file_name' => ['nullable', 'string', 'max:255'],
             'description' => ['sometimes', 'nullable', 'string'],
             'image_url' => ['sometimes', 'nullable', 'url'],
             'currency' => ['sometimes', 'string', 'size:3'],
@@ -165,6 +215,10 @@ class ProductController extends Controller
                 'team_id' => $product->team_id,
                 'external_id' => null,
                 'source' => 'native',
+                'product_type' => $product->product_type ?? 'physical',
+                'digital_access_type' => $product->digital_access_type,
+                'digital_access_url' => $product->digital_access_url,
+                'digital_file_name' => $product->digital_file_name,
                 'title' => $title,
                 'slug' => $slug,
                 'description' => $product->description,

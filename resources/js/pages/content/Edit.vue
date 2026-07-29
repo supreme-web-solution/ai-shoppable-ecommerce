@@ -76,6 +76,7 @@ type ProductOption = {
     sale_price?: string | null;
     currency: string;
     description?: string | null;
+    product_type?: 'physical' | 'digital';
 };
 
 type TagPositionDraft = {
@@ -564,6 +565,10 @@ const attachedProducts = computed(() =>
         tag,
         product: products.value.find((p) => p.id === tag.product_id),
     })).filter(({ product }) => product !== undefined),
+);
+
+const hasDigitalAttached = computed(() =>
+    attachedProducts.value.some(({ product }) => product?.product_type === 'digital'),
 );
 
 function startPollingIfNeeded() {
@@ -1120,6 +1125,20 @@ onUnmounted(stopPolling);
                         </div>
                     </div>
                     <p class="px-5 pb-2 text-xs text-gray-500">These products appear below the video for viewers to purchase.</p>
+                    <div
+                        v-if="hasDigitalAttached"
+                        class="mx-5 mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-3 text-xs text-sky-900"
+                    >
+                        <p class="font-semibold">In-app checkout required</p>
+                        <p class="mt-1 leading-relaxed text-sky-800/90">
+                            This video has at least one digital product. Checkout will use in-app Stripe or PayPal
+                            (not Shopify/WooCommerce), even if your store checkout is set to an external store.
+                            Make sure Stripe or PayPal is connected in
+                            <Link href="/settings/integrations" class="font-semibold underline underline-offset-2">
+                                Settings → Integrations
+                            </Link>.
+                        </p>
+                    </div>
                     <div class="px-5 pb-5">
                         <div v-if="attachedProducts.length === 0" class="rounded-xl border border-dashed border-gray-200 py-8 text-center">
                             <Package class="mx-auto mb-2 size-6 text-gray-300" />
@@ -1138,7 +1157,17 @@ onUnmounted(stopPolling);
                                         <ImageOff v-else class="size-4 text-gray-400" />
                                     </div>
                                     <div class="flex-1">
-                                        <p class="text-sm font-semibold text-gray-800">{{ product!.title }}</p>
+                                        <div class="flex flex-wrap items-center gap-1.5">
+                                            <p class="text-sm font-semibold text-gray-800">{{ product!.title }}</p>
+                                            <span
+                                                class="inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                                :class="product!.product_type === 'digital'
+                                                    ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                                    : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'"
+                                            >
+                                                {{ product!.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                                            </span>
+                                        </div>
                                         <p class="text-xs font-bold text-[#E8563A]">
                                             {{ formatPrice(product!.currency, product!.sale_price || product!.price) }}
                                         </p>
@@ -1501,7 +1530,17 @@ onUnmounted(stopPolling);
                             </div>
                         </div>
                         <div class="min-w-0 flex-1">
-                            <p class="font-semibold text-gray-800">{{ product.title }}</p>
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <p class="font-semibold text-gray-800">{{ product.title }}</p>
+                                <span
+                                    class="inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                    :class="product.product_type === 'digital'
+                                        ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                        : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'"
+                                >
+                                    {{ product.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                                </span>
+                            </div>
                             <p v-if="product.description" class="mt-0.5 line-clamp-1 text-xs text-gray-500">{{ product.description }}</p>
                             <p class="mt-0.5 text-sm font-bold text-[#E8563A]">
                                 {{ formatPrice(product.currency, product.sale_price || product.price) }}

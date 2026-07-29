@@ -135,6 +135,7 @@ type ProductOption = {
     price?: string | null;
     sale_price?: string | null;
     currency?: string;
+    product_type?: 'physical' | 'digital';
 };
 
 type WebinarFeaturedProduct = ProductOption & {
@@ -2331,7 +2332,17 @@ onBeforeUnmount(() => {
                                         <ImageOff v-else class="size-4 text-muted-foreground" />
                                     </div>
                                     <div class="min-w-0 flex-1">
-                                        <p class="truncate text-sm font-medium">{{ product.title }}</p>
+                                        <div class="flex flex-wrap items-center gap-1.5">
+                                            <p class="truncate text-sm font-medium">{{ product.title }}</p>
+                                            <span
+                                                class="inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                                :class="product.product_type === 'digital'
+                                                    ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                                    : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'"
+                                            >
+                                                {{ product.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                                            </span>
+                                        </div>
                                         <p class="text-xs text-muted-foreground">
                                             {{ product.sale_price ? `$${product.sale_price}` : product.price ? `$${product.price}` : '' }}
                                         </p>
@@ -3166,7 +3177,17 @@ onBeforeUnmount(() => {
                                         <ImageOff v-else class="size-4 text-muted-foreground" />
                                     </div>
                                     <div class="min-w-0 flex-1">
-                                        <p class="truncate text-sm font-medium">{{ product.title }}</p>
+                                        <div class="flex flex-wrap items-center gap-1.5">
+                                            <p class="truncate text-sm font-medium">{{ product.title }}</p>
+                                            <span
+                                                class="inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                                :class="product.product_type === 'digital'
+                                                    ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                                    : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'"
+                                            >
+                                                {{ product.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                                            </span>
+                                        </div>
                                         <p class="text-xs text-muted-foreground">
                                             {{ product.sale_price ? `$${product.sale_price}` : product.price ? `$${product.price}` : '' }}
                                         </p>

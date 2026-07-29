@@ -15,6 +15,10 @@ class Product extends Model
         'team_id',
         'external_id',
         'source',
+        'product_type',
+        'digital_access_type',
+        'digital_access_url',
+        'digital_file_name',
         'title',
         'slug',
         'description',
@@ -35,6 +39,40 @@ class Product extends Model
             'sale_price' => 'decimal:2',
             'metadata' => 'array',
             'is_active' => 'boolean',
+        ];
+    }
+
+    public function isDigital(): bool
+    {
+        return $this->product_type === 'digital';
+    }
+
+    public function hasDigitalAccess(): bool
+    {
+        return $this->isDigital()
+            && filled($this->digital_access_url)
+            && in_array($this->digital_access_type, ['file', 'link'], true);
+    }
+
+    /**
+     * @return array{product_type: string, digital_access_type: ?string, digital_access_url: ?string, digital_file_name: ?string}
+     */
+    public function digitalAccessSnapshot(): array
+    {
+        if (! $this->isDigital()) {
+            return [
+                'product_type' => 'physical',
+                'digital_access_type' => null,
+                'digital_access_url' => null,
+                'digital_file_name' => null,
+            ];
+        }
+
+        return [
+            'product_type' => 'digital',
+            'digital_access_type' => $this->digital_access_type,
+            'digital_access_url' => $this->digital_access_url,
+            'digital_file_name' => $this->digital_file_name,
         ];
     }
 

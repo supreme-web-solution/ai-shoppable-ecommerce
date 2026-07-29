@@ -14,6 +14,8 @@ class ProductResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $canManage = $request->user()?->can('update', $this->resource) ?? false;
+
         return [
             'id' => $this->id,
             'team_id' => $this->team_id,
@@ -21,6 +23,10 @@ class ProductResource extends JsonResource
             'slug' => $this->slug,
             'description' => $this->description,
             'source' => $this->source,
+            'product_type' => $this->product_type ?? 'physical',
+            'digital_access_type' => $this->when($canManage, $this->digital_access_type),
+            'digital_access_url' => $this->when($canManage, $this->digital_access_url),
+            'digital_file_name' => $this->when($canManage, $this->digital_file_name),
             'image_url' => $this->image_url,
             'currency' => $this->currency,
             'price' => $this->price,

@@ -67,6 +67,39 @@
             </tbody>
         </table>
 
+        @php
+            $digitalItems = $order->items->filter(function ($item) {
+                return data_get($item->metadata, 'product_type') === 'digital'
+                    && filled(data_get($item->metadata, 'digital_access_url'));
+            });
+        @endphp
+
+        @if ($digitalItems->isNotEmpty())
+            <h2 style="font-size:16px;margin:28px 0 8px;">Your digital products</h2>
+            <p class="muted" style="margin:0 0 12px;">Use these links to access your digital purchases.</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Access</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach ($digitalItems as $item)
+                        <tr>
+                            <td>{{ $item->title }}</td>
+                            <td>
+                                <a href="{{ data_get($item->metadata, 'digital_access_url') }}">
+                                    {{ data_get($item->metadata, 'digital_file_name')
+                                        ?: (data_get($item->metadata, 'digital_access_type') === 'link' ? 'Open access link' : 'Download') }}
+                                </a>
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        @endif
+
         <p class="footer">Thank you for your purchase. Keep this receipt for your records.</p>
     </div>
 </body>

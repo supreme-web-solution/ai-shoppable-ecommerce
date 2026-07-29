@@ -4,6 +4,7 @@ import {
     CheckCircle2,
     Clock,
     Copy,
+    DollarSign,
     Film,
     Layers3,
     Link2,
@@ -44,6 +45,16 @@ import {
 } from '@/lib/videoEmbed';
 import type {EmbedDisplayType, EmbedItem} from '@/lib/videoEmbed';
 
+type VideoProductTag = {
+    id?: number;
+    product_id?: number;
+    product?: {
+        id?: number;
+        title?: string;
+        product_type?: 'physical' | 'digital';
+    } | null;
+};
+
 type VideoItem = {
     id: number;
     title: string;
@@ -53,7 +64,7 @@ type VideoItem = {
     visibility: string;
     playback_url?: string | null;
     thumbnail_url?: string | null;
-    product_tags?: unknown[];
+    product_tags?: VideoProductTag[];
     published_at?: string | null;
     metadata?: Record<string, unknown> | null;
 };
@@ -108,6 +119,10 @@ const savingPlaylists = ref(false);
 
 function videoUsageContext(video: VideoItem): string {
     return String(video.metadata?.usage_context ?? 'shoppable');
+}
+
+function videoHasDigitalProduct(video: VideoItem): boolean {
+    return (video.product_tags ?? []).some((tag) => tag.product?.product_type === 'digital');
 }
 
 const filteredVideos = computed(() => {
@@ -508,6 +523,14 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
                                     <Tag class="size-3 shrink-0" />
                                     {{ video.product_tags.length }} product{{ video.product_tags.length !== 1 ? 's' : '' }}
                                 </span>
+                                <span
+                                    v-if="videoHasDigitalProduct(video)"
+                                    class="tag-pill tag-pill-checkout"
+                                    title="This video includes a digital product, so checkout uses in-app Stripe/PayPal (not Shopify/WooCommerce). Connect Stripe or PayPal in Settings → Integrations."
+                                >
+                                    <DollarSign class="size-3 shrink-0" />
+                                    In-app checkout
+                                </span>
                                 <span v-if="video.published_at" class="text-xs text-muted-foreground">
                                     Published {{ formatDate(video.published_at) }}
                                 </span>
@@ -774,6 +797,7 @@ onMounted(() => Promise.all([loadVideos(), loadPlaylists()]));
 .status-failed { background: rgba(239,68,68,0.1); color: #dc2626; }
 .status-default { background: #f3f4f6; color: #6b7280; }
 .tag-pill { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 9999px; background: #f3f4f6; font-size: 11px; font-weight: 500; color: #6b7280; }
+.tag-pill-checkout { background: #f0f9ff; color: #0369a1; }
 .video-title-block { overflow: hidden; max-width: 80%; }
 .video-title { display: block; max-width: 100%; }
 </style>

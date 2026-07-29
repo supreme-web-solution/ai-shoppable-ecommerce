@@ -5,6 +5,7 @@ namespace App\Http\Requests\Api\V1;
 use App\Http\Requests\Api\V1\Concerns\AuthorizesTeamAccess;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreProductRequest extends FormRequest
 {
@@ -22,6 +23,20 @@ class StoreProductRequest extends FormRequest
             && $this->user()?->can('create', \App\Models\Product::class);
     }
 
+    protected function prepareForValidation(): void
+    {
+        $productType = $this->input('product_type', 'physical');
+
+        if ($productType === 'physical') {
+            $this->merge([
+                'product_type' => 'physical',
+                'digital_access_type' => null,
+                'digital_access_url' => null,
+                'digital_file_name' => null,
+            ]);
+        }
+    }
+
     /**
      * Get the validation rules that apply to the request.
      *
@@ -34,6 +49,19 @@ class StoreProductRequest extends FormRequest
             'title' => ['required', 'string', 'max:255'],
             'slug' => ['required', 'string', 'max:255'],
             'source' => ['sometimes', 'in:native,shopify,woocommerce'],
+            'product_type' => ['sometimes', 'in:physical,digital'],
+            'digital_access_type' => [
+                'nullable',
+                'in:file,link',
+                Rule::requiredIf(fn () => $this->input('product_type') === 'digital'),
+            ],
+            'digital_access_url' => [
+                'nullable',
+                'url',
+                'max:2048',
+                Rule::requiredIf(fn () => $this->input('product_type') === 'digital'),
+            ],
+            'digital_file_name' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'image_url' => ['nullable', 'url'],
             'currency' => ['required', 'string', 'size:3'],

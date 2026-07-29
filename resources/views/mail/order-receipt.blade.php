@@ -17,6 +17,28 @@ Your payment for **{{ $order->order_number }}** at **{{ $storeName }}** is confi
 - {{ $item->title }} × {{ $item->quantity }} — {{ $item->line_total }} {{ $order->currency }}
 @endforeach
 
+@php
+    $digitalItems = $order->items->filter(function ($item) {
+        return data_get($item->metadata, 'product_type') === 'digital'
+            && filled(data_get($item->metadata, 'digital_access_url'));
+    });
+@endphp
+
+@if ($digitalItems->isNotEmpty())
+## Your digital products
+
+Access your digital products below:
+
+@foreach ($digitalItems as $item)
+@php
+    $accessUrl = (string) data_get($item->metadata, 'digital_access_url');
+    $accessLabel = data_get($item->metadata, 'digital_file_name')
+        ?: (data_get($item->metadata, 'digital_access_type') === 'link' ? 'Open access link' : 'Download');
+@endphp
+- **{{ $item->title }}** — [{{ $accessLabel }}]({{ $accessUrl }})
+@endforeach
+@endif
+
 @if ($receiptUrl)
 <x-mail::button :url="$receiptUrl">
 Download PDF receipt

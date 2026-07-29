@@ -233,6 +233,14 @@ async function handleFinalSubmit() {
                         >
                         <Package v-else class="size-7 text-muted-foreground/40" />
                         <span class="min-w-0 flex-1 truncate font-medium">{{ product.title }}</span>
+                        <span
+                            class="inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                            :class="product.product_type === 'digital'
+                                ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'"
+                        >
+                            {{ product.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                        </span>
                         <Check
                             v-if="selectedProductIds.includes(product.id)"
                             class="size-3.5 shrink-0 text-[#E8563A]"

@@ -136,15 +136,23 @@ class WebinarController extends Controller
 
         $cart->items()->where('product_id', '!=', $product->id)->delete();
         $this->upsertCartItem($cart, $product);
+        $cart->load('items.product');
 
-        $resolved = $checkoutResolver->resolve($team, 'hybrid', null);
+        $hasDigital = $product->isDigital()
+            || $cart->items->contains(fn ($item) => $item->product?->isDigital());
+
+        $resolved = $hasDigital
+            ? ['mode' => 'native', 'provider' => null]
+            : $checkoutResolver->resolve($team, 'hybrid', null);
 
         if ($resolved['mode'] === 'native') {
             $nativeProvider = $checkoutResolver->activeNativeProvider($team);
 
             if ($nativeProvider === null) {
                 return response()->json([
-                    'message' => 'Checkout is not configured for this store.',
+                    'message' => $hasDigital
+                        ? 'Digital products require in-app checkout. Connect Stripe or PayPal in Settings > Integrations.'
+                        : 'Checkout is not configured for this store.',
                 ], 422);
             }
 

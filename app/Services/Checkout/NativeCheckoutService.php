@@ -16,7 +16,7 @@ class NativeCheckoutService
     public function createPendingOrder(Cart $cart, array $checkoutPayload = [], string $provider = 'native'): Order
     {
         return DB::transaction(function () use ($cart, $checkoutPayload, $provider): Order {
-            $cart->loadMissing('items');
+            $cart->loadMissing(['items.product']);
 
             $subtotal = $cart->items->sum('line_total');
             $tax = (float) ($checkoutPayload['tax_amount'] ?? 0);
@@ -50,15 +50,26 @@ class NativeCheckoutService
             ]);
 
             foreach ($cart->items as $item) {
+                $product = $item->product;
+                $digitalSnapshot = $product?->digitalAccessSnapshot() ?? [
+                    'product_type' => 'physical',
+                    'digital_access_type' => null,
+                    'digital_access_url' => null,
+                    'digital_file_name' => null,
+                ];
+
                 $order->items()->create([
                     'product_id' => $item->product_id,
                     'product_variant_id' => $item->product_variant_id,
-                    'title' => $item->product?->title ?? 'Unknown Product',
-                    'sku' => $item->product?->sku,
+                    'title' => $product?->title ?? 'Unknown Product',
+                    'sku' => $product?->sku,
                     'quantity' => $item->quantity,
                     'unit_price' => $item->unit_price,
                     'line_total' => $item->line_total,
-                    'metadata' => $item->metadata,
+                    'metadata' => array_merge(
+                        is_array($item->metadata) ? $item->metadata : [],
+                        $digitalSnapshot,
+                    ),
                 ]);
             }
 

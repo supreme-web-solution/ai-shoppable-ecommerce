@@ -180,6 +180,28 @@ export function useAdminApi() {
         });
     }
 
+    async function uploadProductDigitalFile(file: File): Promise<{
+        digital_access_url: string;
+        digital_file_name: string;
+        public_id?: string;
+    }> {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('team_id', String(teamId.value));
+
+        const headers = buildHeaders();
+
+        return apiFetch<{
+            digital_access_url: string;
+            digital_file_name: string;
+            public_id?: string;
+        }>('/api/v1/admin/products/upload-digital-file', {
+            method: 'POST',
+            headers,
+            body: formData,
+        });
+    }
+
     async function prepareVideoUpload(videoId: number): Promise<string> {
         const response = await postJson<{ upload_token: string }>(
             `/api/v1/admin/videos/${videoId}/prepare-upload`,
@@ -269,6 +291,7 @@ export function useAdminApi() {
         prepareVideoUpload,
         uploadVideoChunks,
         uploadProductImage,
+        uploadProductDigitalFile,
         ensureTeam,
     };
 }

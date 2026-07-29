@@ -63,6 +63,7 @@ type ProductOption = {
     sale_price?: string | null;
     currency: string;
     description?: string | null;
+    product_type?: 'physical' | 'digital';
 };
 
 type VideoItem = { id: number; title: string };
@@ -1108,7 +1109,17 @@ onMounted(() => {
                                     <ImageOff v-else class="size-5 text-muted-foreground/50" />
                                 </div>
                                 <div class="min-w-0 flex-1">
-                                    <p class="truncate font-semibold text-foreground">{{ p.title }}</p>
+                                    <div class="flex flex-wrap items-center gap-1.5">
+                                        <p class="truncate font-semibold text-foreground">{{ p.title }}</p>
+                                        <span
+                                            class="inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                            :class="p.product_type === 'digital'
+                                                ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                                : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'"
+                                        >
+                                            {{ p.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                                        </span>
+                                    </div>
                                     <p class="mt-0.5 text-sm font-medium text-[#E8563A]">
                                         {{ formatPrice(p.currency, p.sale_price || p.price) }}
                                     </p>
@@ -1339,6 +1350,14 @@ onMounted(() => {
                                         class="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-xs font-medium"
                                     >
                                         {{ p.title }}
+                                        <span
+                                            class="rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                                            :class="p.product_type === 'digital'
+                                                ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                                : 'bg-white text-slate-600 ring-1 ring-slate-200/80'"
+                                        >
+                                            {{ p.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                                        </span>
                                     </span>
                                     <span v-if="selectedProducts.length > 4" class="text-xs text-muted-foreground">
                                         +{{ selectedProducts.length - 4 }} more
@@ -2259,7 +2278,17 @@ onMounted(() => {
                                 <ImageOff v-else class="size-3.5 text-muted-foreground" />
                             </div>
                             <div class="min-w-0 flex-1">
-                                <p class="truncate text-xs font-semibold">{{ p.title }}</p>
+                                <div class="flex flex-wrap items-center gap-1">
+                                    <p class="truncate text-xs font-semibold">{{ p.title }}</p>
+                                    <span
+                                        class="inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                                        :class="p.product_type === 'digital'
+                                            ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                            : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'"
+                                    >
+                                        {{ p.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                                    </span>
+                                </div>
                                 <p class="text-[10px] font-medium text-muted-foreground">{{ formatPrice(p.currency, p.sale_price || p.price) }}</p>
                             </div>
                         </div>
@@ -2323,7 +2352,17 @@ onMounted(() => {
                             <ImageOff v-else class="size-5 text-muted-foreground" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <p class="truncate font-semibold">{{ product.title }}</p>
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <p class="truncate font-semibold">{{ product.title }}</p>
+                                <span
+                                    class="inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                    :class="product.product_type === 'digital'
+                                        ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200/80'
+                                        : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'"
+                                >
+                                    {{ product.product_type === 'digital' ? 'Digital' : 'Physical' }}
+                                </span>
+                            </div>
                             <p class="mt-0.5 text-sm font-medium text-[#E8563A]">
                                 {{ formatPrice(product.currency, product.sale_price || product.price) }}
                                 <span

@@ -2,6 +2,7 @@
 import { Head } from '@inertiajs/vue3';
 import {
     Copy,
+    FileUp,
     ImageOff,
     Loader2,
     Package,
@@ -48,6 +49,10 @@ type ProductItem = {
     currency: string;
     inventory?: number | null;
     source: string;
+    product_type?: 'physical' | 'digital';
+    digital_access_type?: 'file' | 'link' | null;
+    digital_access_url?: string | null;
+    digital_file_name?: string | null;
     is_active: boolean;
     variants?: VariantDraft[];
 };
@@ -61,7 +66,7 @@ defineOptions({
     },
 });
 
-const { getList, postJson, patchJson, deleteResource, ensureTeam, uploadProductImage } = useAdminApi();
+const { getList, postJson, patchJson, deleteResource, ensureTeam, uploadProductImage, uploadProductDigitalFile } = useAdminApi();
 
 const PRODUCTS_PER_PAGE = 12;
 
@@ -69,6 +74,7 @@ const loading = ref(false);
 const saving = ref(false);
 const duplicatingId = ref<number | null>(null);
 const imageUploading = ref(false);
+const digitalFileUploading = ref(false);
 const imagePreviewUrl = ref<string | null>(null);
 const selectedImageFile = ref<File | null>(null);
 const createModalOpen = ref(false);
@@ -87,10 +93,25 @@ const form = ref({
     sale_price: '' as number | '',
     sku: '',
     inventory: 0,
+    product_type: 'physical' as 'physical' | 'digital',
+    digital_access_type: 'file' as 'file' | 'link',
+    digital_access_url: '',
+    digital_file_name: '',
     variants: [{ title: 'Default', sku: '', price: 0, inventory: 0, is_default: true }] as VariantDraft[],
 });
 
-const isModalLocked = computed(() => saving.value || imageUploading.value);
+const isModalLocked = computed(() => saving.value || imageUploading.value || digitalFileUploading.value);
+const isDigital = computed(() => form.value.product_type === 'digital');
+const digitalReady = computed(() => {
+    if (!isDigital.value) {
+        return true;
+    }
+
+    return Boolean(form.value.digital_access_url.trim());
+});
+const canSubmitProduct = computed(() => {
+    return Boolean(form.value.title) && form.value.price !== 0 && digitalReady.value && !isModalLocked.value;
+});
 
 function onCreateModalOpenChange(open: boolean) {
     if (!open && isModalLocked.value) {
@@ -177,6 +198,26 @@ async function resolveProductImageUrl(): Promise<string | null> {
     return form.value.image_url || null;
 }
 
+function digitalPayload() {
+    if (form.value.product_type !== 'digital') {
+        return {
+            product_type: 'physical' as const,
+            digital_access_type: null,
+            digital_access_url: null,
+            digital_file_name: null,
+        };
+    }
+
+    return {
+        product_type: 'digital' as const,
+        digital_access_type: form.value.digital_access_type,
+        digital_access_url: form.value.digital_access_url.trim() || null,
+        digital_file_name: form.value.digital_access_type === 'file'
+            ? (form.value.digital_file_name.trim() || null)
+            : null,
+    };
+}
+
 async function createProduct() {
     saving.value = true;
     errorText.value = '';
@@ -197,6 +238,7 @@ async function createProduct() {
             inventory: form.value.inventory,
             source: 'native',
             is_active: true,
+            ...digitalPayload(),
             variants: form.value.variants.map((v, i) => ({
                 ...v,
                 price: v.price || form.value.price,
@@ -236,6 +278,7 @@ return;
             sale_price: form.value.sale_price === '' ? null : form.value.sale_price,
             sku: form.value.sku || null,
             inventory: form.value.inventory,
+            ...digitalPayload(),
             variants: form.value.variants.map((v, i) => ({
                 ...v,
                 price: v.price || form.value.price,
@@ -333,6 +376,10 @@ function resetForm() {
         sale_price: '',
         sku: '',
         inventory: 0,
+        product_type: 'physical',
+        digital_access_type: 'file',
+        digital_access_url: '',
+        digital_file_name: '',
         variants: [{ title: 'Default', sku: '', price: 0, inventory: 0, is_default: true }],
     };
 }
@@ -357,6 +404,36 @@ function onImageUrlInput() {
     }
 }
 
+async function onDigitalFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+
+    if (!file) {
+        return;
+    }
+
+    digitalFileUploading.value = true;
+    errorText.value = '';
+
+    try {
+        await ensureTeam();
+        const result = await uploadProductDigitalFile(file);
+        form.value.digital_access_type = 'file';
+        form.value.digital_access_url = result.digital_access_url;
+        form.value.digital_file_name = result.digital_file_name;
+    } catch (error) {
+        errorText.value = error instanceof Error ? error.message : 'Could not upload digital file.';
+    } finally {
+        digitalFileUploading.value = false;
+        input.value = '';
+    }
+}
+
+function clearDigitalFile() {
+    form.value.digital_access_url = '';
+    form.value.digital_file_name = '';
+}
+
 function openCreateModal() {
     editingProductId.value = null;
     resetForm();
@@ -377,6 +454,10 @@ function openEditModal(product: ProductItem) {
         sale_price: product.sale_price ? Number(product.sale_price) : '',
         sku: product.sku ?? '',
         inventory: Number(product.inventory ?? 0),
+        product_type: product.product_type === 'digital' ? 'digital' : 'physical',
+        digital_access_type: product.digital_access_type === 'link' ? 'link' : 'file',
+        digital_access_url: product.digital_access_url ?? '',
+        digital_file_name: product.digital_file_name ?? '',
         variants: (product.variants?.length
             ? product.variants
             : [{ title: 'Default', sku: product.sku ?? '', price: Number(product.price ?? 0), inventory: Number(product.inventory ?? 0), is_default: true }]
@@ -494,6 +575,9 @@ onUnmounted(clearSelectedImageFile);
                         <p class="font-semibold">{{ product.title }}</p>
                         <Badge :variant="product.is_active ? 'default' : 'secondary'">
                             {{ product.is_active ? 'Active' : 'Inactive' }}
+                        </Badge>
+                        <Badge variant="outline" class="text-xs">
+                            {{ product.product_type === 'digital' ? 'Digital' : 'Physical' }}
                         </Badge>
                         <Badge variant="outline" class="text-xs">{{ product.source }}</Badge>
                     </div>
@@ -629,6 +713,96 @@ onUnmounted(clearSelectedImageFile);
                         />
                     </div>
                     <div class="space-y-1.5 sm:col-span-2">
+                        <Label>Product type</Label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                class="rounded-xl border px-3 py-2.5 text-left text-sm transition"
+                                :class="form.product_type === 'physical'
+                                    ? 'border-[#E8563A] bg-[#E8563A]/5 font-semibold text-[#E8563A]'
+                                    : 'border-border bg-background text-muted-foreground hover:border-[#E8563A]/40'"
+                                @click="form.product_type = 'physical'"
+                            >
+                                Physical
+                                <span class="mt-0.5 block text-[11px] font-normal text-muted-foreground">Shipped / fulfilled offline</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-xl border px-3 py-2.5 text-left text-sm transition"
+                                :class="form.product_type === 'digital'
+                                    ? 'border-[#E8563A] bg-[#E8563A]/5 font-semibold text-[#E8563A]'
+                                    : 'border-border bg-background text-muted-foreground hover:border-[#E8563A]/40'"
+                                @click="form.product_type = 'digital'"
+                            >
+                                Digital
+                                <span class="mt-0.5 block text-[11px] font-normal text-muted-foreground">File or link after payment</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div v-if="isDigital" class="space-y-3 sm:col-span-2 rounded-xl border bg-muted/20 p-4">
+                        <div class="space-y-1.5">
+                            <Label>Digital delivery</Label>
+                            <div class="flex flex-wrap gap-3 text-sm">
+                                <label class="inline-flex items-center gap-2">
+                                    <input v-model="form.digital_access_type" type="radio" value="file" class="accent-[#E8563A]">
+                                    Upload file
+                                </label>
+                                <label class="inline-flex items-center gap-2">
+                                    <input v-model="form.digital_access_type" type="radio" value="link" class="accent-[#E8563A]">
+                                    External link
+                                </label>
+                            </div>
+                        </div>
+
+                        <div v-if="form.digital_access_type === 'file'" class="space-y-2">
+                            <label
+                                class="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed py-3 text-sm text-muted-foreground transition-colors hover:border-[#E8563A]/40 hover:bg-[#E8563A]/5 hover:text-[#E8563A]"
+                                :class="digitalFileUploading || saving ? 'pointer-events-none opacity-60' : ''"
+                            >
+                                <Loader2 v-if="digitalFileUploading" class="size-4 animate-spin" />
+                                <FileUp v-else class="size-4 shrink-0" />
+                                {{ digitalFileUploading ? 'Uploading file…' : 'Upload product file' }}
+                                <input
+                                    type="file"
+                                    accept=".pdf,.zip,.epub,.mp3,.mp4,.wav,.mov,.png,.jpg,.jpeg,.webp,.gif,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                                    class="hidden"
+                                    :disabled="digitalFileUploading || saving"
+                                    @change="onDigitalFileSelected"
+                                >
+                            </label>
+                            <div
+                                v-if="form.digital_access_url"
+                                class="flex items-center justify-between gap-2 rounded-lg border bg-white px-3 py-2 text-xs"
+                            >
+                                <div class="min-w-0">
+                                    <p class="truncate font-medium text-slate-900">
+                                        {{ form.digital_file_name || 'Uploaded file' }}
+                                    </p>
+                                    <p class="truncate text-muted-foreground">{{ form.digital_access_url }}</p>
+                                </div>
+                                <button type="button" class="shrink-0 text-destructive hover:underline" @click="clearDigitalFile">
+                                    Remove
+                                </button>
+                            </div>
+                            <p class="text-[10px] text-muted-foreground">
+                                PDF, ZIP, EPUB, audio/video, docs · max 50 MB
+                            </p>
+                        </div>
+
+                        <div v-else class="space-y-1.5">
+                            <Label for="p-digital-link">Access link</Label>
+                            <Input
+                                id="p-digital-link"
+                                v-model="form.digital_access_url"
+                                type="url"
+                                placeholder="https://…"
+                            />
+                            <p class="text-[10px] text-muted-foreground">
+                                Buyers receive this link on the thank-you page and in their receipt email.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="space-y-1.5 sm:col-span-2">
                         <Label>Product image</Label>
                         <div class="flex gap-4">
                             <div class="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border bg-muted">
@@ -747,10 +921,12 @@ onUnmounted(clearSelectedImageFile);
 
             <DialogFooter class="shrink-0 border-t px-6 py-4">
                 <Button variant="ghost" :disabled="isModalLocked" @click="closeCreateModal">Cancel</Button>
-                <Button :disabled="saving || imageUploading || !form.title || form.price === 0" @click="editingProductId ? updateProduct() : createProduct()">
+                <Button :disabled="!canSubmitProduct" @click="editingProductId ? updateProduct() : createProduct()">
                     {{
-                        saving || imageUploading
-                            ? (imageUploading ? 'Uploading image…' : (editingProductId ? 'Saving…' : 'Creating…'))
+                        saving || imageUploading || digitalFileUploading
+                            ? (digitalFileUploading
+                                ? 'Uploading file…'
+                                : (imageUploading ? 'Uploading image…' : (editingProductId ? 'Saving…' : 'Creating…')))
                             : (editingProductId ? 'Save changes' : 'Create product')
                     }}
                 </Button>

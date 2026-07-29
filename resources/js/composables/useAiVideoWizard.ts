@@ -9,6 +9,7 @@ export type AiProductOption = {
     sale_price?: string | null;
     currency?: string;
     description?: string | null;
+    product_type?: 'physical' | 'digital';
 };
 
 type AiGenerationItem = {

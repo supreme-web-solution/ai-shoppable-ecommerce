@@ -43,18 +43,24 @@ class CheckoutController extends Controller
 
         $attributionService->recordCheckoutStarted($cart, $team->id, $fallbackVideoId);
 
-        $resolved = $checkoutResolver->resolve(
-            $team,
-            $validated['checkout_mode'],
-            $validated['external_provider'] ?? null,
-        );
+        $hasDigital = $cart->items->contains(fn ($item) => $item->product?->isDigital());
+
+        $resolved = $hasDigital
+            ? ['mode' => 'native', 'provider' => null]
+            : $checkoutResolver->resolve(
+                $team,
+                $validated['checkout_mode'],
+                $validated['external_provider'] ?? null,
+            );
 
         if ($resolved['mode'] === 'native') {
             $nativeProvider = $checkoutResolver->activeNativeProvider($team);
 
             if ($nativeProvider === null) {
                 return response()->json([
-                    'message' => 'Native checkout is not configured. Connect Stripe or PayPal in Settings > Integrations, or enable Shopify/WooCommerce for external checkout.',
+                    'message' => $hasDigital
+                        ? 'Digital products require in-app checkout. Connect Stripe or PayPal in Settings > Integrations.'
+                        : 'Native checkout is not configured. Connect Stripe or PayPal in Settings > Integrations, or enable Shopify/WooCommerce for external checkout.',
                     'mode' => 'native_unavailable',
                     'settings_url' => '/settings/integrations',
                 ], 422);

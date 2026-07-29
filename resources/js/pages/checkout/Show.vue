@@ -8,6 +8,12 @@ type OrderItem = {
     quantity: number;
     unit_price: string;
     line_total: string;
+    metadata?: {
+        product_type?: string;
+        digital_access_type?: string | null;
+        digital_access_url?: string | null;
+        digital_file_name?: string | null;
+    } | null;
 };
 
 type CheckoutOrder = {
@@ -50,6 +56,11 @@ const providerLabel = computed(() => provider.value === 'paypal' ? 'PayPal' : 'S
 const isPaid = computed(() => order.value.status === 'paid');
 const isPending = computed(() => order.value.status === 'pending');
 const showSuccessScreen = computed(() => isPaid.value && !props.confirmationError);
+const digitalItems = computed(() =>
+    (order.value.items ?? []).filter((item) =>
+        item.metadata?.product_type === 'digital' && Boolean(item.metadata?.digital_access_url),
+    ),
+);
 const paidAtLabel = computed(() => {
     const raw = order.value.metadata?.paid_confirmed_at;
 
@@ -243,6 +254,38 @@ async function updateItemQuantity(item: OrderItem, nextQuantity: number) {
                                     <p class="text-slate-500">Qty {{ item.quantity }}</p>
                                 </div>
                                 <p class="font-semibold text-slate-900">{{ item.line_total }}</p>
+                            </div>
+                        </div>
+
+                        <div
+                            v-if="digitalItems.length > 0"
+                            class="space-y-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4"
+                        >
+                            <div>
+                                <p class="text-sm font-semibold text-emerald-900">Your digital products</p>
+                                <p class="mt-1 text-xs text-emerald-800/80">
+                                    Download or open your access links below. They were also sent to your email.
+                                </p>
+                            </div>
+                            <div
+                                v-for="item in digitalItems"
+                                :key="`digital-${item.id}`"
+                                class="flex flex-col gap-2 rounded-xl border border-emerald-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                                <div class="min-w-0">
+                                    <p class="truncate text-sm font-medium text-slate-900">{{ item.title }}</p>
+                                    <p class="truncate text-xs text-slate-500">
+                                        {{ item.metadata?.digital_file_name || (item.metadata?.digital_access_type === 'link' ? 'Access link' : 'Download file') }}
+                                    </p>
+                                </div>
+                                <a
+                                    :href="item.metadata?.digital_access_url || '#'"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                                >
+                                    {{ item.metadata?.digital_access_type === 'link' ? 'Open access link' : 'Download' }}
+                                </a>
                             </div>
                         </div>
 

@@ -231,6 +231,64 @@ class CloudinaryService
     }
 
     /**
+     * Upload a non-image digital product file (pdf, zip, etc.) as a Cloudinary raw asset.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    public function uploadRawFile(string $filePath, array $options = []): array
+    {
+        $publicId = Arr::get($options, 'public_id', 'file_'.Str::uuid()->toString());
+
+        if ($this->cloudinary === null) {
+            $extension = pathinfo($filePath, PATHINFO_EXTENSION) ?: 'bin';
+
+            Log::warning('CloudinaryService: mock raw file upload (not configured)', [
+                'file_path' => $filePath,
+                'public_id' => $publicId,
+            ]);
+
+            return [
+                'public_id' => $publicId,
+                'secure_url' => url('/storage/mock/'.$publicId.'.'.$extension),
+                'used_mock' => true,
+            ];
+        }
+
+        if (! file_exists($filePath)) {
+            throw new \RuntimeException("File does not exist: {$filePath}");
+        }
+
+        Log::info('CloudinaryService: uploading raw file', [
+            'file_path' => $filePath,
+            'file_size_bytes' => filesize($filePath),
+            'public_id' => $publicId,
+            'cloud_name' => $this->cloudName,
+        ]);
+
+        $response = $this->cloudinary->uploadApi()->upload($filePath, array_merge([
+            'resource_type' => 'raw',
+            'folder' => 'ai-video-commerce/digital-products',
+        ], $options));
+
+        $result = $this->normalizeUploadResult($response);
+        $publicId = (string) Arr::get($result, 'public_id');
+        $secureUrl = (string) Arr::get($result, 'secure_url');
+
+        Log::info('CloudinaryService: raw file upload succeeded', [
+            'public_id' => $publicId,
+            'secure_url' => $secureUrl,
+        ]);
+
+        return [
+            'public_id' => $publicId,
+            'secure_url' => $secureUrl,
+            'used_mock' => false,
+            'raw' => $result,
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     protected function normalizeUploadResult(mixed $response): array
