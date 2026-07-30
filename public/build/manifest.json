@@ -535,7 +535,7 @@
     ]
   },
   "resources/js/embed/main.ts": {
-    "file": "assets/main-RoLO87p6.js",
+    "file": "assets/main-DFz5Kba7.js",
     "name": "main",
     "src": "resources/js/embed/main.ts",
     "isEntry": true,
@@ -545,7 +545,7 @@
       "_videoEmbed-BTH9_BFN.js"
     ],
     "css": [
-      "assets/main-BK0z8Sq4.css"
+      "assets/main-KwwoGdBX.css"
     ]
   },
   "resources/js/pages/Dashboard.vue": {
