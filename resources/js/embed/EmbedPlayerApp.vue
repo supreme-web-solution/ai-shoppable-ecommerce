@@ -10,6 +10,7 @@ import {
 } from 'vue';
 import ChatMessageBody from '@/components/chat/ChatMessageBody.vue';
 import EmbedActionRail from '@/embed/components/EmbedActionRail.vue';
+import EmbedDigitalPreviewModal from '@/embed/components/EmbedDigitalPreviewModal.vue';
 import { embedApiUrl } from '@/embed/config';
 import { createEmbedEcho } from '@/embed/reverb';
 import TimedTagOverlay from '@/embed/TimedTagOverlay.vue';
@@ -42,9 +43,14 @@ type ProductTag = {
     product?: {
         id: number;
         title: string;
+        description?: string | null;
         price: string;
         sale_price?: string | null;
+        currency?: string;
         image_url?: string | null;
+        product_type?: 'physical' | 'digital' | string;
+        digital_access_type?: 'file' | 'link' | string | null;
+        digital_file_name?: string | null;
         variants?: ProductVariant[];
     };
 };
@@ -151,6 +157,7 @@ const checkoutSuccessText = ref('');
 const commentPanelOpen = ref(false);
 const replyToCommentId = ref<number | null>(null);
 const selectedVariantId = ref<number | null>(null);
+const digitalPreviewTag = ref<ProductTag | null>(null);
 const variantByTagId = ref<Record<number, number | null>>({});
 const floatingReactions = ref<FloatingReaction[]>([]);
 const savedVideoIds = ref<number[]>([]);
@@ -922,6 +929,46 @@ async function buyTagNow(tag: ProductTag) {
     if (cart.value) {
         await checkoutCart();
     }
+}
+
+function isDigitalProduct(tag: ProductTag | null | undefined): boolean {
+    return tag?.product?.product_type === 'digital';
+}
+
+function openDigitalPreview(tag: ProductTag, event?: Event): void {
+    event?.stopPropagation();
+
+    if (!isDigitalProduct(tag) || !tag.product) {
+        return;
+    }
+
+    digitalPreviewTag.value = tag;
+}
+
+function closeDigitalPreview(): void {
+    digitalPreviewTag.value = null;
+}
+
+async function addDigitalPreviewToCart(): Promise<void> {
+    const tag = digitalPreviewTag.value;
+
+    if (!tag) {
+        return;
+    }
+
+    closeDigitalPreview();
+    await addTagToCart(tag);
+}
+
+async function buyDigitalPreviewNow(): Promise<void> {
+    const tag = digitalPreviewTag.value;
+
+    if (!tag) {
+        return;
+    }
+
+    closeDigitalPreview();
+    await buyTagNow(tag);
 }
 
 async function shareVideo() {
@@ -1748,10 +1795,34 @@ onBeforeUnmount(() => {
                                                 />
                                             </svg>
                                         </div>
+                                        <button
+                                            v-if="isDigitalProduct(tag)"
+                                            type="button"
+                                            class="product-preview-btn"
+                                            aria-label="Preview digital product"
+                                            title="Preview"
+                                            @click="openDigitalPreview(tag, $event)"
+                                        >
+                                            <svg
+                                                width="12"
+                                                height="12"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2.4"
+                                            >
+                                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                                <circle cx="12" cy="12" r="3" />
+                                            </svg>
+                                        </button>
                                     </div>
                                     <div class="product-info">
                                         <p class="product-name">
                                             {{ tag.product?.title }}
+                                            <span
+                                                v-if="isDigitalProduct(tag)"
+                                                class="product-digital-chip"
+                                            >Digital</span>
                                         </p>
                                         <div class="product-price-row">
                                             <span
@@ -2223,6 +2294,16 @@ onBeforeUnmount(() => {
                 <div class="loader-ring loader-ring--sm" />
             </div>
         </template>
+
+        <EmbedDigitalPreviewModal
+            :open="digitalPreviewTag !== null"
+            :product="digitalPreviewTag?.product ?? null"
+            :cta-label="digitalPreviewTag?.cta_label"
+            :checkout-loading="checkoutLoading"
+            @close="closeDigitalPreview"
+            @add-to-cart="addDigitalPreviewToCart"
+            @buy-now="buyDigitalPreviewNow"
+        />
     </div>
 </template>
 
@@ -2622,6 +2703,14 @@ onBeforeUnmount(() => {
 .player-root--product-page .commerce-panel .product-name,
 .player-root--product-page .commerce-panel .product-price {
     color: #111827;
+}
+.player-root--product-page .commerce-panel .product-digital-chip {
+    color: #0369a1;
+    background: #e0f2fe;
+    border-color: #bae6fd;
+}
+.player-root--product-page .commerce-panel .product-preview-btn {
+    background: rgba(17, 24, 39, 0.72);
 }
 
 .player-root--product-page .commerce-panel .product-price-old {
@@ -3275,12 +3364,50 @@ onBeforeUnmount(() => {
     background: rgba(255, 255, 255, 0.18);
 }
 .product-img-wrap {
+    position: relative;
     width: 44px;
     height: 44px;
     border-radius: 12px;
     overflow: hidden;
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.1);
+}
+.product-preview-btn {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(8, 10, 16, 0.72);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    z-index: 2;
+    backdrop-filter: blur(6px);
+}
+.product-preview-btn:hover {
+    background: rgba(232, 86, 58, 0.92);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+.product-digital-chip {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 4px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    vertical-align: middle;
+    color: #7dd3fc;
+    background: rgba(14, 165, 233, 0.18);
+    border: 1px solid rgba(125, 211, 252, 0.28);
 }
 .product-img {
     width: 100%;

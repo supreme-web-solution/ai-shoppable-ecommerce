@@ -24,9 +24,10 @@ class ProductResource extends JsonResource
             'description' => $this->description,
             'source' => $this->source,
             'product_type' => $this->product_type ?? 'physical',
-            'digital_access_type' => $this->when($canManage, $this->digital_access_type),
+            // Safe for embed: type/name only — never the download URL until paid.
+            'digital_access_type' => $this->digital_access_type,
+            'digital_file_name' => $this->digital_file_name,
             'digital_access_url' => $this->when($canManage, $this->digital_access_url),
-            'digital_file_name' => $this->when($canManage, $this->digital_file_name),
             'image_url' => $this->image_url,
             'currency' => $this->currency,
             'price' => $this->price,
